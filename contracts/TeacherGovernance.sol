@@ -6,6 +6,20 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
 
+// Add the interface for staking contract
+interface ITokenStaking {
+    function getUserStake(uint256 _poolId, address _user) external view returns (
+        uint256 amount,
+        uint256 startTime,
+        uint256 lastClaimTime,
+        uint256 pendingReward,
+        address schoolBeneficiary,
+        uint256 userRewardPortion,
+        uint256 schoolRewardPortion
+    );
+    function getPoolCount() external view returns (uint256);
+}
+
 /**
  * @title TeacherGovernance
  * @dev Contract for decentralized governance of the TeacherSupport platform
@@ -36,6 +50,21 @@ contract TeacherGovernance is Ownable, ReentrancyGuard {
     
     // Execution period after delay (in seconds)
     uint256 public executionPeriod;
+
+    // Timelock delay for critical parameter changes (in seconds)
+    uint256 public parameterChangeDelay;
+
+    // Pending parameter change
+    PendingParameterChange public pendingChange;
+
+    // Add state variables
+    uint96 public treasuryBalance;
+    mapping(address => bool) public allowedTokens;
+    uint16 public emergencyPeriod; // Time in hours to allow emergency cancellation after proposal creation
+    uint16 public requiredGuardians; // Minimum guardians required to cancel proposal
+    mapping(address => bool) public guardians; // Addresses with guardian power
+    mapping(uint256 => mapping(address => bool)) public guardianCancellations; // Track guardian votes
+    mapping(uint256 => uint16) public cancellationVotes; // Count cancellation votes
     
     // Enum for proposal state
     enum ProposalState {
@@ -78,6 +107,18 @@ contract TeacherGovernance is Ownable, ReentrancyGuard {
         VoteType voteType;
         uint256 votes;
     }
+
+    // Struct to track pending parameter changes
+    struct PendingParameterChange {
+        uint256 proposalThreshold;
+        uint256 minVotingPeriod;
+        uint256 maxVotingPeriod;
+        uint256 quorumThreshold;
+        uint256 executionDelay;
+        uint256 executionPeriod;
+        uint256 scheduledTime;
+        bool isPending;
+    }
     
     // Mapping from proposal ID to Proposal
     mapping(uint256 => Proposal) public proposals;
@@ -116,7 +157,33 @@ contract TeacherGovernance is Ownable, ReentrancyGuard {
         uint256 executionDelay,
         uint256 executionPeriod
     );
-    
+
+    // Events
+    event ParameterChangeScheduled(
+        uint256 proposalThreshold,
+        uint256 minVotingPeriod,
+        uint256 maxVotingPeriod,
+        uint256 quorumThreshold,
+        uint256 executionDelay,
+        uint256 executionPeriod,
+        uint256 scheduledTime
+    );
+    event ParameterChangeExecuted();
+    event ParameterChangeCancelled();
+    event TimelockDelayUpdated(uint256 oldDelay, uint256 newDelay);
+    event TokenDepositedToTreasury(address token, address depositor, uint256 amount);
+    event TreasuryWithdrawal(address token, address recipient, uint256 amount);
+    event TokenAllowanceChanged(address token, bool allowed);
+    event GuardianAdded(address guardian);
+    event GuardianRemoved(address guardian);
+    event ProposalCancellationVoted(uint256 indexed proposalId, address guardian);
+    event ProposalEmergencyCancelled(uint256 indexed proposalId, string reason);  
+
+    ITokenStaking public stakingContract;
+    bool public stakingWeightEnabled;
+    uint16 public maxStakingMultiplier; // multiplier scaled by 100 (e.g., 200 = 2x)
+    uint16 public maxStakingPeriod; // in days
+
     /**
      * @dev Constructor sets the token address and governance parameters
      * @param _teachToken Address of the TEACH token contract
@@ -147,6 +214,9 @@ contract TeacherGovernance is Ownable, ReentrancyGuard {
         quorumThreshold = _quorumThreshold;
         executionDelay = _executionDelay;
         executionPeriod = _executionPeriod;
+        emergencyPeriod = 24; // 24 hours emergency period by default
+        requiredGuardians = 3; // Require 3 guardians to cancel a proposal
+        allowedTokens[_teachToken] = true; // Allow TEACH token by default
     }
     
     /**
@@ -218,7 +288,7 @@ contract TeacherGovernance is Ownable, ReentrancyGuard {
         require(block.timestamp <= proposal.endTime, "TeacherGovernance: voting ended");
         require(!proposal.receipts[msg.sender].hasVoted, "TeacherGovernance: already voted");
         
-        uint256 votes = teachToken.balanceOf(msg.sender);
+        uint256 votes = getVotingPower(msg.sender);
         require(votes > 0, "TeacherGovernance: no voting power");
         
         // Update voter receipt
@@ -376,6 +446,17 @@ contract TeacherGovernance is Ownable, ReentrancyGuard {
         Proposal storage proposal = proposals[_proposalId];
         return (proposal.againstVotes, proposal.forVotes, proposal.abstainVotes);
     }
+
+    /**
+    * @dev Sets the timelock delay for parameter changes
+    * @param _newDelay New delay in seconds
+     */
+    function setParameterChangeDelay(uint256 _newDelay) external onlyOwner {
+        require(_newDelay <= 30 days, "TeacherGovernance: delay too long");
+
+        emit TimelockDelayUpdated(parameterChangeDelay, _newDelay);
+        parameterChangeDelay = _newDelay;
+    }
     
     /**
      * @dev Updates governance parameters
@@ -447,4 +528,340 @@ contract TeacherGovernance is Ownable, ReentrancyGuard {
     function getActiveProposals() external view returns (uint256[] memory) {
         return activeProposalIds;
     }
+
+    /**
+    * @dev Schedules a governance parameter change with timelock
+    * @param _proposalThreshold New proposal threshold
+    * @param _minVotingPeriod New minimum voting period
+    * @param _maxVotingPeriod New maximum voting period
+    * @param _quorumThreshold New quorum threshold
+    * @param _executionDelay New execution delay
+    * @param _executionPeriod New execution period
+    */
+    function scheduleParameterChange(
+        uint256 _proposalThreshold,
+        uint256 _minVotingPeriod,
+        uint256 _maxVotingPeriod,
+        uint256 _quorumThreshold,
+        uint256 _executionDelay,
+        uint256 _executionPeriod
+    ) external onlyOwner {
+        require(_minVotingPeriod <= _maxVotingPeriod, "TeacherGovernance: invalid voting periods");
+        require(_quorumThreshold <= 5000, "TeacherGovernance: quorum too high");
+        require(!pendingChange.isPending, "TeacherGovernance: change already pending");
+
+        // Schedule the change
+        pendingChange = PendingParameterChange({
+            proposalThreshold: _proposalThreshold,
+            minVotingPeriod: _minVotingPeriod,
+            maxVotingPeriod: _maxVotingPeriod,
+            quorumThreshold: _quorumThreshold,
+            executionDelay: _executionDelay,
+            executionPeriod: _executionPeriod,
+            scheduledTime: block.timestamp,
+            isPending: true
+        });
+
+        emit ParameterChangeScheduled(
+            _proposalThreshold,
+            _minVotingPeriod,
+            _maxVotingPeriod,
+            _quorumThreshold,
+            _executionDelay,
+            _executionPeriod,
+            block.timestamp
+        );
+    }
+
+    /**
+    * @dev Executes a scheduled parameter change after timelock delay
+    */
+    function executeParameterChange() external {
+        require(pendingChange.isPending, "TeacherGovernance: no pending change");
+        require(
+            block.timestamp >= pendingChange.scheduledTime + parameterChangeDelay,
+            "TeacherGovernance: timelock not expired"
+        );
+
+        // Update the parameters
+        proposalThreshold = pendingChange.proposalThreshold;
+        minVotingPeriod = pendingChange.minVotingPeriod;
+        maxVotingPeriod = pendingChange.maxVotingPeriod;
+        quorumThreshold = pendingChange.quorumThreshold;
+        executionDelay = pendingChange.executionDelay;
+        executionPeriod = pendingChange.executionPeriod;
+
+        // Clear the pending change
+        pendingChange.isPending = false;
+
+        emit GovernanceParametersUpdated(
+            proposalThreshold,
+            minVotingPeriod,
+            maxVotingPeriod,
+            quorumThreshold,
+            executionDelay,
+            executionPeriod
+        );
+
+        emit ParameterChangeExecuted();
+    }
+
+    /**
+    * @dev Cancels a scheduled parameter change
+    */
+    function cancelParameterChange() external onlyOwner {
+        require(pendingChange.isPending, "TeacherGovernance: no pending change");
+
+        // Clear the pending change
+        pendingChange.isPending = false;
+
+        emit ParameterChangeCancelled();
+    }
+
+    // Replace your existing updateGovernanceParameters function with this:
+    /**
+    * @dev Schedules a governance parameter update (replaces immediate update)
+    */
+    function updateGovernanceParameters(
+        uint256 _proposalThreshold,
+        uint256 _minVotingPeriod,
+        uint256 _maxVotingPeriod,
+        uint256 _quorumThreshold,
+        uint256 _executionDelay,
+        uint256 _executionPeriod
+    ) external onlyOwner {
+        // Simply call the schedule function
+        scheduleParameterChange(
+            _proposalThreshold,
+            _minVotingPeriod,
+            _maxVotingPeriod,
+            _quorumThreshold,
+            _executionDelay,
+            _executionPeriod
+        );
+    }
+
+    /**
+    * @dev Sets the staking contract for calculating weighted votes
+    * @param _stakingContract Address of the staking contract
+    * @param _maxStakingMultiplier Maximum multiplier for long-term staking (scaled by 100)
+    * @param _maxStakingPeriod Maximum staking period for weight calculation in days
+    */
+    function setStakingContract(
+        address _stakingContract,
+        uint16 _maxStakingMultiplier,
+        uint16 _maxStakingPeriod
+    ) external onlyOwner {
+        require(_stakingContract != address(0), "TeacherGovernance: zero staking address");
+        require(_maxStakingMultiplier >= 100, "TeacherGovernance: multiplier must be >= 100");
+        require(_maxStakingPeriod > 0, "TeacherGovernance: period must be > 0");
+
+        stakingContract = ITokenStaking(_stakingContract);
+        maxStakingMultiplier = _maxStakingMultiplier;
+        maxStakingPeriod = _maxStakingPeriod;
+        stakingWeightEnabled = true;
+    }
+
+    /**
+    * @dev Calculates the voting power for an address, considering staking weight if enabled
+    * @param _voter Address to calculate voting power for
+    * @return power The weighted voting power
+     */
+    function getVotingPower(address _voter) public view returns (uint256 power) {
+        uint256 tokenBalance = teachToken.balanceOf(_voter);
+    
+        if (!stakingWeightEnabled || address(stakingContract) == address(0)) {
+            return tokenBalance; // Basic voting power is just token balance
+        }
+    
+        // Add basic token balance
+        power = tokenBalance;
+    
+        // Add weighted staking power
+        uint256 poolCount = stakingContract.getPoolCount();
+        for (uint256 poolId = 0; poolId < poolCount; poolId++) {
+            (
+                uint256 stakedAmount,
+                uint256 startTime,
+                ,,,, // Skip other return values we don't need
+            ) = stakingContract.getUserStake(poolId, _voter);
+        
+            if (stakedAmount > 0) {
+                // Calculate staking duration in days
+                uint256 stakingDays = (block.timestamp - startTime) / 1 days;
+            
+                // Calculate weight multiplier (linear between 1x and maxStakingMultiplier)
+                uint256 multiplier = 100; // Base multiplier 1.0
+                if (stakingDays > 0) {
+                    uint256 additionalMultiplier = stakingDays >= maxStakingPeriod ? 
+                        (maxStakingMultiplier - 100) : 
+                        ((maxStakingMultiplier - 100) * stakingDays) / maxStakingPeriod;
+                    
+                    multiplier += additionalMultiplier;
+                }
+            
+                // Apply multiplier to staked amount
+                uint256 weightedStakedAmount = (stakedAmount * multiplier) / 100;
+                power += weightedStakedAmount - stakedAmount; // Add only the extra voting power
+            }
+        }
+    
+        return power;
+    }
+   
+
+	
+	// Add these events
+	event TokenDepositedToTreasury(address token, address depositor, uint256 amount);
+	event TreasuryWithdrawal(address token, address recipient, uint256 amount);
+	event TokenAllowanceChanged(address token, bool allowed);
+	
+	/**
+	* @dev Allow or disallow a token for treasury operations
+	* @param _token Address of the token
+	* @param _allowed Whether the token is allowed
+	*/
+	function setTokenAllowance(address _token, bool _allowed) external onlyOwner {
+		allowedTokens[_token] = _allowed;
+		emit TokenAllowanceChanged(_token, _allowed);
+	}
+	
+	/**
+	* @dev Deposit tokens to the treasury
+	* @param _token Address of the token
+	* @param _amount Amount to deposit
+	*/
+	function depositToTreasury(address _token, uint256 _amount) external nonReentrant {
+		require(_amount > 0, "TeacherGovernance: zero amount");
+		require(allowedTokens[_token], "TeacherGovernance: token not allowed");
+		
+		IERC20 token = IERC20(_token);
+		require(token.transferFrom(msg.sender, address(this), _amount), "TeacherGovernance: transfer failed");
+		
+		if (_token == address(teachToken)) {
+			treasuryBalance += uint96(_amount);
+		}
+		
+		emit TokenDepositedToTreasury(_token, msg.sender, _amount);
+	}
+	
+	/**
+	* @dev Withdraw tokens from treasury (only via successful proposal)
+	* @param _token Address of the token
+	* @param _recipient Recipient address
+	* @param _amount Amount to withdraw
+	*/
+	function withdrawFromTreasury(
+		address _token,
+		address _recipient,
+		uint256 _amount
+	) external nonReentrant {
+		// Only executable through a proposal
+		require(msg.sender == address(this), "TeacherGovernance: only via proposal");
+		require(_amount > 0, "TeacherGovernance: zero amount");
+		require(_recipient != address(0), "TeacherGovernance: zero recipient");
+		require(allowedTokens[_token], "TeacherGovernance: token not allowed");
+		
+		IERC20 token = IERC20(_token);
+		if (_token == address(teachToken)) {
+			require(_amount <= treasuryBalance, "TeacherGovernance: insufficient treasury");
+			treasuryBalance -= uint96(_amount);
+		}
+		
+		require(token.transfer(_recipient, _amount), "TeacherGovernance: transfer failed");
+		
+		emit TreasuryWithdrawal(_token, _recipient, _amount);
+	}
+	
+	/**
+	* @dev Get treasury balance of a specific token
+	* @param _token Address of the token
+	* @return balance Token balance in treasury
+	*/
+	function getTreasuryBalance(address _token) external view returns (uint256 balance) {
+		if (_token == address(teachToken)) {
+			return treasuryBalance;
+		} else {
+			return IERC20(_token).balanceOf(address(this));
+		}
+	}  
+	/**
+	* @dev Add a new guardian address
+	* @param _guardian Address to add as guardian
+	*/
+	function addGuardian(address _guardian) external onlyOwner {
+		require(_guardian != address(0), "TeacherGovernance: zero guardian address");
+		require(!guardians[_guardian], "TeacherGovernance: already guardian");
+		
+		guardians[_guardian] = true;
+		emit GuardianAdded(_guardian);
+	}
+	
+	/**
+	* @dev Remove a guardian address
+	* @param _guardian Address to remove as guardian
+	*/
+	function removeGuardian(address _guardian) external onlyOwner {
+		require(guardians[_guardian], "TeacherGovernance: not a guardian");
+		
+		guardians[_guardian] = false;
+		emit GuardianRemoved(_guardian);
+	}
+	
+	/**
+	* @dev Set emergency governance parameters
+	* @param _emergencyPeriod Time in hours to allow emergency cancellation
+	* @param _requiredGuardians Minimum guardians required to cancel proposal
+	*/
+	function setEmergencyParameters(uint16 _emergencyPeriod, uint16 _requiredGuardians) external onlyOwner {
+		emergencyPeriod = _emergencyPeriod;
+		requiredGuardians = _requiredGuardians;
+	}
+	
+	/**
+	* @dev Vote to cancel a potentially malicious proposal
+	* @param _proposalId ID of the proposal
+	* @param _reason Reason for cancellation
+	*/
+	function voteToCancel(uint256 _proposalId, string calldata _reason) external {
+		require(guardians[msg.sender], "TeacherGovernance: not a guardian");
+		require(!guardianCancellations[_proposalId][msg.sender], "TeacherGovernance: already voted");
+		
+		ProposalState currentState = state(_proposalId);
+		require(
+			currentState == ProposalState.Pending || 
+			currentState == ProposalState.Active,
+			"TeacherGovernance: cannot cancel proposal"
+		);
+		
+		Proposal storage proposal = proposals[_proposalId];
+		
+		// Check if within emergency period
+		require(
+			block.timestamp <= proposal.startTime + (emergencyPeriod * 1 hours),
+			"TeacherGovernance: emergency period expired"
+		);
+		
+		// Record guardian's vote
+		guardianCancellations[_proposalId][msg.sender] = true;
+		cancellationVotes[_proposalId] += 1;
+		
+		emit ProposalCancellationVoted(_proposalId, msg.sender);
+		
+		// If enough votes, cancel the proposal
+		if (cancellationVotes[_proposalId] >= requiredGuardians) {
+			proposal.canceled = true;
+			
+			// Remove from active proposals
+			for (uint256 i = 0; i < activeProposalIds.length; i++) {
+				if (activeProposalIds[i] == _proposalId) {
+					activeProposalIds[i] = activeProposalIds[activeProposalIds.length - 1];
+					activeProposalIds.pop();
+					break;
+				}
+			}
+			
+			emit ProposalEmergencyCancelled(_proposalId, _reason);
+		}
+	}
 }

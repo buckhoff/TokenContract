@@ -42,10 +42,20 @@ contract TokenStaking is Ownable, ReentrancyGuard {
         uint256 totalRewards;         // Total rewards earned by school
         bool isActive;                // Whether school is active
     }
+
+    struct UnstakingRequest {
+        uint96 amount;            // Amount requested to unstake
+        uint96 requestTime;       // Timestamp when unstaking was requested
+        bool claimed;             // Whether the unstaked tokens have been claimed
+    }
+
+    mapping(address => mapping(uint256 => UnstakingRequest[])) public unstakingRequests;
     
     // School registry
     mapping(address => School) public schools;
     address[] public registeredSchools;
+    
+    uint16 public emergencyUnstakeFee;
     
     // Platform managed school rewards
     address public platformRewardsManager;
@@ -64,6 +74,8 @@ contract TokenStaking is Ownable, ReentrancyGuard {
     
     // Timestamp of last reward rate adjustment
     uint256 public lastRewardAdjustment;
+
+    uint96 public cooldownPeriod;
     
     // Events
     event StakingPoolCreated(uint256 indexed poolId, string name, uint256 rewardRate, uint256 lockDuration);
@@ -77,6 +89,8 @@ contract TokenStaking is Ownable, ReentrancyGuard {
     event RewardsAdded(uint256 amount);
     event RewardRatesAdjusted();
     event PlatformRewardsManagerUpdated(address indexed oldManager, address indexed newManager);
+    event UnstakingRequested(address indexed user, uint256 indexed poolId, uint256 amount, uint256 requestTime);
+    event UnstakedTokensClaimed(address indexed user, uint256 indexed poolId, uint256 amount);
     
     /**
      * @dev Modifier to restrict school reward withdrawals to platform manager
@@ -98,6 +112,8 @@ contract TokenStaking is Ownable, ReentrancyGuard {
         teachToken = IERC20(_teachToken);
         platformRewardsManager = _platformRewardsManager;
         lastRewardAdjustment = block.timestamp;
+        cooldownPeriod = 2 days; // 2-day cooldown by default
+        emergencyUnstakeFee = 2000; // 20% fee by default
     }
     
     /**
@@ -629,5 +645,140 @@ contract TokenStaking is Ownable, ReentrancyGuard {
         
         IERC20 token = IERC20(_token);
         require(token.transfer(owner(), _amount), "TokenStaking: transfer failed");
+    }
+
+    /**
+    * @dev Updates the cooldown period for unstaking
+    * @param _cooldownPeriod New cooldown period in seconds
+    */
+    function setCooldownPeriod(uint96 _cooldownPeriod) external onlyOwner {
+        cooldownPeriod = _cooldownPeriod;
+    }
+
+    /**
+    * @dev Requests to unstake tokens from a specific pool
+    * @param _poolId ID of the pool to unstake from
+    * @param _amount Amount of tokens to unstake
+    */
+    function requestUnstake(uint256 _poolId, uint256 _amount) external nonReentrant {
+        require(_poolId < stakingPools.length, "TokenStaking: invalid pool ID");
+        require(_amount > 0, "TokenStaking: zero amount");
+
+        StakingPool storage pool = stakingPools[_poolId];
+        UserStake storage userStake = userStakes[_poolId][msg.sender];
+
+        require(userStake.amount >= _amount, "TokenStaking: insufficient stake");
+
+        // Claim pending rewards first
+        _claimReward(_poolId, msg.sender);
+
+        // Calculate early withdrawal fee if applicable
+        uint256 fee = 0;
+        if (block.timestamp < userStake.startTime + pool.lockDuration) {
+            fee = (_amount * pool.earlyWithdrawalFee) / 10000;
+        }
+
+        uint256 amountAfterFee = _amount - fee;
+
+        // Update user stake
+        userStake.amount -= _amount;
+
+        // Update pool total staked
+        pool.totalStaked -= _amount;
+
+        // If fee is applied, it stays in the contract as part of the rewards pool
+        if (fee > 0) {
+            rewardsPool += fee;
+        }
+
+        // Create unstaking request
+        unstakingRequests[msg.sender][_poolId].push(UnstakingRequest({
+            amount: uint96(amountAfterFee),
+            requestTime: uint96(block.timestamp),
+            claimed: false
+        }));
+
+        emit UnstakingRequested(msg.sender, _poolId, _amount, block.timestamp);
+    }
+
+    /**
+    * @dev Claims tokens from unstaking requests that have passed the cooldown period
+    * @param _poolId ID of the pool
+    * @param _requestIndex Index of the unstaking request
+    */
+    function claimUnstakedTokens(uint256 _poolId, uint256 _requestIndex) external nonReentrant {
+        require(_poolId < stakingPools.length, "TokenStaking: invalid pool ID");
+
+        UnstakingRequest[] storage requests = unstakingRequests[msg.sender][_poolId];
+        require(_requestIndex < requests.length, "TokenStaking: invalid request index");
+
+        UnstakingRequest storage request = requests[_requestIndex];
+        require(!request.claimed, "TokenStaking: already claimed");
+        require(block.timestamp >= request.requestTime + cooldownPeriod, "TokenStaking: cooldown not over");
+
+        uint96 amountToClaim = request.amount;
+
+        // Mark as claimed
+        request.claimed = true;
+
+        // Transfer tokens back to user
+        require(teachToken.transfer(msg.sender, amountToClaim), "TokenStaking: transfer failed");
+
+        emit UnstakedTokensClaimed(msg.sender, _poolId, amountToClaim);
+    }
+
+    /**
+    * @dev Get unstaking requests for a user in a specific pool
+    * @param _user Address of the user
+    * @param _poolId ID of the pool
+    * @return requests Array of unstaking requests
+    */
+    function getUnstakingRequests(address _user, uint256 _poolId) external view returns (UnstakingRequest[] memory) {
+        return unstakingRequests[_user][_poolId];
+    }
+
+    /**
+    * @dev Sets the emergency unstake fee
+    * @param _fee Fee percentage (scaled by 100)
+    */
+    function setEmergencyUnstakeFee(uint16 _fee) external onlyOwner {
+        require(_fee <= 5000, "TokenStaking: fee too high"); // Max 50%
+        emergencyUnstakeFee = _fee;
+    }
+
+    /**
+    * @dev Emergency unstake function for urgent situations
+    * @param _poolId ID of the pool to unstake from
+    * @param _amount Amount of tokens to unstake
+    */
+    function emergencyUnstake(uint256 _poolId, uint256 _amount) external nonReentrant {
+        require(_poolId < stakingPools.length, "TokenStaking: invalid pool ID");
+        require(_amount > 0, "TokenStaking: zero amount");
+
+        StakingPool storage pool = stakingPools[_poolId];
+        UserStake storage userStake = userStakes[_poolId][msg.sender];
+
+        require(userStake.amount >= _amount, "TokenStaking: insufficient stake");
+
+        // Claim pending rewards first
+        _claimReward(_poolId, msg.sender);
+
+        // Calculate emergency fee (higher than regular early withdrawal fee)
+        uint256 emergencyFee = (_amount * emergencyUnstakeFee) / 10000;
+        uint256 amountToReturn = _amount - emergencyFee;
+
+        // Update user stake
+        userStake.amount -= _amount;
+
+        // Update pool total staked
+        pool.totalStaked -= _amount;
+
+        // Add fee to rewards pool
+        rewardsPool += emergencyFee;
+
+        // Transfer tokens immediately to user (no cooldown)
+        require(teachToken.transfer(msg.sender, amountToReturn), "TokenStaking: transfer failed");
+
+        emit Unstaked(msg.sender, _poolId, _amount, emergencyFee);
     }
 }
