@@ -282,6 +282,8 @@ contract TeacherGovernance is Ownable, ReentrancyGuard {
         string memory _reason
     ) external nonReentrant {
         require(_voteType <= uint8(VoteType.Abstain), "TeacherGovernance: invalid vote type");
+        require(_proposalId < _proposalIdCounter.current(), "TeacherGovernance: proposal doesn't exist");
+        require(bytes(_reason).length <= 200, "TeacherGovernance: reason too long");
         
         Proposal storage proposal = proposals[_proposalId];
         require(block.timestamp >= proposal.startTime, "TeacherGovernance: voting not started");
@@ -336,7 +338,7 @@ contract TeacherGovernance is Ownable, ReentrancyGuard {
      * @dev Cancel a proposal (only proposer or if proposer drops below threshold)
      * @param _proposalId ID of the proposal to cancel
      */
-    function cancelProposal(uint256 _proposalId) external {
+    function cancelProposal(uint256 _proposalId) external nonReentrant {
         ProposalState currentState = state(_proposalId);
         require(
             currentState == ProposalState.Pending || 

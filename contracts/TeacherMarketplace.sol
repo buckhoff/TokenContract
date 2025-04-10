@@ -9,9 +9,10 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
  * @title TeacherMarketplace
  * @dev Contract for teachers to create resources and for users to purchase them with TEACH tokens
  */
-contract TeacherMarketplace is Ownable, ReentrancyGuard {
+contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable {
     // The TeachToken contract
     IERC20 public teachToken;
+    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
     
     // Struct to store resource information
     struct Resource {
@@ -62,6 +63,7 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard {
         platformFeePercent = _feePercent;
         feeRecipient = _feeRecipient;
         _resourceIdCounter = 1;
+        _setupRole(ADMIN_ROLE, msg.sender);
     }
     
     /**
@@ -70,7 +72,7 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard {
      * @param _price Price in TEACH tokens
      * @return resourceId The ID of the newly created resource
      */
-    function createResource(string memory _metadataURI, uint256 _price) external returns (uint256) {
+    function createResource(string memory _metadataURI, uint256 _price) external nonReentrant whenNotPaused returns (uint256) {
         require(bytes(_metadataURI).length > 0, "TeacherMarketplace: empty metadata URI");
         require(_price > 0, "TeacherMarketplace: zero price");
         
@@ -99,7 +101,7 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard {
      * @param _price New price in TEACH tokens
      * @param _isActive Whether the resource is active and available for purchase
      */
-    function updateResource(uint256 _resourceId, string memory _metadataURI, uint256 _price, bool _isActive) external {
+    function updateResource(uint256 _resourceId, string memory _metadataURI, uint256 _price, bool _isActive) external whenNotPaused nonReentrant {
         Resource storage resource = resources[_resourceId];
         
         require(resource.creator != address(0), "TeacherMarketplace: resource does not exist");
@@ -118,7 +120,7 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard {
      * @dev Purchases a resource using TEACH tokens
      * @param _resourceId Resource ID to purchase
      */
-    function purchaseResource(uint256 _resourceId) external nonReentrant {
+    function purchaseResource(uint256 _resourceId) external whenNotPaused nonReentrant {
         Resource storage resource = resources[_resourceId];
         
         require(resource.creator != address(0), "TeacherMarketplace: resource does not exist");
@@ -146,7 +148,7 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard {
      * @param _resourceId Resource ID to rate
      * @param _rating Rating value (1-5)
      */
-    function rateResource(uint256 _resourceId, uint256 _rating) external {
+    function rateResource(uint256 _resourceId, uint256 _rating) external nonReentrant {
         require(userPurchases[msg.sender][_resourceId], "TeacherMarketplace: not purchased");
         require(_rating >= 1 && _rating <= 5, "TeacherMarketplace: invalid rating");
         
@@ -220,5 +222,14 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard {
      */
     function hasPurchased(address _user, uint256 _resourceId) external view returns (bool) {
         return userPurchases[_user][_resourceId];
+    }
+
+    // Add pause and unpause functions
+    function pauseMarketplace() external onlyRole(ADMIN_ROLE) {
+        _pause();
+    }
+
+    function unpauseMarketplace() external onlyRole(ADMIN_ROLE) {
+        _unpause();
     }
 }

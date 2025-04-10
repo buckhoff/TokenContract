@@ -10,9 +10,11 @@ import "@openzeppelin/contracts/utils/math/Math.sol";
  * @title TokenStaking
  * @dev Contract for staking TEACH tokens to earn rewards with 50/50 split between users and schools
  */
-contract TokenStaking is Ownable, ReentrancyGuard {
+contract TokenStaking is Ownable, ReentrancyGuard, AccessControl {
     using Math for uint256;
-    
+    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
+    bytes32 public constant MANAGER_ROLE = keccak256("MANAGER_ROLE");
+    bytes32 public constant EMERGENCY_ROLE = keccak256("EMERGENCY_ROLE");
     // The TeachToken contract
     IERC20 public teachToken;
     
@@ -114,6 +116,10 @@ contract TokenStaking is Ownable, ReentrancyGuard {
         lastRewardAdjustment = block.timestamp;
         cooldownPeriod = 2 days; // 2-day cooldown by default
         emergencyUnstakeFee = 2000; // 20% fee by default
+        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _setupRole(ADMIN_ROLE, msg.sender);
+        _setupRole(MANAGER_ROLE, _platformRewardsManager);
+        _setupRole(EMERGENCY_ROLE, msg.sender);
     }
     
     /**
@@ -129,7 +135,7 @@ contract TokenStaking is Ownable, ReentrancyGuard {
         uint256 _rewardRate,
         uint256 _lockDuration,
         uint256 _earlyWithdrawalFee
-    ) external onlyOwner returns (uint256) {
+    ) external onlyRole(ADMIN_ROLE) returns (uint256) {
         require(bytes(_name).length > 0, "TokenStaking: empty pool name");
         require(_earlyWithdrawalFee <= 3000, "TokenStaking: fee too high");
         
@@ -154,7 +160,7 @@ contract TokenStaking is Ownable, ReentrancyGuard {
      * @param _schoolAddress Address of the school
      * @param _name Name of the school
      */
-    function registerSchool(address _schoolAddress, string memory _name) external onlyOwner {
+    function registerSchool(address _schoolAddress, string memory _name) external onlyRole(ADMIN_ROLE) {
         require(_schoolAddress != address(0), "TokenStaking: zero school address");
         require(bytes(_name).length > 0, "TokenStaking: empty school name");
         require(!schools[_schoolAddress].isRegistered, "TokenStaking: already registered");
@@ -177,7 +183,7 @@ contract TokenStaking is Ownable, ReentrancyGuard {
      * @param _name New name of the school
      * @param _isActive Whether the school is active
      */
-    function updateSchool(address _schoolAddress, string memory _name, bool _isActive) external onlyOwner {
+    function updateSchool(address _schoolAddress, string memory _name, bool _isActive) external onlyRole(ADMIN_ROLE) {
         require(schools[_schoolAddress].isRegistered, "TokenStaking: school not registered");
         
         schools[_schoolAddress].name = _name;
@@ -190,7 +196,7 @@ contract TokenStaking is Ownable, ReentrancyGuard {
      * @dev Updates the platform rewards manager address
      * @param _newManager New platform rewards manager address
      */
-    function updatePlatformRewardsManager(address _newManager) external onlyOwner {
+    function updatePlatformRewardsManager(address _newManager) external onlyRole(ADMIN_ROLE) {
         require(_newManager != address(0), "TokenStaking: zero manager address");
         
         emit PlatformRewardsManagerUpdated(platformRewardsManager, _newManager);
@@ -212,7 +218,7 @@ contract TokenStaking is Ownable, ReentrancyGuard {
         uint256 _lockDuration,
         uint256 _earlyWithdrawalFee,
         bool _isActive
-    ) external onlyOwner {
+    ) external onlyRole(ADMIN_ROLE) {
         require(_poolId < stakingPools.length, "TokenStaking: invalid pool ID");
         require(_earlyWithdrawalFee <= 3000, "TokenStaking: fee too high");
         
@@ -235,6 +241,8 @@ contract TokenStaking is Ownable, ReentrancyGuard {
     function stake(uint256 _poolId, uint256 _amount, address _schoolBeneficiary) external nonReentrant {
         require(_poolId < stakingPools.length, "TokenStaking: invalid pool ID");
         require(_amount > 0, "TokenStaking: zero amount");
+        require(_amount <= teachToken.balanceOf(msg.sender), "TokenStaking: insufficient balance");
+        require(_amount <= teachToken.allowance(msg.sender, address(this)), "TokenStaking: insufficient allowance");
         require(schools[_schoolBeneficiary].isRegistered, "TokenStaking: school not registered");
         require(schools[_schoolBeneficiary].isActive, "TokenStaking: school not active");
         
@@ -265,6 +273,8 @@ contract TokenStaking is Ownable, ReentrancyGuard {
         require(teachToken.transferFrom(msg.sender, address(this), _amount), "TokenStaking: transfer failed");
         
         emit Staked(msg.sender, _poolId, _amount, _schoolBeneficiary);
+
+        assert(userStake.amount <= pool.totalStaked);
     }
     
     /**
@@ -369,6 +379,9 @@ contract TokenStaking is Ownable, ReentrancyGuard {
         // School portion remains in contract to be managed by platform
         
         emit RewardClaimed(_user, _poolId, userReward, schoolBeneficiary, schoolReward);
+
+        assert(rewardsPool == oldRewardsPool - totalReward);
+        assert(teachToken.balanceOf(_user) == oldUserBalance + userReward);
         
         return totalReward;
     }
@@ -378,7 +391,7 @@ contract TokenStaking is Ownable, ReentrancyGuard {
      * @param _school Address of the school
      * @param _amount Amount to withdraw
      */
-    function withdrawSchoolRewards(address _school, uint256 _amount) external onlyPlatformManager nonReentrant {
+    function withdrawSchoolRewards(address _school, uint256 _amount) external onlyRole(MANAGER_ROLE) nonReentrant {
         require(schools[_school].isRegistered, "TokenStaking: school not registered");
         require(_amount > 0, "TokenStaking: zero amount");
         require(_amount <= schools[_school].totalRewards, "TokenStaking: insufficient school rewards");
@@ -751,7 +764,7 @@ contract TokenStaking is Ownable, ReentrancyGuard {
     * @param _poolId ID of the pool to unstake from
     * @param _amount Amount of tokens to unstake
     */
-    function emergencyUnstake(uint256 _poolId, uint256 _amount) external nonReentrant {
+    function emergencyUnstake(uint256 _poolId, uint256 _amount) external onlyRole(EMERGENCY_ROLE) nonReentrant {
         require(_poolId < stakingPools.length, "TokenStaking: invalid pool ID");
         require(_amount > 0, "TokenStaking: zero amount");
 
@@ -780,5 +793,13 @@ contract TokenStaking is Ownable, ReentrancyGuard {
         require(teachToken.transfer(msg.sender, amountToReturn), "TokenStaking: transfer failed");
 
         emit Unstaked(msg.sender, _poolId, _amount, emergencyFee);
+    }
+
+    function _verifyTokenBalanceInvariant() internal view {
+        uint256 totalStaked = 0;
+        for (uint256 i = 0; i < stakingPools.length; i++) {
+            totalStaked += stakingPools[i].totalStaked;
+        }
+        assert(teachToken.balanceOf(address(this)) == totalStaked + rewardsPool);
     }
 }

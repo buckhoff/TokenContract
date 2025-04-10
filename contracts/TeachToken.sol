@@ -63,7 +63,22 @@ contract TeachToken is ERC20, ERC20Burnable, Pausable, AccessControl {
         address reserveAddress
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(!initialDistributionDone, "Initial distribution already completed");
+        require(platformEcosystemAddress != address(0), "Zero address for platformEcosystem");
+        require(communityIncentivesAddress != address(0), "Zero address for communityIncentives");
+        require(initialLiquidityAddress != address(0), "Zero address for initialLiquidity");
+        require(publicPresaleAddress != address(0), "Zero address for publicPresale");
+        require(teamAndDevAddress != address(0), "Zero address for teamAndDev");
+        require(educationalPartnersAddress != address(0), "Zero address for educationalPartners");
+        require(reserveAddress != address(0), "Zero address for reserve");
 
+        require(
+            platformEcosystemAddress != communityIncentivesAddress &&
+            platformEcosystemAddress != initialLiquidityAddress &&
+            platformEcosystemAddress != publicPresaleAddress &&
+            educationalPartnersAddress != reserveAddress,
+            "Duplicate addresses not allowed"
+        );
+        
         // Define allocation amounts
         uint256 platformEcosystemAmount = 1_600_000_000 * 10**18; // 32%
         uint256 communityIncentivesAmount = 1_100_000_000 * 10**18; // 22%
@@ -138,7 +153,7 @@ contract TeachToken is ERC20, ERC20Burnable, Pausable, AccessControl {
      * @param from The address to burn tokens from
      * @param amount The amount of tokens to burn
      */
-    function burnFrom(address from, uint256 amount) public override onlyRole(BURNER_ROLE) {
+    function burnFrom(address from, uint256 amount) public override onlyRole(BURNER_ROLE) nonReentrant {
         _spendAllowance(from, _msgSender(), amount);
         _burn(from, amount);
         emit TokensBurned(from, amount);
@@ -212,7 +227,7 @@ contract TeachToken is ERC20, ERC20Burnable, Pausable, AccessControl {
  * @param tokenAddress The address of the token to recover
  * @param amount The amount of tokens to recover
  */
-    function recoverERC20(address tokenAddress, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function recoverERC20(address tokenAddress, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant {
         require(tokenAddress != address(this), "TeachToken: Cannot recover TEACH tokens");
         require(amount > 0, "TeachToken: Zero amount");
 

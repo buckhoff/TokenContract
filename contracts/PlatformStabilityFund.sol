@@ -11,9 +11,13 @@ import "@openzeppelin/contracts/utils/math/Math.sol";
  * @dev Contract that protects the platform from TEACH token price volatility
  *      during the donation-to-funding conversion process
  */
-contract PlatformStabilityFund is Ownable, ReentrancyGuard {
+contract PlatformStabilityFund is Ownable, ReentrancyGuard, AccessControl {
     using Math for uint256;
-
+    bytes32 public constant ORACLE_ROLE = keccak256("ORACLE_ROLE");
+    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
+    bytes32 public constant EMERGENCY_ROLE = keccak256("EMERGENCY_ROLE");
+    bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");
+    
     // The TeachToken contract
     IERC20 public teachToken;
 
@@ -143,13 +147,18 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard {
         burnToReservePercent = 1000; // 10% by default
         platformFeeToReservePercent = 2000; // 20% by default
         authorizedBurners[msg.sender] = true;
+        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _setupRole(ADMIN_ROLE, msg.sender);
+        _setupRole(ORACLE_ROLE, _priceOracle);
+        _setupRole(EMERGENCY_ROLE, emergencyAdmin);
+        _setupRole(BURNER_ROLE, msg.sender);
     }
 
     /**
      * @dev Updates the token price and checks if low value mode should be activated
      * @param _newPrice New token price in stable coin units (scaled by 1e18)
      */
-    function updatePrice(uint256 _newPrice) external onlyPriceOracle {
+    function updatePrice(uint256 _newPrice) external onlyRole(ORACLE_ROLE) {
         require(_newPrice > 0, "PlatformStabilityFund: zero price");
 
         emit PriceUpdated(tokenPrice, _newPrice);
@@ -165,7 +174,7 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard {
      * @dev Updates the baseline price (governance function)
      * @param _newBaselinePrice New baseline price in stable coin units (scaled by 1e18)
      */
-    function updateBaselinePrice(uint256 _newBaselinePrice) external onlyOwner {
+    function updateBaselinePrice(uint256 _newBaselinePrice) external onlyRole(ADMIN_ROLE) {
         require(_newBaselinePrice > 0, "PlatformStabilityFund: zero baseline price");
 
         emit BaselinePriceUpdated(baselinePrice, _newBaselinePrice);
@@ -180,7 +189,7 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard {
     * @dev Updates the current fee based on token price relative to baseline
     * @return uint16 The newly calculated fee percentage
     */
-    function updateCurrentFee() public returns (uint16) {
+    function updateCurrentFee() public onlyRole(ADMIN_ROLE) returns (uint16) {
         uint256 valueDropPercent = 0;
 
         if (tokenPrice < baselinePrice) {
@@ -245,7 +254,7 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard {
      * @dev Withdraws stable coins from reserves (only owner)
      * @param _amount Amount of stable coins to withdraw
      */
-    function withdrawReserves(uint256 _amount) external onlyOwner nonReentrant {
+    function withdrawReserves(uint256 _amount) external onlyRole(ADMIN_ROLE) nonReentrant {
         require(_amount > 0, "PlatformStabilityFund: zero amount");
 
         // Calculate maximum withdrawable amount based on min reserve ratio
@@ -278,10 +287,13 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard {
         address _project,
         uint256 _teachAmount,
         uint256 _minReturn
-    ) external onlyOwner nonReentrant whenNotPaused returns (uint256 stableAmount) {
+    ) external onlyRole(ADMIN_ROLE) nonReentrant whenNotPaused returns (uint256 stableAmount) {
         require(_project != address(0), "PlatformStabilityFund: zero project address");
         require(_teachAmount > 0, "PlatformStabilityFund: zero amount");
 
+        uint256 oldReserves = totalReserves;
+        uint256 oldStableBalance = stableCoin.balanceOf(_project);
+        
         // Calculate expected value at baseline price
         uint256 baselineValue = (_teachAmount * baselinePrice) / 1e18;
 
@@ -326,6 +338,11 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard {
         emit TokensConverted(_project, _teachAmount, stableAmount, subsidy);
 
         checkAndPauseIfCritical();
+
+        if (subsidy > 0) {
+            assert(totalReserves == oldReserves - subsidy);
+        }
+        assert(stableCoin.balanceOf(_project) == oldStableBalance + stableAmount);
         
         return stableAmount;
     }
@@ -400,7 +417,7 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard {
         uint256 _platformFeePercent,
         uint256 _lowValueFeePercent,
         uint256 _valueThreshold
-    ) external onlyOwner {
+    ) external onlyRole(ADMIN_ROLE) {
         require(_reserveRatio > _minReserveRatio, "PlatformStabilityFund: invalid reserve ratios");
         require(_platformFeePercent >= _lowValueFeePercent, "PlatformStabilityFund: regular fee must be >= low value fee");
         require(_valueThreshold > 0, "PlatformStabilityFund: zero threshold");
@@ -421,7 +438,7 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard {
      * @dev Updates the price oracle address
      * @param _newOracle New price oracle address
      */
-    function updatePriceOracle(address _newOracle) external onlyOwner {
+    function updatePriceOracle(address _newOracle) external onlyRole(ADMIN_ROLE) {
         require(_newOracle != address(0), "PlatformStabilityFund: zero oracle address");
 
         emit PriceOracleUpdated(priceOracle, _newOracle);
@@ -484,7 +501,7 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard {
     /**
     * @dev Manually pauses the fund in case of emergency
     */
-    function emergencyPause() external {
+    function emergencyPause() external onlyRole(EMERGENCY_ROLE){
         require(msg.sender == owner() || msg.sender == emergencyAdmin, "PlatformStabilityFund: not authorized");
         require(!paused, "PlatformStabilityFund: already paused");
 
@@ -495,7 +512,7 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard {
     /**
     * @dev Resumes the fund from pause state
     */
-    function resumeFromPause() external onlyOwner {
+    function resumeFromPause() external onlyRole(ADMIN_ROLE) {
         require(paused, "PlatformStabilityFund: not paused");
 
         // Ensure reserves are above critical threshold before resuming
@@ -511,7 +528,7 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard {
     * @dev Sets the critical reserve threshold percentage
     * @param _threshold New threshold as percentage of min reserve ratio
     */
-    function setCriticalReserveThreshold(uint16 _threshold) external onlyOwner {
+    function setCriticalReserveThreshold(uint16 _threshold) external onlyRole(ADMIN_ROLE) {
         require(_threshold > 100, "PlatformStabilityFund: threshold must be > 100%");
         require(_threshold <= 200, "PlatformStabilityFund: threshold too high");
 
@@ -526,7 +543,7 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard {
     * @dev Updates the emergency admin address
     * @param _newAdmin New emergency admin address
     */
-    function setEmergencyAdmin(address _newAdmin) external onlyOwner {
+    function setEmergencyAdmin(address _newAdmin) external onlyRole(ADMIN_ROLE) {
         require(_newAdmin != address(0), "PlatformStabilityFund: zero admin address");
 
         emit EmergencyAdminUpdated(emergencyAdmin, _newAdmin);
@@ -549,7 +566,7 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard {
         uint16 _adjustmentFactor,
         uint16 _dropThreshold,
         uint16 _maxDropPercent
-    ) external onlyOwner {
+    ) external onlyRole(ADMIN_ROLE) {
         require(_maxFee >= _baseFee && _baseFee >= _minFee, "PlatformStabilityFund: invalid fee range");
         require(_maxDropPercent > _dropThreshold, "PlatformStabilityFund: invalid drop thresholds");
         require(_adjustmentFactor > 0, "PlatformStabilityFund: zero adjustment factor");
@@ -571,7 +588,7 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard {
     * @dev Process burned tokens and convert a portion to reserves
     * @param _burnedAmount Amount of TEACH tokens that were burned
     */
-    function processBurnedTokens(uint256 _burnedAmount) external {
+    function processBurnedTokens(uint256 _burnedAmount) external  {
         require(authorizedBurners[msg.sender], "PlatformStabilityFund: not authorized");
         require(_burnedAmount > 0, "PlatformStabilityFund: zero burn amount");
 
@@ -592,7 +609,7 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard {
     * @dev Process platform fees and add a portion to reserves
     * @param _feeAmount Amount of platform fees collected
     */
-    function processPlatformFees(uint256 _feeAmount) external onlyOwner {
+    function processPlatformFees(uint256 _feeAmount) external onlyRole(ADMIN_ROLE) {
         require(_feeAmount > 0, "PlatformStabilityFund: zero fee amount");
 
         // Calculate portion to add to reserves
@@ -616,7 +633,7 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard {
     function updateReplenishmentParameters(
         uint16 _burnPercent,
         uint16 _feePercent
-    ) external onlyOwner {
+    ) external onlyRole(ADMIN_ROLE) {
         require(_burnPercent <= 5000, "PlatformStabilityFund: burn percent too high");
         require(_feePercent <= 10000, "PlatformStabilityFund: fee percent too high");
 
@@ -631,11 +648,23 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard {
     * @param _burner Address of the burner
     * @param _authorized Whether the address is authorized
     */
-    function setAuthBurner(address _burner, bool _authorized) external onlyOwner {
+    function setAuthBurner(address _burner, bool _authorized) external onlyRole(ADMIN_ROLE) {
         require(_burner != address(0), "PlatformStabilityFund: zero burner address");
-
-        authorizedBurners[_burner] = _authorized;
-
+        
+        if (_authorized) {
+            grantRole(BURNER_ROLE, _burner);
+        } else {
+            revokeRole(BURNER_ROLE, _burner);
+        }
+        
         emit BurnerAuthorization(_burner, _authorized);
+    }
+
+    function _checkReserveRatioInvariant() internal view {
+        if (!paused) {
+            uint256 totalTokenValue = (teachToken.totalSupply() * tokenPrice) / 1e18;
+            uint256 minRequired = (totalTokenValue * minReserveRatio) / 10000;
+            assert(totalReserves >= minRequired);
+        }
     }
 }

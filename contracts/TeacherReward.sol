@@ -9,7 +9,7 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
  * @title TeacherReward
  * @dev Contract for incentivizing and rewarding teachers based on performance metrics
  */
-contract TeacherReward is Ownable, ReentrancyGuard {
+contract TeacherReward is Ownable, ReentrancyGuard, Pausable {
     // The TeachToken contract
     IERC20 public teachToken;
     
@@ -97,7 +97,7 @@ contract TeacherReward is Ownable, ReentrancyGuard {
     /**
      * @dev Allows teachers to register in the reward system
      */
-    function registerAsTeacher() external {
+    function registerAsTeacher() external whenNotPaused {
         require(!teachers[msg.sender].isRegistered, "TeacherReward: already registered");
         
         teachers[msg.sender] = Teacher({
@@ -131,7 +131,7 @@ contract TeacherReward is Ownable, ReentrancyGuard {
      * @param _teacher Address of the teacher
      * @param _newReputation New reputation score (1-200)
      */
-    function updateReputation(address _teacher, uint256 _newReputation) external onlyVerifier {
+    function updateReputation(address _teacher, uint256 _newReputation) external whenNotPaused onlyVerifier {
         require(teachers[_teacher].isRegistered, "TeacherReward: teacher not registered");
         require(_newReputation >= 1 && _newReputation <= 200, "TeacherReward: invalid reputation range");
         
@@ -188,7 +188,7 @@ contract TeacherReward is Ownable, ReentrancyGuard {
     /**
      * @dev Teachers claim their pending rewards
      */
-    function claimReward() external onlyTeacher nonReentrant {
+    function claimReward() external onlyTeacher nonReentrant whenNotPaused {
         uint256 pendingReward = calculatePendingReward(msg.sender);
         require(pendingReward > 0, "TeacherReward: no rewards to claim");
         
@@ -209,7 +209,7 @@ contract TeacherReward is Ownable, ReentrancyGuard {
      * @dev Adds funds to the reward pool
      * @param _amount Amount of tokens to add to the reward pool
      */
-    function increaseRewardPool(uint256 _amount) external {
+    function increaseRewardPool(uint256 _amount) external whenNotPaused {
         require(_amount > 0, "TeacherReward: zero amount");
         
         // Transfer tokens from caller to contract
@@ -302,5 +302,14 @@ contract TeacherReward is Ownable, ReentrancyGuard {
             teacher.isVerified,
             calculatePendingReward(_teacher)
         );
+    }
+
+    // Add pause and unpause functions
+    function pauseRewards() external onlyOwner {
+        _pause();
+    }
+
+    function unpauseRewards() external onlyOwner {
+        _unpause();
     }
 }
