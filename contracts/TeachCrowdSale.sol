@@ -83,6 +83,10 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard {
     // Add to existing contract
     mapping(uint256 => uint96) public tierDeadlines; // Timestamps for tier deadlines
 
+    mapping(address => uint256) public lastPurchaseTime;
+    uint256 public minTimeBetweenPurchases = 1 hours;
+    uint256 public maxPurchaseAmount = 50_000 * PRICE_DECIMALS; // $50,000 default max
+
     // Events
     event TierPurchase(address indexed buyer, uint256 tierId, uint256 tokenAmount, uint256 usdAmount);
     event TierStatusChanged(uint256 tierId, bool isActive);
@@ -92,7 +96,22 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard {
     event TierDeadlineUpdated(uint256 indexed tier, uint256 deadline);
     event TierAdvanced(uint256 indexed newTier);
     event TierExtended(uint256 indexed tier, uint256 newDeadline);
-    
+
+    modifier purchaseRateLimit(uint256 _usdAmount) {
+        require(
+            block.timestamp >= lastPurchaseTime[msg.sender] + minTimeBetweenPurchases,
+            "TeachCrowdSale: purchase too soon after previous"
+        );
+
+        require(
+            _usdAmount <= maxPurchaseAmount,
+            "TeachCrowdSale: amount exceeds maximum purchase limit"
+        );
+
+        lastPurchaseTime[msg.sender] = block.timestamp;
+        _;
+    }
+
     /**
      * @dev Constructor to initialize the presale contract
      * @param _paymentToken Address of the payment token (USDC)
@@ -292,7 +311,7 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard {
      * @param _tierId Tier to purchase from
      * @param _usdAmount USD amount to spend (scaled by 1e6)
      */
-    function purchase(uint256 _tierId, uint256 _usdAmount) external nonReentrant whenNotPaused {
+    function purchase(uint256 _tierId, uint256 _usdAmount) external nonReentrant whenNotPaused purchaseRateLimit(_usdAmount) {
         require(block.timestamp >= presaleStart && block.timestamp <= presaleEnd, "Presale not active");
         require(_tierId < tiers.length, "Invalid tier ID");
         PresaleTier storage tier = tiers[_tierId];
@@ -522,6 +541,12 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard {
     function resumePresale() external onlyOwner {
         paused = false;
     }
-    
-    
+
+    function configurePurchaseRateLimits(
+        uint256 _minTimeBetweenPurchases,
+        uint256 _maxPurchaseAmount
+    ) external onlyOwner {
+        minTimeBetweenPurchases = _minTimeBetweenPurchases;
+        maxPurchaseAmount = _maxPurchaseAmount;
+    }
 }

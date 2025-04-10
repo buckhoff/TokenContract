@@ -5,6 +5,10 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
+interface IPlatformStabilityFund {
+    function getVerifiedPrice() external view returns (uint256);
+}
+
 /**
  * @title TeacherMarketplace
  * @dev Contract for teachers to create resources and for users to purchase them with TEACH tokens
@@ -39,6 +43,8 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable {
     
     // Platform fee recipient address
     address public feeRecipient;
+
+    IPlatformStabilityFund public stabilityFund;
     
     // Events
     event ResourceCreated(uint256 indexed resourceId, address indexed creator, string metadataURI, uint256 price);
@@ -231,5 +237,15 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable {
 
     function unpauseMarketplace() external onlyRole(ADMIN_ROLE) {
         _unpause();
+    }
+
+    function setStabilityFund(address _stabilityFund) external onlyOwner {
+        require(_stabilityFund != address(0), "TeacherMarketplace: zero address");
+        stabilityFund = IPlatformStabilityFund(_stabilityFund);
+    }
+    
+    function calculateTokenPrice(uint256 _stableAmount) public view returns (uint256) {
+        uint256 verifiedPrice = stabilityFund.getVerifiedPrice();
+        return (_stableAmount * 1e18) / verifiedPrice;
     }
 }

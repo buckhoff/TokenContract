@@ -6,6 +6,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 
+    
 /**
  * @title PlatformStabilityFund
  * @dev Contract that protects the platform from TEACH token price volatility
@@ -13,6 +14,12 @@ import "@openzeppelin/contracts/utils/math/Math.sol";
  */
 contract PlatformStabilityFund is Ownable, ReentrancyGuard, AccessControl {
     using Math for uint256;
+
+    struct PriceObservation {
+        uint256 timestamp;
+        uint256 price;
+    }
+    
     bytes32 public constant ORACLE_ROLE = keccak256("ORACLE_ROLE");
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
     bytes32 public constant EMERGENCY_ROLE = keccak256("EMERGENCY_ROLE");
@@ -55,6 +62,25 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard, AccessControl {
     uint16 public platformFeeToReservePercent; // Percentage of platform fees to add to reserves
     mapping(address => bool) public authorizedBurners; // Addresses authorized to burn tokens
 
+    // Flash Loan protection
+    mapping(address => uint256) private lastActionTimestamp;
+    mapping(address => uint256) private dailyConversionVolume;
+    uint256 public maxDailyUserVolume;
+    uint256 public maxSingleConversionAmount;
+    uint256 public minTimeBetweenActions;
+    bool public flashLoanProtectionEnabled;
+
+    mapping(address => bool) public addressCooldown;
+    uint256 public suspiciousCooldownPeriod = 24 hours;
+
+    uint8 public constant MAX_PRICE_OBSERVATIONS = 24; // Store 24 hourly observations
+    PriceObservation[MAX_PRICE_OBSERVATIONS] public priceHistory;
+    uint8 public currentObservationIndex;
+    uint256 public lastObservationTimestamp;
+    uint256 public observationInterval = 1 hours;
+    uint256 public twapWindowSize = 12; // Use 12 hours for TWAP by default
+    bool public twapEnabled = true;
+    
     // Events
     event ReservesAdded(address indexed contributor, uint256 amount);
     event ReservesWithdrawn(address indexed recipient, uint256 amount);
@@ -82,6 +108,9 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard, AccessControl {
     event PlatformFeesToReserves(uint256 feeAmount, uint256 reservesAdded);
     event ReplenishmentParametersUpdated(uint16 burnPercent, uint16 feePercent);
     event BurnerAuthorization(address indexed burner, bool authorized);
+    event SuspiciousActivity(address indexed user, string reason, uint256 amount);
+    event PriceObservationRecorded(uint256 timestamp, uint256 price, uint8 index);
+    event TWAPConfigUpdated(uint256 windowSize, uint256 interval, bool enabled);
     
     /**
      * @dev Modifier to restrict certain functions to the price oracle
@@ -96,6 +125,40 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard, AccessControl {
         _;
     }
 
+    modifier flashLoanGuard(uint256 _amount) {
+        if (flashLoanProtectionEnabled) {
+            // Check if this is the first action today
+            require(!addressCooldown[msg.sender], "PlatformStabilityFund: address in suspicious activity cooldown");
+            uint256 dayStart = block.timestamp - (block.timestamp % 1 days);
+            if (lastActionTimestamp[msg.sender] < dayStart) {
+                dailyConversionVolume[msg.sender] = 0;
+            }
+
+            // Check for minimum time between actions
+            require(
+                block.timestamp >= lastActionTimestamp[msg.sender] + minTimeBetweenActions,
+                "PlatformStabilityFund: action too soon after previous action"
+            );
+
+            // Check for maximum single amount
+            require(
+                _amount <= maxSingleConversionAmount,
+                "PlatformStabilityFund: amount exceeds maximum single conversion limit"
+            );
+
+            // Check for daily volume limit
+            require(
+                dailyConversionVolume[msg.sender] + _amount <= maxDailyUserVolume,
+                "PlatformStabilityFund: daily volume limit exceeded"
+            );
+
+            // Update tracking variables
+            lastActionTimestamp[msg.sender] = block.timestamp;
+            dailyConversionVolume[msg.sender] += _amount;
+        }
+        _;
+    }
+    
     /**
      * @dev Constructor sets initial parameters and token addresses
      * @param _teachToken Address of the TEACH token
@@ -152,6 +215,10 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard, AccessControl {
         _setupRole(ORACLE_ROLE, _priceOracle);
         _setupRole(EMERGENCY_ROLE, emergencyAdmin);
         _setupRole(BURNER_ROLE, msg.sender);
+        maxDailyUserVolume = 1_000_000 * 10**18; // 1M tokens per day per user
+        maxSingleConversionAmount = 100_000 * 10**18; // 100K tokens per conversion
+        minTimeBetweenActions = 15 minutes; // 15 minutes between actions
+        flashLoanProtectionEnabled = true;
     }
 
     /**
@@ -191,10 +258,11 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard, AccessControl {
     */
     function updateCurrentFee() public onlyRole(ADMIN_ROLE) returns (uint16) {
         uint256 valueDropPercent = 0;
-
-        if (tokenPrice < baselinePrice) {
+        uint256 verifiedPrice = getVerifiedPrice();
+        
+        if (verifiedPrice < baselinePrice) {
             // Calculate how far below baseline we are (in percentage points, scaled by 10000)
-            valueDropPercent = ((baselinePrice - tokenPrice) * 10000) / baselinePrice;
+            valueDropPercent = ((baselinePrice - verifiedPrice) * 10000) / baselinePrice;
         }
 
         uint16 oldFee = currentFeePercent;
@@ -256,9 +324,10 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard, AccessControl {
      */
     function withdrawReserves(uint256 _amount) external onlyRole(ADMIN_ROLE) nonReentrant {
         require(_amount > 0, "PlatformStabilityFund: zero amount");
-
+        uint256 verifiedPrice = getVerifiedPrice();
+        
         // Calculate maximum withdrawable amount based on min reserve ratio
-        uint256 totalTokenValue = (teachToken.totalSupply() * tokenPrice) / 1e18;
+        uint256 totalTokenValue = (teachToken.totalSupply() * verifiedPrice) / 1e18;
         uint256 minReserveRequired = (totalTokenValue * minReserveRatio) / 10000;
 
         uint256 excessReserves = 0;
@@ -287,18 +356,20 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard, AccessControl {
         address _project,
         uint256 _teachAmount,
         uint256 _minReturn
-    ) external onlyRole(ADMIN_ROLE) nonReentrant whenNotPaused returns (uint256 stableAmount) {
+    ) external onlyRole(ADMIN_ROLE) nonReentrant whenNotPaused flashLoanGuard(_teachAmount) returns (uint256 stableAmount) {
         require(_project != address(0), "PlatformStabilityFund: zero project address");
         require(_teachAmount > 0, "PlatformStabilityFund: zero amount");
 
         uint256 oldReserves = totalReserves;
         uint256 oldStableBalance = stableCoin.balanceOf(_project);
+
+        uint256 verifiedPrice = getVerifiedPrice();
         
         // Calculate expected value at baseline price
         uint256 baselineValue = (_teachAmount * baselinePrice) / 1e18;
 
         // Calculate current value
-        uint256 currentValue = (_teachAmount * tokenPrice) / 1e18;
+        uint256 currentValue = (_teachAmount * verifiedPrice) / 1e18;
 
         // Apply platform fee based on value mode
         uint256 feePercent = updateCurrentFee();
@@ -352,7 +423,8 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard, AccessControl {
      * @return uint256 Current reserve ratio (10000 = 100%)
      */
     function getReserveRatioHealth() public view returns (uint256) {
-        uint256 totalTokenValue = (teachToken.totalSupply() * tokenPrice) / 1e18;
+        uint256 verifiedPrice = getVerifiedPrice();
+        uint256 totalTokenValue = (teachToken.totalSupply() * verifiedPrice) / 1e18;
 
         if (totalTokenValue == 0) {
             return 10000; // 100% if no tokens
@@ -375,8 +447,9 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard, AccessControl {
         uint256 finalAmount,
         uint256 feeAmount
     ) {
+        uint256 verifiedPrice = getVerifiedPrice();
         // Calculate expected value at current price
-        expectedValue = (_teachAmount * tokenPrice) / 1e18;
+        expectedValue = (_teachAmount * verifiedPrice) / 1e18;
 
         // Calculate baseline value
         uint256 baselineValue = (_teachAmount * baselinePrice) / 1e18;
@@ -452,11 +525,13 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard, AccessControl {
      * @param _minReturn Minimum stable coin amount to receive
      * @return stableAmount Amount of stable coins received
      */
-    function swapTokensForStable(uint256 _teachAmount, uint256 _minReturn) external nonReentrant returns (uint256 stableAmount) {
+    function swapTokensForStable(uint256 _teachAmount, uint256 _minReturn) external nonReentrant flashLoanGuard(_teachAmount) returns (uint256 stableAmount) {
         require(_teachAmount > 0, "PlatformStabilityFund: zero amount");
 
+        uint256 verifiedPrice = getVerifiedPrice();
+        
         // Calculate the value of TEACH tokens at current price
-        stableAmount = (_teachAmount * tokenPrice) / 1e18;
+        stableAmount = (_teachAmount * verifiedPrice) / 1e18;
 
         // Check minimum return
         require(stableAmount >= _minReturn, "PlatformStabilityFund: below min return");
@@ -592,8 +667,9 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard, AccessControl {
         require(authorizedBurners[msg.sender], "PlatformStabilityFund: not authorized");
         require(_burnedAmount > 0, "PlatformStabilityFund: zero burn amount");
 
+        uint256 verifiedPrice = getVerifiedPrice();
         // Calculate value of burned tokens
-        uint256 burnValue = (_burnedAmount * tokenPrice) / 1e18;
+        uint256 burnValue = (_burnedAmount * verifiedPrice) / 1e18;
 
         // Calculate portion to add to reserves
         uint256 reservesToAdd = (burnValue * burnToReservePercent) / 10000;
@@ -662,9 +738,241 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard, AccessControl {
 
     function _checkReserveRatioInvariant() internal view {
         if (!paused) {
-            uint256 totalTokenValue = (teachToken.totalSupply() * tokenPrice) / 1e18;
+            uint256 verifiedPrice = getVerifiedPrice();
+            uint256 totalTokenValue = (teachToken.totalSupply() * verifiedPrice) / 1e18;
             uint256 minRequired = (totalTokenValue * minReserveRatio) / 10000;
             assert(totalReserves >= minRequired);
         }
     }
+
+    function configureFlashLoanProtection(
+        uint256 _maxDailyUserVolume,
+        uint256 _maxSingleConversionAmount,
+        uint256 _minTimeBetweenActions,
+        bool _enabled
+    ) external onlyRole(ADMIN_ROLE) {
+        maxDailyUserVolume = _maxDailyUserVolume;
+        maxSingleConversionAmount = _maxSingleConversionAmount;
+        minTimeBetweenActions = _minTimeBetweenActions;
+        flashLoanProtectionEnabled = _enabled;
+
+        emit FlashLoanProtectionConfigured(
+            _maxDailyUserVolume,
+            _maxSingleConversionAmount,
+            _minTimeBetweenActions,
+            _enabled
+        );
+    }
+
+    function detectSuspiciousActivity(address _user, uint256 _amount) internal {
+        // Check for abnormal conversion patterns
+        bool isSuspicious = false;
+        string memory reason = "";
+
+        // Sudden large volume from an address that hasn't been active
+        if (lastActionTimestamp[_user] == 0 && _amount > maxSingleConversionAmount / 2) {
+            isSuspicious = true;
+            reason = "Large first-time conversion";
+        }
+
+        // Multiple conversions approaching limits
+        if (dailyConversionVolume[_user] > maxDailyUserVolume * 90 / 100) {
+            isSuspicious = true;
+            reason = "Approaching daily volume limit";
+        }
+
+        if (isSuspicious) {
+            emit SuspiciousActivity(_user, reason, _amount);
+        }
+    }
+
+    function placeSuspiciousAddressInCooldown(address _suspiciousAddress) external onlyRole(EMERGENCY_ROLE) {
+        addressCooldown[_suspiciousAddress] = true;
+        emit AddressPlacedInCooldown(_suspiciousAddress, block.timestamp + suspiciousCooldownPeriod);
+    }
+
+    function removeSuspiciousAddressCooldown(address _address) external onlyRole(ADMIN_ROLE) {
+        addressCooldown[_address] = false;
+        emit AddressRemovedFromCooldown(_address);
+    }
+
+    function _postActionCheck(
+        address _user,
+        uint256 _teachAmount,
+        uint256 _stableAmount
+    ) internal {
+        uint256 verifiedPrice = getVerifiedPrice();
+        // Check for abnormal price impact
+        uint256 expectedValue = (_teachAmount * verifiedPrice) / 1e18;
+        uint256 priceImpact = 0;
+
+        if (expectedValue > _stableAmount) {
+            priceImpact = ((expectedValue - _stableAmount) * 10000) / expectedValue;
+        }
+
+        // If price impact is abnormally high, log suspicious activity
+        if (priceImpact > 500) { // 5% threshold
+            emit SuspiciousActivity(_user, "High price impact conversion", _teachAmount);
+        }
+
+        // Run detection algorithm
+        detectSuspiciousActivity(_user, _teachAmount);
+    }
+
+    function recordPriceObservation() public {
+        // Only record if enough time has passed since last observation
+        if (block.timestamp >= lastObservationTimestamp + observationInterval) {
+            uint256 verifiedPrice = getVerifiedPrice();
+            // Update the current observation
+            priceHistory[currentObservationIndex] = PriceObservation({
+                timestamp: block.timestamp,
+                price: verifiedPrice
+            });
+
+            emit PriceObservationRecorded(block.timestamp, verifiedPrice, currentObservationIndex);
+
+            // Update tracking variables
+            lastObservationTimestamp = block.timestamp;
+
+            // Move to next slot in circular buffer
+            currentObservationIndex = (currentObservationIndex + 1) % MAX_PRICE_OBSERVATIONS;
+        }
+    }
+
+    function updatePrice(uint256 _newPrice) external onlyRole(ORACLE_ROLE) {
+        require(_newPrice > 0, "PlatformStabilityFund: zero price");
+
+        uint256 verifiedPrice = getVerifiedPrice();
+        
+        // Store the old price for the event
+        uint256 oldPrice = verifiedPrice;
+
+        // Calculate the maximum allowed price change (e.g. 10%)
+        uint256 maxPriceChange = verifiedPrice * 1000 / 10000; // 10%
+
+        // If TWAP is enabled, check against the time-weighted average
+        if (twapEnabled) {
+            uint256 twapPrice = calculateTWAP();
+
+            // If we have enough observations and the new price deviates significantly from TWAP
+            if (twapPrice > 0) {
+                uint256 twapDeviation;
+
+                if (_newPrice > twapPrice) {
+                    twapDeviation = ((_newPrice - twapPrice) * 10000) / twapPrice;
+                } else {
+                    twapDeviation = ((twapPrice - _newPrice) * 10000) / twapPrice;
+                }
+
+                // If the deviation exceeds a threshold (e.g. 20%), reject the update
+                require(twapDeviation <= 2000, "PlatformStabilityFund: price deviates too much from TWAP");
+            }
+        }
+
+        // Check for sudden large price changes
+        if (verifiedPrice > 0) {
+            uint256 priceChange;
+
+            if (_newPrice > verifiedPrice) {
+                priceChange = _newPrice - verifiedPrice;
+            } else {
+                priceChange = verifiedPrice - _newPrice;
+            }
+
+            // If the change is too large, reject the update
+            require(priceChange <= maxPriceChange, "PlatformStabilityFund: price change too large");
+        }
+
+        // Update the price
+        verifiedPrice = _newPrice;
+        lastPriceUpdateTime = block.timestamp;
+
+        // Record this observation
+        recordPriceObservation();
+
+        // Check if we should enter or exit low value mode
+        updateValueMode();
+
+        emit PriceUpdated(oldPrice, _newPrice);
+    }
+
+    // Calculate time-weighted average price
+    function calculateTWAP() public view returns (uint256) {
+        uint256 validObservations = 0;
+        uint256 weightedPriceSum = 0;
+        uint256 timeSum = 0;
+        uint256 oldestAllowedTimestamp = block.timestamp - (twapWindowSize * observationInterval);
+
+        // Start from newest and work backward for 'windowSize' observations
+        uint8 startIndex = (currentObservationIndex == 0) ? MAX_PRICE_OBSERVATIONS - 1 : currentObservationIndex - 1;
+
+        for (uint8 i = 0; i < MAX_PRICE_OBSERVATIONS && validObservations < twapWindowSize; i++) {
+            uint8 index = (startIndex - i + MAX_PRICE_OBSERVATIONS) % MAX_PRICE_OBSERVATIONS;
+            PriceObservation memory observation = priceHistory[index];
+
+            // Skip if this slot has no observation or if it's too old
+            if (observation.timestamp == 0 || observation.timestamp < oldestAllowedTimestamp) {
+                continue;
+            }
+
+            uint256 timeWeight;
+            if (validObservations == 0) {
+                timeWeight = block.timestamp - observation.timestamp;
+            } else {
+                uint8 prevIndex = (index + 1) % MAX_PRICE_OBSERVATIONS;
+                timeWeight = priceHistory[prevIndex].timestamp - observation.timestamp;
+            }
+
+            weightedPriceSum += observation.price * timeWeight;
+            timeSum += timeWeight;
+            validObservations++;
+        }
+
+        // Return 0 if not enough observations
+        if (timeSum == 0 || validObservations < twapWindowSize / 2) {
+            return 0;
+        }
+
+        return weightedPriceSum / timeSum;
+    }
+
+    // Configure TWAP parameters
+    function configureTWAP(
+        uint256 _windowSize,
+        uint256 _interval,
+        bool _enabled
+    ) external onlyRole(ADMIN_ROLE) {
+        require(_windowSize > 0 && _windowSize <= MAX_PRICE_OBSERVATIONS, "PlatformStabilityFund: invalid window size");
+        require(_interval > 0, "PlatformStabilityFund: interval cannot be zero");
+
+        twapWindowSize = _windowSize;
+        observationInterval = _interval;
+        twapEnabled = _enabled;
+
+        emit TWAPConfigUpdated(_windowSize, _interval, _enabled);
+    }
+
+    function getVerifiedPrice() public view returns (uint256) {
+        // If TWAP is enabled and we have enough observations, use TWAP
+        if (twapEnabled) {
+            uint256 twapPrice = calculateTWAP();
+            if (twapPrice > 0) {
+                // Check if current price deviates too much from TWAP
+                uint256 deviation;
+                if (tokenPrice > twapPrice) {
+                    deviation = ((tokenPrice - twapPrice) * 10000) / twapPrice;
+                } else {
+                    deviation = ((twapPrice - tokenPrice) * 10000) / twapPrice;
+                }
+
+                // If deviation is too large, return TWAP instead
+                if (deviation > 2000) { // 20% threshold
+                    return twapPrice;
+                }
+            }
+        }
+
+        return tokenPrice;
+    }
+
 }
