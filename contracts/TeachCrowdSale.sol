@@ -51,7 +51,7 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard {
     mapping(address => Purchase) public purchases;
 
     // Whitelist for early tiers
-    mapping(address => bool) public whitelist;
+    //mapping(address => bool) public whitelist;
     
     //Check for Roles
     mapping(bytes32 => mapping(address => bool)) private roleMembership;
@@ -92,7 +92,7 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard {
     event TierStatusChanged(uint256 tierId, bool isActive);
     event TokensWithdrawn(address indexed user, uint256 amount);
     event PresaleTimesUpdated(uint256 newStart, uint256 newEnd);
-    event WhitelistUpdated(address indexed user, bool status);
+    //event WhitelistUpdated(address indexed user, bool status);
     event TierDeadlineUpdated(uint256 indexed tier, uint256 deadline);
     event TierAdvanced(uint256 indexed newTier);
     event TierExtended(uint256 indexed tier, uint256 newDeadline);
@@ -290,21 +290,21 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard {
      * @param _user Address to modify
      * @param _status New whitelist status
      */
-    function updateWhitelist(address _user, bool _status) external onlyOwner {
-        whitelist[_user] = _status;
-        emit WhitelistUpdated(_user, _status);
-    }
+    //function updateWhitelist(address _user, bool _status) external onlyOwner {
+    //    whitelist[_user] = _status;
+    //    emit WhitelistUpdated(_user, _status);
+    //}
 
     /**
      * @dev Add multiple addresses to the whitelist
      * @param _users Addresses to whitelist
      */
-    function batchWhitelist(address[] calldata _users) external onlyOwner {
-        for (uint256 i = 0; i < _users.length; i++) {
-            whitelist[_users[i]] = true;
-            emit WhitelistUpdated(_users[i], true);
-        }
-    }
+    //function batchWhitelist(address[] calldata _users) external onlyOwner {
+    //    for (uint256 i = 0; i < _users.length; i++) {
+    //       whitelist[_users[i]] = true;
+    //       emit WhitelistUpdated(_users[i], true);
+    //  }
+    // }
 
     /**
      * @dev Purchase tokens in a specific tier
@@ -318,9 +318,9 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard {
         require(tier.isActive, "Tier not active");
 
         // For earlier tiers (0-3), require whitelist
-        if (_tierId <= 3) {
-            require(whitelist[msg.sender], "Not whitelisted for this tier");
-        }
+        //if (_tierId <= 3) {
+        //    require(whitelist[msg.sender], "Not whitelisted for this tier");
+        //}
 
         // Validate purchase amount
         require(_usdAmount >= tier.minPurchase, "Below minimum purchase");
