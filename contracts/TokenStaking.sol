@@ -5,16 +5,26 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
+import "@openzeppelin/contracts/access/AccessControl.sol";
+import "./RegistryAware.sol";
 
 /**
  * @title TokenStaking
  * @dev Contract for staking TEACH tokens to earn rewards with 50/50 split between users and schools
  */
-contract TokenStaking is Ownable, ReentrancyGuard, AccessControl {
+contract TokenStaking is Ownable, ReentrancyGuard, AccessControl, RegistryAware {
     using Math for uint256;
+
+    // Registry contract names
+    bytes32 public constant TEACH_TOKEN_NAME = keccak256("TEACH_TOKEN");
+    bytes32 public constant STABILITY_FUND_NAME = keccak256("PLATFORM_STABILITY_FUND");
+    bytes32 public constant GOVERNANCE_NAME = keccak256("TEACHER_GOVERNANCE");
+
+    // Role constants
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
     bytes32 public constant MANAGER_ROLE = keccak256("MANAGER_ROLE");
     bytes32 public constant EMERGENCY_ROLE = keccak256("EMERGENCY_ROLE");
+   
     // The TeachToken contract
     IERC20 public teachToken;
     
@@ -78,6 +88,9 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl {
     uint256 public lastRewardAdjustment;
 
     uint96 public cooldownPeriod;
+
+    // Flag for emergency pause
+    bool public paused;
     
     // Events
     event StakingPoolCreated(uint256 indexed poolId, string name, uint256 rewardRate, uint256 lockDuration);
@@ -93,6 +106,8 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl {
     event PlatformRewardsManagerUpdated(address indexed oldManager, address indexed newManager);
     event UnstakingRequested(address indexed user, uint256 indexed poolId, uint256 amount, uint256 requestTime);
     event UnstakedTokensClaimed(address indexed user, uint256 indexed poolId, uint256 amount);
+    event RegistrySet(address indexed registry);
+    event ContractReferenceUpdated(bytes32 indexed contractName, address indexed oldAddress, address indexed newAddress);
     
     /**
      * @dev Modifier to restrict school reward withdrawals to platform manager
@@ -120,6 +135,104 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl {
         _setupRole(ADMIN_ROLE, msg.sender);
         _setupRole(MANAGER_ROLE, _platformRewardsManager);
         _setupRole(EMERGENCY_ROLE, msg.sender);
+    }
+
+    /**
+     * @dev Sets the registry contract address
+     * @param _registry Address of the registry contract
+     */
+    function setRegistry(address _registry) external onlyOwner {
+        _setRegistry(_registry, keccak256("TOKEN_STAKING"));
+        emit RegistrySet(_registry);
+    }
+
+    /**
+     * @dev Update contract references from registry
+     * This ensures contracts always have the latest addresses
+     */
+    function updateContractReferences() external onlyRole(ADMIN_ROLE) {
+        require(address(registry) != address(0), "TokenStaking: registry not set");
+
+        // Update TeachToken reference
+        if (registry.isContractActive(TEACH_TOKEN_NAME)) {
+            address newTeachToken = registry.getContractAddress(TEACH_TOKEN_NAME);
+            address oldTeachToken = address(teachToken);
+
+            if (newTeachToken != oldTeachToken) {
+                teachToken = IERC20(newTeachToken);
+                emit ContractReferenceUpdated(TEACH_TOKEN_NAME, oldTeachToken, newTeachToken);
+            }
+        }
+    }
+
+    /**
+     * @dev Pause staking operations in case of emergency
+     * Can be called by emergency role or automatically by StabilityFund
+     */
+    function pauseStaking() external {
+        // Check if caller is StabilityFund, has EMERGENCY_ROLE, or is the governance contract
+        if (address(registry) != address(0)) {
+            if (registry.isContractActive(STABILITY_FUND_NAME)) {
+                address stabilityFund = registry.getContractAddress(STABILITY_FUND_NAME);
+
+                if (registry.isContractActive(GOVERNANCE_NAME)) {
+                    address governance = registry.getContractAddress(GOVERNANCE_NAME);
+
+                    require(
+                        msg.sender == stabilityFund ||
+                        msg.sender == governance ||
+                        hasRole(EMERGENCY_ROLE, msg.sender),
+                        "TokenStaking: not authorized"
+                    );
+                } else {
+                    require(
+                        msg.sender == stabilityFund ||
+                        hasRole(EMERGENCY_ROLE, msg.sender),
+                        "TokenStaking: not authorized"
+                    );
+                }
+            } else {
+                require(hasRole(EMERGENCY_ROLE, msg.sender), "TokenStaking: not authorized");
+            }
+        } else {
+            require(hasRole(EMERGENCY_ROLE, msg.sender), "TokenStaking: not authorized");
+        }
+
+        paused = true;
+    }
+
+    /**
+     * @dev Resume staking operations after emergency
+     */
+    function unpauseStaking() external onlyRole(ADMIN_ROLE) {
+        // Check if system is still paused before unpausing locally
+        if (address(registry) != address(0)) {
+            try registry.isSystemPaused() returns (bool systemPaused) {
+                require(!systemPaused, "TokenStaking: system still paused");
+            } catch {
+                // If registry call fails, proceed with unpause
+            }
+        }
+
+        paused = false;
+    }
+    
+    /**
+    * @dev Modifier to ensure the contract and system are not paused
+     */
+    modifier whenNotPaused() {
+        // Check local pause state
+        require(!paused, "TokenStaking: paused");
+
+        // Check system pause state if registry is set
+        if (address(registry) != address(0)) {
+            try registry.isSystemPaused() returns (bool systemPaused) {
+                require(!systemPaused, "TokenStaking: system is paused");
+            } catch {
+                // If registry call fails, continue using local pause state
+            }
+        }
+        _;
     }
     
     /**
@@ -238,11 +351,18 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl {
      * @param _amount Amount of tokens to stake
      * @param _schoolBeneficiary Address of the school to receive 50% of rewards
      */
-    function stake(uint256 _poolId, uint256 _amount, address _schoolBeneficiary) external nonReentrant {
+    function stake(uint256 _poolId, uint256 _amount, address _schoolBeneficiary) external nonReentrant whenNotPaused {
         require(_poolId < stakingPools.length, "TokenStaking: invalid pool ID");
         require(_amount > 0, "TokenStaking: zero amount");
-        require(_amount <= teachToken.balanceOf(msg.sender), "TokenStaking: insufficient balance");
-        require(_amount <= teachToken.allowance(msg.sender, address(this)), "TokenStaking: insufficient allowance");
+
+        // Get token from registry if available
+        IERC20 token = teachToken;
+        if (address(registry) != address(0) && registry.isContractActive(TEACH_TOKEN_NAME)) {
+            token = IERC20(registry.getContractAddress(TEACH_TOKEN_NAME));
+        }
+        
+        require(_amount <= token.balanceOf(msg.sender), "TokenStaking: insufficient balance");
+        require(_amount <= token.allowance(msg.sender, address(this)), "TokenStaking: insufficient allowance");
         require(schools[_schoolBeneficiary].isRegistered, "TokenStaking: school not registered");
         require(schools[_schoolBeneficiary].isActive, "TokenStaking: school not active");
         
@@ -272,6 +392,11 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl {
         // Transfer tokens from user to contract
         require(teachToken.transferFrom(msg.sender, address(this), _amount), "TokenStaking: transfer failed");
         
+        // Notify governance about stake update if it's registered
+        if (address(registry) != address(0) && registry.isContractActive(GOVERNANCE_NAME)) {
+            try this.notifyGovernanceOfStakeChange(msg.sender) {} catch {}
+        }
+        
         emit Staked(msg.sender, _poolId, _amount, _schoolBeneficiary);
 
         assert(userStake.amount <= pool.totalStaked);
@@ -282,7 +407,7 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl {
      * @param _poolId ID of the pool to unstake from
      * @param _amount Amount of tokens to unstake
      */
-    function unstake(uint256 _poolId, uint256 _amount) external nonReentrant {
+    function unstake(uint256 _poolId, uint256 _amount) external nonReentrant whenNotPaused {
         require(_poolId < stakingPools.length, "TokenStaking: invalid pool ID");
         require(_amount > 0, "TokenStaking: zero amount");
         
@@ -311,6 +436,12 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl {
         // If fee is applied, it stays in the contract as part of the rewards pool
         if (fee > 0) {
             rewardsPool += fee;
+        }
+
+        // Get token from registry if available
+        IERC20 token = teachToken;
+        if (address(registry) != address(0) && registry.isContractActive(TEACH_TOKEN_NAME)) {
+            token = IERC20(registry.getContractAddress(TEACH_TOKEN_NAME));
         }
         
         // Transfer tokens back to user
@@ -801,5 +932,28 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl {
             totalStaked += stakingPools[i].totalStaked;
         }
         assert(teachToken.balanceOf(address(this)) == totalStaked + rewardsPool);
+    }
+
+    /**
+     * @dev Internal helper to notify governance of stake change
+     * This ensures voting power is up to date
+     * @param _user User whose stake changed
+     */
+    function notifyGovernanceOfStakeChange(address _user) external {
+        require(msg.sender == address(this), "TokenStaking: unauthorized");
+
+        if (address(registry) != address(0) && registry.isContractActive(GOVERNANCE_NAME)) {
+            address governance = registry.getContractAddress(GOVERNANCE_NAME);
+
+            // Call the updateVotingPower function in Governance
+            (bool success, ) = governance.call(
+                abi.encodeWithSignature(
+                    "updateVotingPower(address)",
+                    _user
+                )
+            );
+
+            // We don't revert on failure since this is a non-critical operation
+        }
     }
 }

@@ -5,14 +5,21 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/access/AccessControl.sol";
+import "./RegistryAware.sol";
 
 /**
  * @title TeachTokenPresale
  * @dev Multi-tier presale contract for TEACH Token
  */
-contract TeachTokenPresale is Ownable, ReentrancyGuard {
+contract TeachTokenPresale is Ownable, ReentrancyGuard, AccessControl, RegistryAware {
     using SafeMath for uint256;
 
+    // Registry contract names
+    bytes32 public constant TEACH_TOKEN_NAME = keccak256("TEACH_TOKEN");
+    bytes32 public constant STABILITY_FUND_NAME = keccak256("PLATFORM_STABILITY_FUND");
+    bytes32 public constant GOVERNANCE_NAME = keccak256("TEACHER_GOVERNANCE");
+    
     // Presale tiers structure
     struct PresaleTier {
         uint96 price;         // Price in USD (scaled by 1e6)
@@ -37,6 +44,7 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard {
     mapping(uint256 => uint256) public maxTokensForTier;
 
     bytes32 public constant RECORDER_ROLE = keccak256("RECORDER_ROLE");
+    bytes32 public constant EMERGENCY_ROLE = keccak256("EMERGENCY_ROLE");
 
     // Payment token (USDC)
     IERC20 public paymentToken;
@@ -50,6 +58,7 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard {
     // Mapping from user address to purchase info
     mapping(address => Purchase) public purchases;
 
+    // Left for history. No whitelist tiers, all public
     // Whitelist for early tiers
     //mapping(address => bool) public whitelist;
     
@@ -96,6 +105,8 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard {
     event TierDeadlineUpdated(uint256 indexed tier, uint256 deadline);
     event TierAdvanced(uint256 indexed newTier);
     event TierExtended(uint256 indexed tier, uint256 newDeadline);
+    event RegistrySet(address indexed registry);
+    event ContractReferenceUpdated(bytes32 indexed contractName, address indexed oldAddress, address indexed newAddress);
 
     modifier purchaseRateLimit(uint256 _usdAmount) {
         require(
@@ -219,7 +230,7 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard {
         }
 
         // Inside the constructor, add:
-        maxTokensPerAddress = 1_000_000 * 10**18; // 1M tokens by default
+        maxTokensPerAddress = 1_500_000 * 10**18; // 1.5M tokens by default
     }
 
     function addRecorder(address _recorder) external onlyOwner {
@@ -311,7 +322,7 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard {
      * @param _tierId Tier to purchase from
      * @param _usdAmount USD amount to spend (scaled by 1e6)
      */
-    function purchase(uint256 _tierId, uint256 _usdAmount) external nonReentrant whenNotPaused purchaseRateLimit(_usdAmount) {
+    function purchase(uint256 _tierId, uint256 _usdAmount) external nonReentrant whenSystemNotPaused whenNotPaused purchaseRateLimit(_usdAmount) {
         require(block.timestamp >= presaleStart && block.timestamp <= presaleEnd, "Presale not active");
         require(_tierId < tiers.length, "Invalid tier ID");
         PresaleTier storage tier = tiers[_tierId];
@@ -361,6 +372,11 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard {
         }
         userPurchase.tierAmounts[_tierId] = userPurchase.tierAmounts[_tierId].add(_usdAmount);
 
+        // Record purchase for tracking using the StabilityFund
+        if (address(registry) != address(0) && registry.isContractActive(STABILITY_FUND_NAME)) {
+            try this.recordPurchaseInStabilityFund(msg.sender, tokenAmount, _usdAmount) {} catch {}
+        }
+        
         emit TierPurchase(msg.sender, _tierId, tokenAmount, _usdAmount);
     }
 
@@ -546,6 +562,92 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard {
         uint256 _minTimeBetweenPurchases,
         uint256 _maxPurchaseAmount
     ) external onlyOwner {
+        minTimeBetweenPurchases = _minTimeBetweenPurchases;
+        maxPurchaseAmount = _maxPurchaseAmount;
+    }
+
+    /**
+     * @dev Sets the registry contract address
+     * @param _registry Address of the registry contract
+     */
+    function setRegistry(address _registry) external onlyOwner {
+        _setRegistry(_registry, keccak256("TEACH_CROWDSALE"));
+        emit RegistrySet(_registry);
+    }
+
+    /**
+     * @dev Update contract references from registry
+     * This ensures contracts always have the latest addresses
+     */
+    function updateContractReferences() external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(address(registry) != address(0), "TeachCrowdSale: registry not set");
+
+        // Update TeachToken reference
+        if (registry.isContractActive(TEACH_TOKEN_NAME)) {
+            address newTeachToken = registry.getContractAddress(TEACH_TOKEN_NAME);
+            address oldTeachToken = address(teachToken);
+
+            if (newTeachToken != oldTeachToken) {
+                teachToken = IERC20(newTeachToken);
+                emit ContractReferenceUpdated(TEACH_TOKEN_NAME, oldTeachToken, newTeachToken);
+            }
+        }
+
+        // Update StabilityFund reference for price oracle
+        if (registry.isContractActive(STABILITY_FUND_NAME)) {
+            address stabilityFund = registry.getContractAddress(STABILITY_FUND_NAME);
+
+            // Here we might need to update any reference to the stability fund
+            // For example, if the crowdsale uses the stability fund for pricing
+        }
+    }
+
+    /**
+     * @dev Record purchase in stability fund for tracking
+     * This function can only be called by the contract itself
+     * @param _user Purchaser address
+     * @param _tokenAmount Amount of tokens purchased
+     * @param _usdAmount USD amount spent
+     */
+    function recordPurchaseInStabilityFund(
+        address _user,
+        uint256 _tokenAmount,
+        uint256 _usdAmount
+    ) external {
+        require(msg.sender == address(this), "TeachCrowdSale: unauthorized");
+
+        address stabilityFund = registry.getContractAddress(STABILITY_FUND_NAME);
+
+        // Call the recordTokenPurchase function in StabilityFund
+        (bool success, ) = stabilityFund.call(
+            abi.encodeWithSignature(
+                "recordTokenPurchase(address,uint256,uint256)",
+                _user,
+                _tokenAmount,
+                _usdAmount
+            )
+        );
+
+        // We don't revert on failure since this is a non-critical operation
+    }
+
+    /**
+     * @dev Handles emergency pause notification from the StabilityFund
+     * Only callable by the StabilityFund contract
+     */
+    function handleEmergencyPause() external onlyFromRegistry(STABILITY_FUND_NAME) {
+        paused = true;
+    }
+
+    /**
+     * @dev Allows governance to update parameters during emergency
+     * @param _minTimeBetweenPurchases New minimum time between purchases
+     * @param _maxPurchaseAmount New maximum purchase amount
+     */
+    function emergencyUpdateLimits(
+        uint256 _minTimeBetweenPurchases,
+        uint256 _maxPurchaseAmount
+    ) external onlyFromRegistry(GOVERNANCE_NAME) {
         minTimeBetweenPurchases = _minTimeBetweenPurchases;
         maxPurchaseAmount = _maxPurchaseAmount;
     }

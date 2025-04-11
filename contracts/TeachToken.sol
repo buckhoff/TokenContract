@@ -5,21 +5,30 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/security/Pausable.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "./RegistryAware.sol";
 
 /**
  * @title TeachToken
  * @dev Implementation of the TEACH Token for the TeacherSupport Platform on Polygon
  */
-contract TeachToken is ERC20, ERC20Burnable, Pausable, AccessControl {
+contract TeachToken is ERC20, ERC20Burnable, Pausable, AccessControl, ReentrancyGuard, RegistryAware {
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
     bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");
 
+    bytes32 public constant STABILITY_FUND_NAME = keccak256("PLATFORM_STABILITY_FUND");
+    bytes32 public constant STAKING_CONTRACT_NAME = keccak256("TOKEN_STAKING");
+    bytes32 public constant GOVERNANCE_NAME = keccak256("TEACHER_GOVERNANCE");
+    
     // Maximum supply cap
     uint256 public constant MAX_SUPPLY = 5_000_000_000 * 10**18; // 5 billion tokens
 
     // Track if initial distribution has been performed
     bool private initialDistributionDone;
+
+    // Recovery mechanism for accidentally sent tokens
+    mapping(address => bool) public recoveryAllowedTokens; 
     
     // Events
     event MinterAdded(address indexed account);
@@ -28,7 +37,10 @@ contract TeachToken is ERC20, ERC20Burnable, Pausable, AccessControl {
     event BurnerRemoved(address indexed account);
     event TokensBurned(address indexed burner, uint256 amount);
     event InitialDistributionComplete(uint256 timestamp);
-
+    event RecoveryTokenStatusChanged(address indexed token, bool allowed);
+    event ERC20TokensRecovered(address indexed token, address indexed to, uint256 amount);
+    event RegistrySet(address indexed registry);
+    
     /**
      * @dev Constructor that initializes the token with name, symbol, and roles
      */
@@ -50,9 +62,18 @@ contract TeachToken is ERC20, ERC20Burnable, Pausable, AccessControl {
     }
 
     /**
- * @dev Performs the initial token distribution according to the defined allocation
- * Can only be called once by the admin
- */
+     * @dev Sets the registry contract address
+     * @param _registry Address of the registry contract
+     */
+    function setRegistry(address _registry) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _setRegistry(_registry, keccak256("TEACH_TOKEN"));
+        emit RegistrySet(_registry);
+    }
+    
+    /**
+    * @dev Performs the initial token distribution according to the defined allocation
+    * Can only be called once by the admin
+    */
     function performInitialDistribution(
         address platformEcosystemAddress,
         address communityIncentivesAddress,
@@ -153,10 +174,37 @@ contract TeachToken is ERC20, ERC20Burnable, Pausable, AccessControl {
      * @param from The address to burn tokens from
      * @param amount The amount of tokens to burn
      */
-    function burnFrom(address from, uint256 amount) public override onlyRole(BURNER_ROLE) nonReentrant {
+    function burnFrom(address from, uint256 amount) public override onlyRole(BURNER_ROLE) nonReentrant whenSystemNotPaused {
         _spendAllowance(from, _msgSender(), amount);
         _burn(from, amount);
+
+        // If the stability fund is registered, notify it about the burn
+        if (address(registry) != address(0)) {
+            try this.notifyBurn(amount) {} catch {}
+        }
+        
         emit TokensBurned(from, amount);
+    }
+
+    /**
+     * @dev Burn with deflationary effect notification to stability fund
+     * @param amount Amount burned
+     */
+    function notifyBurn(uint256 amount) external {
+        require(msg.sender == address(this), "TeachToken: unauthorized");
+
+        if (address(registry) != address(0)) {
+            try IContractRegistry(registry).isContractActive(STABILITY_FUND_NAME) returns (bool isActive) {
+                if (isActive) {
+                    address stabilityFund = IContractRegistry(registry).getContractAddress(STABILITY_FUND_NAME);
+                    // Call the stability fund's processBurnedTokens function
+                    (bool success, ) = stabilityFund.call(
+                        abi.encodeWithSignature("processBurnedTokens(uint256)", amount)
+                    );
+                    // We don't revert if this call fails to maintain the primary burn functionality
+                }
+            } catch {}
+        }
     }
     
     /**
@@ -203,6 +251,15 @@ contract TeachToken is ERC20, ERC20Burnable, Pausable, AccessControl {
      */
     function _beforeTokenTransfer(address from, address to, uint256 amount) internal override whenNotPaused
     {
+        // Also check if system is paused via registry
+        if (address(registry) != address(0)) {
+            try registry.isSystemPaused() returns (bool paused) {
+                require(!paused, "TeachToken: system is paused");
+            } catch {
+                // If registry call fails, continue with the transfer
+                // This prevents tokens being locked if the registry is compromised
+            }
+        }
         super._beforeTokenTransfer(from, to, amount);
     }
 
@@ -223,18 +280,35 @@ contract TeachToken is ERC20, ERC20Burnable, Pausable, AccessControl {
     }
 
     /**
- * @dev Allows the admin to recover tokens accidentally sent to the contract
- * @param tokenAddress The address of the token to recover
- * @param amount The amount of tokens to recover
- */
+     * @dev Set whether a token is allowed to be recovered
+     * @param _token Address of the token
+     * @param _allowed Whether recovery is allowed
+     */
+    function setRecoveryAllowedToken(address _token, bool _allowed) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(_token != address(0), "TeachToken: zero token address");
+        require(_token != address(this), "TeachToken: cannot allow TEACH token");
+
+        recoveryAllowedTokens[_token] = _allowed;
+
+        emit RecoveryTokenStatusChanged(_token, _allowed);
+    }
+    
+    /**
+    * @dev Allows the admin to recover tokens accidentally sent to the contract
+    * @param tokenAddress The address of the token to recover
+    * @param amount The amount of tokens to recover
+    */
     function recoverERC20(address tokenAddress, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant {
         require(tokenAddress != address(this), "TeachToken: Cannot recover TEACH tokens");
         require(amount > 0, "TeachToken: Zero amount");
+        require(recoveryAllowedTokens[_tokenAddress], "TeachToken: Token recovery not allowed");
 
         IERC20 token = IERC20(tokenAddress);
         require(token.balanceOf(address(this)) >= amount, "TeachToken: Insufficient balance");
 
         bool success = token.transfer(msg.sender, amount);
         require(success, "TeachToken: Transfer failed");
+
+        emit ERC20TokensRecovered(_tokenAddress, msg.sender, _amount);
     }
 }

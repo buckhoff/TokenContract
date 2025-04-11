@@ -5,6 +5,8 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
+import "@openzeppelin/contracts/access/AccessControl.sol";
+import "./RegistryAware.sol";
 
 // Add the interface for staking contract
 interface ITokenStaking {
@@ -24,8 +26,23 @@ interface ITokenStaking {
  * @title TeacherGovernance
  * @dev Contract for decentralized governance of the TeacherSupport platform
  */
-contract TeacherGovernance is Ownable, ReentrancyGuard {
+contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryAware {
     using Counters for Counters.Counter;
+
+    // Registry contract names
+    bytes32 public constant TEACH_TOKEN_NAME = keccak256("TEACH_TOKEN");
+    bytes32 public constant STABILITY_FUND_NAME = keccak256("PLATFORM_STABILITY_FUND");
+    bytes32 public constant STAKING_NAME = keccak256("TOKEN_STAKING");
+    bytes32 public constant MARKETPLACE_NAME = keccak256("TEACHER_MARKETPLACE");
+    bytes32 public constant CROWDSALE_NAME = keccak256("TEACH_CROWDSALE");
+    bytes32 public constant TEACHER_REWARD_NAME = keccak256("TEACHER_REWARD");
+
+    // Role constants
+    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
+    bytes32 public constant EMERGENCY_ROLE = keccak256("EMERGENCY_ROLE");
+
+    // Staking contract reference
+    ITokenStaking public stakingContract;
     
     // The TeachToken contract
     IERC20 public teachToken;
@@ -57,6 +74,14 @@ contract TeacherGovernance is Ownable, ReentrancyGuard {
     // Pending parameter change
     PendingParameterChange public pendingChange;
 
+    Counters.Counter private _proposalIdCounter;
+    uint256 public proposalThreshold;
+    uint256 public minVotingPeriod;
+    uint256 public maxVotingPeriod;
+    uint256 public quorumThreshold;
+    uint256 public executionDelay;
+    uint256 public executionPeriod;
+    
     // Add state variables
     uint96 public treasuryBalance;
     mapping(address => bool) public allowedTokens;
@@ -177,8 +202,11 @@ contract TeacherGovernance is Ownable, ReentrancyGuard {
     event GuardianAdded(address guardian);
     event GuardianRemoved(address guardian);
     event ProposalCancellationVoted(uint256 indexed proposalId, address guardian);
-    event ProposalEmergencyCancelled(uint256 indexed proposalId, string reason);  
-
+    event ProposalEmergencyCancelled(uint256 indexed proposalId, string reason);
+    event RegistrySet(address indexed registry);
+    event ContractReferenceUpdated(bytes32 indexed contractName, address indexed oldAddress, address indexed newAddress);
+    event SystemEmergencyTriggered(address indexed triggeredBy, string reason);
+    
     ITokenStaking public stakingContract;
     bool public stakingWeightEnabled;
     uint16 public maxStakingMultiplier; // multiplier scaled by 100 (e.g., 200 = 2x)
@@ -234,13 +262,52 @@ contract TeacherGovernance is Ownable, ReentrancyGuard {
         bytes[] memory _calldatas,
         string memory _description,
         uint256 _votingPeriod
-    ) external returns (uint256) {
-        require(teachToken.balanceOf(msg.sender) >= proposalThreshold, "TeacherGovernance: below proposal threshold");
+    ) external whenSystemNotPaused returns (uint256) {
+        if (address(registry) != address(0)) {
+            try registry.isSystemPaused() returns (bool paused) {
+                require(!paused, "TeacherGovernance: system is paused");
+            } catch {
+                // If registry call fails, continue with the proposal creation
+            }
+        }
+        
+        // Use governance token from registry if available
+        IERC20 governanceToken = teachToken;
+        if (address(registry) != address(0) && registry.isContractActive(TEACH_TOKEN_NAME)) {
+            governanceToken = IERC20(registry.getContractAddress(TEACH_TOKEN_NAME));
+        }
+        
+        require(governanceToken.balanceOf(msg.sender) >= proposalThreshold, "TeacherGovernance: below proposal threshold");
         require(_targets.length > 0, "TeacherGovernance: empty proposal");
         require(_targets.length == _signatures.length, "TeacherGovernance: mismatched signatures");
         require(_targets.length == _calldatas.length, "TeacherGovernance: mismatched calldatas");
         require(_votingPeriod >= minVotingPeriod, "TeacherGovernance: voting period too short");
         require(_votingPeriod <= maxVotingPeriod, "TeacherGovernance: voting period too long");
+
+        // Check if any system contracts are targets
+        for (uint256 i = 0; i < _targets.length; i++) {
+            address target = _targets[i];
+
+            // Check if target is a core contract
+            if (address(registry) != address(0)) {
+                bytes32[] memory contractNames = new bytes32[](6);
+                contractNames[0] = TEACH_TOKEN_NAME;
+                contractNames[1] = STABILITY_FUND_NAME;
+                contractNames[2] = STAKING_NAME;
+                contractNames[3] = MARKETPLACE_NAME;
+                contractNames[4] = CROWDSALE_NAME;
+                contractNames[5] = TEACHER_REWARD_NAME;
+
+                for (uint256 j = 0; j < contractNames.length; j++) {
+                    if (registry.isContractActive(contractNames[j])) {
+                        if (target == registry.getContractAddress(contractNames[j])) {
+                            // Target is a system contract, require additional permissions
+                            require(hasRole(ADMIN_ROLE, msg.sender), "TeacherGovernance: not authorized for system contracts");
+                        }
+                    }
+                }
+            }
+        }
         
         uint256 proposalId = _proposalIdCounter.current();
         _proposalIdCounter.increment();
@@ -678,33 +745,88 @@ contract TeacherGovernance is Ownable, ReentrancyGuard {
     
         // Add basic token balance
         power = tokenBalance;
-    
-        // Add weighted staking power
-        uint256 poolCount = stakingContract.getPoolCount();
-        for (uint256 poolId = 0; poolId < poolCount; poolId++) {
-            (
-                uint256 stakedAmount,
-                uint256 startTime,
-                ,,,, // Skip other return values we don't need
-            ) = stakingContract.getUserStake(poolId, _voter);
-        
-            if (stakedAmount > 0) {
-                // Calculate staking duration in days
-                uint256 stakingDays = (block.timestamp - startTime) / 1 days;
-            
-                // Calculate weight multiplier (linear between 1x and maxStakingMultiplier)
-                uint256 multiplier = 100; // Base multiplier 1.0
-                if (stakingDays > 0) {
-                    uint256 additionalMultiplier = stakingDays >= maxStakingPeriod ? 
-                        (maxStakingMultiplier - 100) : 
-                        ((maxStakingMultiplier - 100) * stakingDays) / maxStakingPeriod;
-                    
-                    multiplier += additionalMultiplier;
+
+        // Check registry first if it's set
+        if (address(registry) != address(0) && registry.isContractActive(STAKING_NAME)) {
+            address stakingAddress = registry.getContractAddress(STAKING_NAME);
+
+            if (stakingAddress != address(0)) {
+                try ITokenStaking(stakingAddress).getPoolCount() returns (uint256 poolCount) {
+                    // Add weighted staking power
+                    for (uint256 poolId = 0; poolId < poolCount; poolId++) {
+                        try ITokenStaking(stakingAddress).getUserStake(poolId, _voter) returns (
+                            uint256 stakedAmount,
+                            uint256 startTime,
+                            uint256 lastClaimTime,
+                            uint256 pendingReward,
+                            address schoolBeneficiary,
+                            uint256 userRewardPortion,
+                            uint256 schoolRewardPortion
+                        ) {
+                            if (stakedAmount > 0) {
+                                // Calculate staking duration in days
+                                uint256 stakingDays = (block.timestamp - startTime) / 1 days;
+
+                                // Calculate weight multiplier (linear between 1x and maxStakingMultiplier)
+                                uint256 multiplier = 100; // Base multiplier 1.0
+                                if (stakingDays > 0) {
+                                    uint256 additionalMultiplier = stakingDays >= maxStakingPeriod ?
+                                        (maxStakingMultiplier - 100) :
+                                        ((maxStakingMultiplier - 100) * stakingDays) / maxStakingPeriod;
+
+                                    multiplier += additionalMultiplier;
+                                }
+
+                                // Apply multiplier to staked amount
+                                uint256 weightedStakedAmount = (stakedAmount * multiplier) / 100;
+                                power += weightedStakedAmount - stakedAmount; // Add only the extra voting power
+                            }
+                        } catch {
+                            // If call fails, continue with the next pool
+                        }
+                    }
+                } catch {
+                    // If getPoolCount fails, just use the token balance
                 }
-            
-                // Apply multiplier to staked amount
-                uint256 weightedStakedAmount = (stakedAmount * multiplier) / 100;
-                power += weightedStakedAmount - stakedAmount; // Add only the extra voting power
+            }
+        } else if (address(stakingContract) != address(0)) {
+            // Fallback to contract reference if registry lookup fails
+            try stakingContract.getPoolCount() returns (uint256 poolCount) {
+                // Add weighted staking power (same logic as above)
+                for (uint256 poolId = 0; poolId < poolCount; poolId++) {
+                    try stakingContract.getUserStake(poolId, _voter) returns (
+                        uint256 stakedAmount,
+                        uint256 startTime,
+                        uint256 lastClaimTime,
+                        uint256 pendingReward,
+                        address schoolBeneficiary,
+                        uint256 userRewardPortion,
+                        uint256 schoolRewardPortion
+                    ) {
+                        if (stakedAmount > 0) {
+                            // Calculate staking duration in days
+                            uint256 stakingDays = (block.timestamp - startTime) / 1 days;
+
+                            // Calculate weight multiplier (linear between 1x and maxStakingMultiplier)
+                            uint256 multiplier = 100; // Base multiplier 1.0
+                            if (stakingDays > 0) {
+                                uint256 additionalMultiplier = stakingDays >= maxStakingPeriod ?
+                                    (maxStakingMultiplier - 100) :
+                                    ((maxStakingMultiplier - 100) * stakingDays) / maxStakingPeriod;
+
+                                multiplier += additionalMultiplier;
+                            }
+
+                            // Apply multiplier to staked amount
+                            uint256 weightedStakedAmount = (stakedAmount * multiplier) / 100;
+                            power += weightedStakedAmount - stakedAmount; // Add only the extra voting power
+                        }
+                    } catch {
+                        // If call fails, continue with the next pool
+                    }
+                }
+            } catch {
+                // If getPoolCount fails, just use the token balance
             }
         }
     
@@ -866,4 +988,106 @@ contract TeacherGovernance is Ownable, ReentrancyGuard {
 			emit ProposalEmergencyCancelled(_proposalId, _reason);
 		}
 	}
+
+    /**
+     * @dev Sets the registry contract address
+     * @param _registry Address of the registry contract
+     */
+    function setRegistry(address _registry) external onlyOwner {
+        _setRegistry(_registry, keccak256("TEACHER_GOVERNANCE"));
+        emit RegistrySet(_registry);
+    }
+
+    /**
+     * @dev Update contract references from registry
+     * This ensures contracts always have the latest addresses
+     */
+    function updateContractReferences() external onlyRole(ADMIN_ROLE) {
+        require(address(registry) != address(0), "TeacherGovernance: registry not set");
+
+        // Update TeachToken reference
+        if (registry.isContractActive(TEACH_TOKEN_NAME)) {
+            address newTeachToken = registry.getContractAddress(TEACH_TOKEN_NAME);
+            address oldTeachToken = address(teachToken);
+
+            if (newTeachToken != oldTeachToken) {
+                teachToken = IERC20(newTeachToken);
+                emit ContractReferenceUpdated(TEACH_TOKEN_NAME, oldTeachToken, newTeachToken);
+            }
+        }
+
+        // Update Staking reference
+        if (registry.isContractActive(STAKING_NAME)) {
+            address newStaking = registry.getContractAddress(STAKING_NAME);
+            address oldStaking = address(stakingContract);
+
+            if (newStaking != oldStaking) {
+                stakingContract = ITokenStaking(newStaking);
+                stakingWeightEnabled = true; // Enable staking weight when staking contract is available
+                emit ContractReferenceUpdated(STAKING_NAME, oldStaking, newStaking);
+            }
+        }
+    }
+
+    /**
+     * @dev Triggers system-wide emergency mode
+     * @param _reason Reason for the emergency
+     */
+    function triggerSystemEmergency(string memory _reason) external onlyRole(EMERGENCY_ROLE) {
+        require(address(registry) != address(0), "TeacherGovernance: registry not set");
+
+        // Pause the registry
+        try registry.pauseSystem() {
+            // Success
+        } catch {
+            // If registry call fails, we still try to notify individual contracts
+        }
+
+        // Notify stability fund
+        if (registry.isContractActive(STABILITY_FUND_NAME)) {
+            address stabilityFund = registry.getContractAddress(STABILITY_FUND_NAME);
+            (bool success, ) = stabilityFund.call(
+                abi.encodeWithSignature("emergencyPause()")
+            );
+            // We continue even if the call fails
+        }
+
+        // Notify marketplace
+        if (registry.isContractActive(MARKETPLACE_NAME)) {
+            address marketplace = registry.getContractAddress(MARKETPLACE_NAME);
+            (bool success, ) = marketplace.call(
+                abi.encodeWithSignature("pauseMarketplace()")
+            );
+            // We continue even if the call fails
+        }
+
+        // Notify crowdsale
+        if (registry.isContractActive(CROWDSALE_NAME)) {
+            address crowdsale = registry.getContractAddress(CROWDSALE_NAME);
+            (bool success, ) = crowdsale.call(
+                abi.encodeWithSignature("pausePresale()")
+            );
+            // We continue even if the call fails
+        }
+
+        // Notify staking
+        if (registry.isContractActive(STAKING_NAME)) {
+            address staking = registry.getContractAddress(STAKING_NAME);
+            (bool success, ) = staking.call(
+                abi.encodeWithSignature("pauseStaking()")
+            );
+            // We continue even if the call fails
+        }
+
+        // Notify rewards
+        if (registry.isContractActive(TEACHER_REWARD_NAME)) {
+            address rewards = registry.getContractAddress(TEACHER_REWARD_NAME);
+            (bool success, ) = rewards.call(
+                abi.encodeWithSignature("pauseRewards()")
+            );
+            // We continue even if the call fails
+        }
+
+        emit SystemEmergencyTriggered(msg.sender, _reason);
+    }
 }

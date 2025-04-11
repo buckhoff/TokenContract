@@ -2,9 +2,10 @@
 pragma solidity ^0.8.19;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
+import "./RegistryAware.sol";
 
     
 /**
@@ -12,13 +13,21 @@ import "@openzeppelin/contracts/utils/math/Math.sol";
  * @dev Contract that protects the platform from TEACH token price volatility
  *      during the donation-to-funding conversion process
  */
-contract PlatformStabilityFund is Ownable, ReentrancyGuard, AccessControl {
+contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware {
     using Math for uint256;
 
     struct PriceObservation {
         uint256 timestamp;
         uint256 price;
     }
+
+    // Registry contract names
+    bytes32 public constant TEACH_TOKEN_NAME = keccak256("TEACH_TOKEN");
+    bytes32 public constant MARKETPLACE_NAME = keccak256("TEACHER_MARKETPLACE");
+    bytes32 public constant GOVERNANCE_NAME = keccak256("TEACHER_GOVERNANCE");
+    bytes32 public constant CROWDSALE_NAME = keccak256("TEACH_CROWDSALE");
+    bytes32 public constant STAKING_NAME = keccak256("TOKEN_STAKING");
+    bytes32 public constant TEACHER_REWARD_NAME = keccak256("TEACHER_REWARD");
     
     bytes32 public constant ORACLE_ROLE = keccak256("ORACLE_ROLE");
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
@@ -91,6 +100,9 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard, AccessControl {
     event ValueModeChanged(bool isLowValueMode);
     event BaselinePriceUpdated(uint256 oldPrice, uint256 newPrice);
     event CircuitBreakerTriggered(uint256 currentRatio, uint256 threshold);
+    event RegistrySet(address indexed registry);
+    event ContractReferenceUpdated(bytes32 indexed contractName, address indexed oldAddress, address indexed newAddress);
+    event EmergencyNotificationFailed(bytes32 indexed contractName);
     event EmergencyPaused(address indexed triggeredBy);
     event EmergencyResumed(address indexed resumedBy);
     event CriticalThresholdUpdated(uint256 oldThreshold, uint256 newThreshold);
@@ -121,7 +133,16 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard, AccessControl {
     }
 
     modifier whenNotPaused() {
-        require(!paused, "PlatformStabilityFund: paused");
+        if (address(registry) != address(0)) {
+            try registry.isSystemPaused() returns (bool systemPaused) {
+                require(!systemPaused, "StabilityFund: system is paused");
+            } catch {
+                // If registry call fails, fall back to local pause state
+                require(!paused, "StabilityFund: paused");
+            }
+        } else {
+            require(!paused, "PlatformStabilityFund: paused");
+        }
         _;
     }
 
@@ -221,6 +242,15 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard, AccessControl {
         flashLoanProtectionEnabled = true;
     }
 
+    /**
+    * @dev Sets the registry contract address
+    * @param _registry Address of the registry contract
+    */
+    function setRegistry(address _registry) external onlyRole(ADMIN_ROLE) {
+        _setRegistry(_registry, keccak256("PLATFORM_STABILITY_FUND"));
+        emit RegistrySet(_registry);
+    }
+    
     /**
      * @dev Updates the token price and checks if low value mode should be activated
      * @param _newPrice New token price in stable coin units (scaled by 1e18)
@@ -663,10 +693,22 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard, AccessControl {
     * @dev Process burned tokens and convert a portion to reserves
     * @param _burnedAmount Amount of TEACH tokens that were burned
     */
-    function processBurnedTokens(uint256 _burnedAmount) external  {
-        require(authorizedBurners[msg.sender], "PlatformStabilityFund: not authorized");
+    function processBurnedTokens(uint256 _burnedAmount) external onlyRole(BURNER_ROLE){
         require(_burnedAmount > 0, "PlatformStabilityFund: zero burn amount");
 
+        // If the registry is set, verify the caller is either a registered burner or the token contract
+        if (address(registry) != address(0)) {
+            if (registry.isContractActive(TEACH_TOKEN_NAME)) {
+                address tokenAddress = registry.getContractAddress(TEACH_TOKEN_NAME);
+                require(
+                    msg.sender == tokenAddress || hasRole(BURNER_ROLE, msg.sender),
+                    "StabilityFund: not authorized"
+                );
+            }
+        } else {
+            require(hasRole(BURNER_ROLE, msg.sender), "StabilityFund: not authorized");
+        }
+        
         uint256 verifiedPrice = getVerifiedPrice();
         // Calculate value of burned tokens
         uint256 burnValue = (_burnedAmount * verifiedPrice) / 1e18;
@@ -975,4 +1017,106 @@ contract PlatformStabilityFund is Ownable, ReentrancyGuard, AccessControl {
         return tokenPrice;
     }
 
+    /**
+     * @dev Emergency notification to all connected contracts
+     * Called when critical stability issues are detected
+     */
+    function notifyEmergencyToConnectedContracts() external onlyRole(EMERGENCY_ROLE) {
+        require(address(registry) != address(0), "StabilityFund: registry not set");
+
+        // Try to notify the marketplace to pause
+        try registry.isContractActive(MARKETPLACE_NAME) returns (bool isActive) {
+            if (isActive) {
+                address marketplace = registry.getContractAddress(MARKETPLACE_NAME);
+                (bool success, ) = marketplace.call(
+                    abi.encodeWithSignature("pauseMarketplace()")
+                );
+                // Log but don't revert if call fails
+                if (!success) {
+                    emit EmergencyNotificationFailed(MARKETPLACE_NAME);
+                }
+            }
+        } catch {
+            emit EmergencyNotificationFailed(MARKETPLACE_NAME);
+        }
+
+        // Try to notify the crowdsale to pause
+        try registry.isContractActive(CROWDSALE_NAME) returns (bool isActive) {
+            if (isActive) {
+                address crowdsale = registry.getContractAddress(CROWDSALE_NAME);
+                (bool success, ) = crowdsale.call(
+                    abi.encodeWithSignature("pausePresale()")
+                );
+                if (!success) {
+                    emit EmergencyNotificationFailed(CROWDSALE_NAME);
+                }
+            }
+        } catch {
+            emit EmergencyNotificationFailed(CROWDSALE_NAME);
+        }
+
+        // Try to notify staking contract
+        try registry.isContractActive(STAKING_NAME) returns (bool isActive) {
+            if (isActive) {
+                address staking = registry.getContractAddress(STAKING_NAME);
+                (bool success, ) = staking.call(
+                    abi.encodeWithSignature("pauseStaking()")
+                );
+                if (!success) {
+                    emit EmergencyNotificationFailed(STAKING_NAME);
+                }
+            }
+        } catch {
+            emit EmergencyNotificationFailed(STAKING_NAME);
+        }
+
+        // Try to notify teacher rewards
+        try registry.isContractActive(TEACHER_REWARD_NAME) returns (bool isActive) {
+            if (isActive) {
+                address rewards = registry.getContractAddress(TEACHER_REWARD_NAME);
+                (bool success, ) = rewards.call(
+                    abi.encodeWithSignature("pauseRewards()")
+                );
+                if (!success) {
+                    emit EmergencyNotificationFailed(TEACHER_REWARD_NAME);
+                }
+            }
+        } catch {
+            emit EmergencyNotificationFailed(TEACHER_REWARD_NAME);
+        }
+
+        // Trigger the emergency pause in this contract as well
+        paused = true;
+        emit EmergencyPaused(msg.sender);
+    }
+
+    /**
+     * @dev Get the TeachToken address from the registry
+     * @return Address of the TeachToken contract
+     */
+    function getTeachTokenFromRegistry() public view returns (address) {
+        require(address(registry) != address(0), "StabilityFund: registry not set");
+        require(registry.isContractActive(TEACH_TOKEN_NAME), "StabilityFund: TEACH token not active");
+
+        return registry.getContractAddress(TEACH_TOKEN_NAME);
+    }
+
+    /**
+    * @dev Update contract references from registry
+     * This ensures contracts always have the latest addresses
+     */
+    function updateContractReferences() external onlyRole(ADMIN_ROLE) {
+        require(address(registry) != address(0), "StabilityFund: registry not set");
+
+        // Update TeachToken reference
+        if (registry.isContractActive(TEACH_TOKEN_NAME)) {
+            address newTeachToken = registry.getContractAddress(TEACH_TOKEN_NAME);
+            address oldTeachToken = address(teachToken);
+
+            if (newTeachToken != oldTeachToken) {
+                teachToken = IERC20(newTeachToken);
+                emit ContractReferenceUpdated(TEACH_TOKEN_NAME, oldTeachToken, newTeachToken);
+            }
+        }
+    }
 }
