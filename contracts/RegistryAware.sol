@@ -31,7 +31,9 @@ abstract contract RegistryAware {
      * @param _contractNameBytes32 Name of the expected contract
      */
     modifier onlyFromRegistry(bytes32 _contractNameBytes32) {
+        require(address(registry) != address(0), "TeachCrowdSale: registry not set");
         address contractAddress = registry.getContractAddress(_contractNameBytes32);
+        require(contractAddress != address(0), "TeachCrowdSale: contract not registered");
         require(msg.sender == contractAddress, "RegistryAware: caller not authorized contract");
         _;
     }

@@ -39,10 +39,29 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard, AccessControl, RegistryA
         uint256[] tierAmounts; // Amount purchased in each tier
     }
 
+    struct ClaimEvent {
+        uint256 amount;
+        uint256 timestamp;
+    }
+
+    // Emergency state tracking
+    enum EmergencyState { NORMAL, MINOR_EMERGENCY, CRITICAL_EMERGENCY }
+    EmergencyState public emergencyState;
+
+    // Emergency thresholds
+    uint256 public constant MINOR_EMERGENCY_THRESHOLD = 1; 
+    uint256 public constant CRITICAL_EMERGENCY_THRESHOLD = 2;
+
+    // Emergency recovery tracking
+    mapping(address => bool) public emergencyRecoveryApprovals;
+    uint256 public requiredRecoveryApprovals;
+    bool public inRecoveryMode;
+    
     uint256 public currentTier = 0;
     uint256 public tierCount;
     mapping(uint256 => uint256) public maxTokensForTier;
 
+    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
     bytes32 public constant RECORDER_ROLE = keccak256("RECORDER_ROLE");
     bytes32 public constant EMERGENCY_ROLE = keccak256("EMERGENCY_ROLE");
 
@@ -96,6 +115,16 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard, AccessControl, RegistryA
     uint256 public minTimeBetweenPurchases = 1 hours;
     uint256 public maxPurchaseAmount = 50_000 * PRICE_DECIMALS; // $50,000 default max
 
+    // Add mapping to track claims history
+    mapping(address => ClaimEvent[]) public claimHistory;
+
+    mapping(address => bool) public autoCompoundEnabled;
+
+    // Emergency state variables
+    bool public inEmergencyRecovery = false;
+    uint256 public emergencyPauseTime;
+    mapping(address => bool) public emergencyWithdrawalsProcessed;
+    
     // Events
     event TierPurchase(address indexed buyer, uint256 tierId, uint256 tokenAmount, uint256 usdAmount);
     event TierStatusChanged(uint256 tierId, bool isActive);
@@ -107,10 +136,13 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard, AccessControl, RegistryA
     event TierExtended(uint256 indexed tier, uint256 newDeadline);
     event RegistrySet(address indexed registry);
     event ContractReferenceUpdated(bytes32 indexed contractName, address indexed oldAddress, address indexed newAddress);
-
+    event EmergencyPaused(address indexed triggeredBy, uint256 timestamp);
+    event EmergencyRecoveryInitiated(address indexed recoveryAdmin, uint256 timestamp);
+    event EmergencyRecoveryCompleted(address indexed recoveryAdmin, uint256 timestamp);
+    
     modifier purchaseRateLimit(uint256 _usdAmount) {
         require(
-            block.timestamp >= lastPurchaseTime[msg.sender] + minTimeBetweenPurchases,
+            block.timestamp >= lastPurchaseTime[msg.sender].add(minTimeBetweenPurchases),
             "TeachCrowdSale: purchase too soon after previous"
         );
 
@@ -123,6 +155,26 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard, AccessControl, RegistryA
         _;
     }
 
+    modifier onlyAdmin() {
+        require(hasRole(ADMIN_ROLE, msg.sender), "TeachCrowdSale: caller is not admin");
+        _;
+    }
+
+    modifier onlyRecorder() {
+        require(hasRole(RECORDER_ROLE, msg.sender), "TeachCrowdSale: caller is not recorder");
+        _;
+    }
+
+    modifier onlyEmergency() {
+        require(hasRole(EMERGENCY_ROLE, msg.sender), "TeachCrowdSale: caller is not emergency role");
+        _;
+    }
+
+    modifier onlyRole(bytes32 role) {
+        require(hasRole(role, msg.sender), "TeachCrowdSale: caller doesn't have role");
+        _;
+    }
+    
     /**
      * @dev Constructor to initialize the presale contract
      * @param _paymentToken Address of the payment token (USDC)
@@ -132,6 +184,10 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard, AccessControl, RegistryA
         paymentToken = _paymentToken;
         treasury = _treasury;
 
+        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _setupRole(ADMIN_ROLE, msg.sender);
+        _setupRole(EMERGENCY_ROLE, msg.sender);
+        
         // Initialize the 7 tiers with our pricing structure
         // Prices are in USD scaled by 1e6 (e.g., $0.018 = 18000)
 
@@ -237,17 +293,6 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard, AccessControl, RegistryA
         _grantRole(RECORDER_ROLE, _recorder);
     }
 
-    modifier onlyRole(bytes32 role) {
-        require(hasRole(role, msg.sender), "PlatformInsurance: caller doesn't have role");
-        _;
-    }
-
-    function hasRole(bytes32 role, address account) public view returns (bool) {
-        // Implement role checking logic here
-        // For simplicity, you could use a mapping:
-        return roleMembership[role][account];
-    }
-
     /**
     * @dev Records a token purchase for tracking average buy price
     * @param _user Address of the user
@@ -259,7 +304,7 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard, AccessControl, RegistryA
         address _user,
         uint256 _tokenAmount,
         uint256 _purchaseValue
-    ) external onlyRole(RECORDER_ROLE) {
+    ) external onlyRecorder whenSystemNotPaused {
         userTotalTokens[_user] += _tokenAmount;
         userTotalValue[_user] += _purchaseValue;
     }
@@ -339,7 +384,7 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard, AccessControl, RegistryA
 
         // Check if user's total purchase would exceed max
         uint256 userTierTotal = purchases[msg.sender].tierAmounts.length > _tierId
-            ? purchases[msg.sender].tierAmounts[_tierId] + _usdAmount
+            ? purchases[msg.sender].tierAmounts[_tierId].add(_usdAmount)
             : _usdAmount;
         require(userTierTotal <= tier.maxPurchase, "Would exceed max tier purchase");
 
@@ -347,21 +392,21 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard, AccessControl, RegistryA
         uint256 tokenAmount = _usdAmount.mul(10**18).div(tier.price);
 
         // Check total cap per address
-        require(addressTokensPurchased[msg.sender] + uint96(tokenAmount) <= maxTokensPerAddress, "Exceeds max tokens per address");
+        require(addressTokensPurchased[msg.sender].add(uint96(tokenAmount)) <= maxTokensPerAddress, "Exceeds max tokens per address");
 
         // Check if there's enough allocation left
         require(tier.sold.add(tokenAmount) <= tier.allocation, "Insufficient tier allocation");
 
-        // Transfer payment tokens from user to treasury
-        require(paymentToken.transferFrom(msg.sender, treasury, _usdAmount), "Payment failed");
-
         // Update tier data
-        tier.sold = unint96(tier.sold.add(tokenAmount));
+        tier.sold = uint96(tier.sold.add(tokenAmount));
 
         // Update user purchase data
         Purchase storage userPurchase = purchases[msg.sender];
         userPurchase.tokens = uint96(userPurchase.tokens.add(tokenAmount));
         userPurchase.usdAmount = uint96(userPurchase.usdAmount.add(_usdAmount));
+
+        // Transfer payment tokens from user to treasury
+        require(paymentToken.transferFrom(msg.sender, treasury, _usdAmount), "Payment failed");
 
         // Update total tokens purchased by address
         addressTokensPurchased[msg.sender] += uint96(tokenAmount);
@@ -383,7 +428,7 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard, AccessControl, RegistryA
     /**
      * @dev Complete Token Generation Event, allowing initial token claims
      */
-    function completeTGE() external onlyOwner {
+    function completeTGE() external onlyOwner whenSystemNotPaused {
         require(!tgeCompleted, "TGE already completed");
         require(block.timestamp > presaleEnd, "Presale still active");
         tgeCompleted = true;
@@ -402,26 +447,50 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard, AccessControl, RegistryA
         if (totalPurchased == 0) return 0;
 
         // Calculate time-based vesting
-        uint256 elapsedMonths = (block.timestamp - presaleEnd) / 30 days;
+        uint256 elapsedMonths = block.timestamp.sub(presaleEnd).div(30 days);
 
         // Calculate tokens from each tier
         uint256 totalClaimable = 0;
 
-        for (uint256 tierId = 0; tierId < tiers.length; tierId++) {
-            if (tierId >= userPurchase.tierAmounts.length || userPurchase.tierAmounts[tierId] == 0) continue;
+        // Only loop through tiers where the user has invested
+        uint256[] storage tierAmounts = userPurchase.tierAmounts;
+        uint256 userTierCount = tierAmounts.length;
+        
+        for (uint256 tierId = 0; tierId < userTierCount; tierId++) {
+            // Skip tiers where user hasn't purchased
+            if (tierAmounts[tierId] == 0) continue;
 
             PresaleTier storage tier = tiers[tierId];
-            uint256 tierTokens = userPurchase.tierAmounts[tierId].mul(10**18).div(tier.price);
+            uint256 tierTokens = tierAmounts[tierId].mul(10**18).div(tier.price);
 
+            //Updated to function
             // TGE portion is immediately available
-            uint256 tgeAmount = tierTokens.mul(tier.vestingTGE).div(100);
-
+            //uint256 tgeAmount = tierTokens.mul(tier.vestingTGE).div(100);    
+            
             // Calculate vested portion beyond TGE
-            uint256 vestingAmount = tierTokens.sub(tgeAmount);
-            uint256 vestedMonths = elapsedMonths > tier.vestingMonths ? tier.vestingMonths : elapsedMonths;
-            uint256 vestedAmount = vestingAmount.mul(vestedMonths).div(tier.vestingMonths);
+            //uint256 vestingAmount = tierTokens.sub(tgeAmount);
+            //uint256 vestedMonths = elapsedMonths > tier.vestingMonths ? tier.vestingMonths : elapsedMonths;
+            //uint256 vestedAmount = vestingAmount.mul(vestedMonths).div(tier.vestingMonths);
 
-            totalClaimable = totalClaimable.add(tgeAmount).add(vestedAmount);
+            uint256 tierClaimable = calculateVestedAmount(
+                tierTokens,
+                tier.vestingTGE,
+                tier.vestingMonths,
+                presaleEnd,
+                block.timestamp
+            );
+            
+            totalClaimable = totalClaimable.add(tierClaimable);
+
+            // Add auto-compound bonus if enabled
+            if (autoCompoundEnabled[_user] && totalClaimable > 0) {
+                // Calculate bonus based on how long tokens were unclaimed (up to 5% annual bonus)
+                uint256 maxAnnualBonus = totalClaimable.mul(5).div(100);
+                uint256 timeUnclaimed = block.timestamp.sub(userPurchase.lastClaimTime);
+                uint256 bonus = maxAnnualBonus.mul(timeUnclaimed).div(365 days);
+
+                totalClaimable = totalClaimable.add(bonus);
+            }
         }
 
         // Subtract already claimed tokens
@@ -432,7 +501,7 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard, AccessControl, RegistryA
     /**
      * @dev Withdraw available tokens based on vesting schedule
      */
-    function withdrawTokens() external nonReentrant {
+    function withdrawTokens() external nonReentrant whenSystemNotPaused{
         require(tgeCompleted, "TGE not completed yet");
 
         uint256 claimable = claimableTokens(msg.sender);
@@ -441,6 +510,12 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard, AccessControl, RegistryA
         // Update user's token balance
         purchases[msg.sender].tokens = purchases[msg.sender].tokens.sub(claimable);
 
+        // Record this claim event
+        claimHistory[msg.sender].push(ClaimEvent({
+            amount: claimable,
+            timestamp: block.timestamp
+        }));
+        
         // Transfer tokens to user
         require(teachToken.transfer(msg.sender, claimable), "Token transfer failed");
 
@@ -485,7 +560,7 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard, AccessControl, RegistryA
         // First check if any tier deadlines have passed
         for (uint256 i = currentTier; i < tierCount - 1; i++) {
             if (tierDeadlines[i] > 0 && block.timestamp >= tierDeadlines[i]) {
-                return i + 1; // Move to next tier if deadline passed
+                return i.add(1); // Move to next tier if deadline passed
             }
         }
         
@@ -547,7 +622,7 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard, AccessControl, RegistryA
     /**
     * @dev Pause the presale
     */
-    function pausePresale() external onlyOwner {
+    function pausePresale() external onlyEmergency {
         paused = true;
     }
 
@@ -579,7 +654,7 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard, AccessControl, RegistryA
      * @dev Update contract references from registry
      * This ensures contracts always have the latest addresses
      */
-    function updateContractReferences() external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function updateContractReferences() external onlyAdmin {
         require(address(registry) != address(0), "TeachCrowdSale: registry not set");
 
         // Update TeachToken reference
@@ -613,9 +688,16 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard, AccessControl, RegistryA
         address _user,
         uint256 _tokenAmount,
         uint256 _usdAmount
-    ) external {
+    ) external returns (bool success){
         require(msg.sender == address(this), "TeachCrowdSale: unauthorized");
 
+        // Verify registry and stability fund are properly set
+        if (address(registry) == address(0) || !registry.isContractActive(STABILITY_FUND_NAME)) {
+            // Log issue but don't revert
+            emit StabilityFundRecordingFailed(_user, "Registry or StabilityFund not available");
+            return false;
+        }
+        
         address stabilityFund = registry.getContractAddress(STABILITY_FUND_NAME);
 
         // Call the recordTokenPurchase function in StabilityFund
@@ -636,7 +718,11 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard, AccessControl, RegistryA
      * Only callable by the StabilityFund contract
      */
     function handleEmergencyPause() external onlyFromRegistry(STABILITY_FUND_NAME) {
-        paused = true;
+        if (!paused) {
+            paused = true;
+            emergencyPauseTime = block.timestamp;
+            emit EmergencyPaused(msg.sender, block.timestamp);
+        }
     }
 
     /**
@@ -650,5 +736,188 @@ contract TeachTokenPresale is Ownable, ReentrancyGuard, AccessControl, RegistryA
     ) external onlyFromRegistry(GOVERNANCE_NAME) {
         minTimeBetweenPurchases = _minTimeBetweenPurchases;
         maxPurchaseAmount = _maxPurchaseAmount;
+    }
+
+    // Function to get claim history
+    function getClaimHistory(address _user) external view returns (ClaimEvent[] memory) {
+        return claimHistory[_user];
+    }
+
+    function getNextVestingMilestone(address _user) public view returns (
+        uint256 timestamp,
+        uint256 amount
+    ) {
+        if (!tgeCompleted) return (0, 0);
+
+        Purchase storage userPurchase = purchases[_user];
+        if (userPurchase.tokens == 0) return (0, 0);
+
+        // Calculate next vesting event
+        uint256 elapsedMonths = block.timestamp.sub(presaleEnd).div(30 days);
+        uint256 nextMonthTimestamp = presaleEnd.add((elapsedMonths.add(1).mul(30 days)));
+
+        // Calculate tokens from each tier that will vest at next milestone
+        uint256 nextAmount = 0;
+
+        for (uint256 tierId = 0; tierId < tiers.length; tierId++) {
+            if (tierId >= userPurchase.tierAmounts.length || userPurchase.tierAmounts[tierId] == 0) continue;
+
+            PresaleTier storage tier = tiers[tierId];
+            uint256 tierTokens = userPurchase.tierAmounts[tierId].mul(10**18).div(tier.price);
+
+            // Skip TGE portion
+            uint256 tgeAmount = tierTokens.mul(tier.vestingTGE).div(100);
+            uint256 vestingAmount = tierTokens.sub(tgeAmount);
+
+            // Calculate next month's vesting amount
+            if (elapsedMonths < tier.vestingMonths) {
+                uint256 monthlyVesting = vestingAmount.div(tier.vestingMonths);
+                nextAmount = nextAmount.add(monthlyVesting);
+            }
+        }
+
+        return (nextMonthTimestamp, nextAmount);
+    }
+
+    function batchDistributeTokens(address[] calldata _users) external onlyOwner nonReentrant {
+        require(tgeCompleted, "TGE not completed yet");
+
+        for (uint256 i = 0; i < _users.length; i++) {
+            address user = _users[i];
+            uint256 claimable = claimableTokens(user);
+
+            if (claimable > 0) {
+                // Update user's token balance
+                purchases[user].tokens = purchases[user].tokens.sub(claimable);
+
+                // Record this claim event
+                claimHistory[user].push(ClaimEvent({
+                    amount: claimable,
+                    timestamp: block.timestamp
+                }));
+
+                // Transfer tokens to user
+                require(teachToken.transfer(user, claimable), "Token transfer failed");
+
+                emit TokensWithdrawn(user, claimable);
+            }
+        }
+    }
+
+    function setAutoCompound(bool _enabled) external {
+        autoCompoundEnabled[msg.sender] = _enabled;
+        emit AutoCompoundUpdated(msg.sender, _enabled);
+    }
+
+    /**
+    * @dev Initiates emergency recovery mode
+    * Only callable by emergency admin
+    */
+    function initiateEmergencyRecovery() external onlyEmergency {
+        require(paused, "TeachCrowdSale: not paused");
+        inEmergencyRecovery = true;
+        emit EmergencyRecoveryInitiated(msg.sender, block.timestamp);
+    }
+
+    /**
+    * @dev Completes emergency recovery mode and resumes normal operations
+    * Only callable by admin role
+    */
+    function completeEmergencyRecovery() external onlyAdmin {
+        require(inEmergencyRecovery, "TeachCrowdSale: not in recovery mode");
+        inEmergencyRecovery = false;
+        paused = false;
+        emit EmergencyRecoveryCompleted(msg.sender, block.timestamp);
+    }
+
+    /**
+ * @dev In case of critical emergency, allows users to withdraw their USDC
+ * This is only available during emergency recovery mode
+ */
+    function emergencyWithdraw() external nonReentrant {
+        require(inEmergencyRecovery, "TeachCrowdSale: not in recovery mode");
+        require(!emergencyWithdrawalsProcessed[msg.sender], "TeachCrowdSale: already processed");
+
+        // Calculate refundable amount (simplified, you may want more complex logic)
+        uint256 refundAmount = 0;
+        Purchase storage userPurchase = purchases[msg.sender];
+
+        if (userPurchase.usdAmount > 0) {
+            refundAmount = uint256(userPurchase.usdAmount);
+
+            // Mark as processed
+            emergencyWithdrawalsProcessed[msg.sender] = true;
+
+            // Return funds
+            require(paymentToken.transfer(msg.sender, refundAmount), "TeachCrowdSale: transfer failed");
+
+            emit EmergencyWithdrawalProcessed(msg.sender, refundAmount);
+        }
+    }
+
+    /**
+    * @dev Declare different levels of emergency based on severity
+    */
+    function declareEmergency(EmergencyState _state) external onlyEmergency {
+        emergencyState = _state;
+        paused = (_state != EmergencyState.NORMAL);
+
+        if (_state == EmergencyState.CRITICAL_EMERGENCY) {
+            inRecoveryMode = true;
+            // Additional critical actions
+        }
+
+        emit EmergencyStateChanged(_state);
+    }
+
+    /**
+    * @dev System for multi-signature approval of recovery actions
+    */
+    function approveRecovery() external onlyAdmin {
+        require(inRecoveryMode, "TeachCrowdSale: not in recovery mode");
+        require(!emergencyRecoveryApprovals[msg.sender], "TeachCrowdSale: already approved");
+
+        emergencyRecoveryApprovals[msg.sender] = true;
+
+        if (countRecoveryApprovals() >= requiredRecoveryApprovals) {
+            executeRecovery();
+        }
+    }
+
+    // Improved implementation to handle edge cases
+    function calculateVestedAmount(
+        uint256 totalAmount,
+        uint16 tgePercentage,
+        uint16 vestingMonths,
+        uint256 startTime,
+        uint256 currentTime
+    ) internal pure returns (uint256) {
+        // Handle immediate vesting case
+        if (vestingMonths == 0) {
+            return totalAmount;
+        }
+
+        // Calculate TGE amount
+        uint256 tgeAmount = totalAmount.mul(tgePercentage).div(100);
+
+        // Calculate remaining amount to vest
+        uint256 vestingAmount = totalAmount.sub(tgeAmount);
+
+        // Calculate elapsed time in precise units (seconds)
+        uint256 elapsed = currentTime.sub(startTime);
+        uint256 vestingPeriod = uint256(vestingMonths).mul(30 days);
+
+        // If past vesting period, return full amount
+        if (elapsed >= vestingPeriod) {
+            return totalAmount;
+        }
+
+        // Calculate vested portion with higher precision
+        // Use fixed point math with 10^18 precision
+        uint256 precision = 10**18;
+        uint256 vestedPortion = elapsed.mul(precision).div(vestingPeriod);
+        uint256 vestedVestingAmount = vestingAmount.mul(vestedPortion).div(precision);
+
+        return tgeAmount.add(vestedVestingAmount);
     }
 }
