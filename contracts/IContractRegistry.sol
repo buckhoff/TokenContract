@@ -25,4 +25,28 @@ interface IContractRegistry {
      * @return Whether the system is paused
      */
     function isSystemPaused() external view returns (bool);
+
+    /**
+     * @dev Get the interface ID of a contract
+     * @param _name Name of the contract (as bytes32)
+     * @return Interface ID of the contract
+     */
+    function getContractInterface(bytes32 _name) external view returns (bytes4);
+
+    /**
+     * @dev Get the current version of a contract
+     * @param _name Name of the contract (as bytes32)
+     * @return Current version number
+     */
+    function getContractVersion(bytes32 _name) external view returns (uint256);
+
+    /**
+     * @dev Pause the entire system in case of emergency
+     */
+    function pauseSystem() external;
+
+    /**
+     * @dev Resume the system after emergency
+     */
+    function resumeSystem() external;
 }

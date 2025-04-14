@@ -10,8 +10,10 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
  * This facilitates cross-contract communication and upgradability
  */
 contract ContractRegistry is AccessControl, ReentrancyGuard {
+    
     bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
     bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
+    bytes32 public constant EMERGENCY_ROLE = keccak256("EMERGENCY_ROLE");
 
     // Contract names mapped to their addresses
     mapping(bytes32 => address) private contracts;
@@ -31,13 +33,32 @@ contract ContractRegistry is AccessControl, ReentrancyGuard {
     // Emergency pause status for the entire system
     bool public systemPaused;
 
+    // Registry contract interfaces map (contract name => interface ID)
+    mapping(bytes32 => bytes4) private contractInterfaces;
+    
     // Events
     event ContractRegistered(bytes32 indexed contractName, address indexed contractAddress, uint256 version);
     event ContractUpdated(bytes32 indexed contractName, address indexed oldAddress, address indexed newAddress, uint256 newVersion);
     event ContractStatusChanged(bytes32 indexed contractName, bool isActive);
     event SystemPaused(address indexed by);
     event SystemResumed(address indexed by);
+    event ContractInterfaceRegistered(bytes32 indexed contractName, bytes4 interfaceId);
+    
+    modifier onlyAdmin() {
+        require(hasRole(ADMIN_ROLE, msg.sender), "TeachCrowdSale: caller is not admin role");
+        _;
+    }
 
+    modifier onlyUpgrader() {
+        require(hasRole(UPGRADER_ROLE, msg.sender), "ContractRegistry: caller is not upgrader role");
+        _;
+    }
+
+    modifier onlyEmergency() {
+        require(hasRole(EMERGENCY_ROLE, msg.sender), "ContractRegistry: caller is not emergency role");
+        _;
+    }
+    
     /**
      * @dev Constructor sets the initial admin
      */
@@ -45,6 +66,7 @@ contract ContractRegistry is AccessControl, ReentrancyGuard {
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(ADMIN_ROLE, msg.sender);
         _grantRole(UPGRADER_ROLE, msg.sender);
+        _grantRole(EMERGENCY_ROLE, msg.sender);
         systemPaused = false;
     }
 
@@ -53,7 +75,7 @@ contract ContractRegistry is AccessControl, ReentrancyGuard {
      * @param _name Name of the contract (as bytes32)
      * @param _address Address of the contract
      */
-    function registerContract(bytes32 _name, address _address) external onlyRole(ADMIN_ROLE) nonReentrant {
+    function registerContract(bytes32 _name, address _address, bytes4 _interfaceId) external onlyAdmin nonReentrant {
         require(_address != address(0), "ContractRegistry: zero address");
         require(contracts[_name] == address(0), "ContractRegistry: already registered");
 
@@ -62,6 +84,11 @@ contract ContractRegistry is AccessControl, ReentrancyGuard {
         contractActive[_name] = true;
         registeredContracts.push(_name);
 
+        if (_interfaceId != bytes4(0)) {
+            contractInterfaces[_name] = _interfaceId;
+            emit ContractInterfaceRegistered(_name, _interfaceId);
+        }
+        
         // Add to implementation history
         implementationHistory[_name].push(_address);
 
@@ -73,7 +100,7 @@ contract ContractRegistry is AccessControl, ReentrancyGuard {
      * @param _name Name of the contract (as bytes32)
      * @param _newAddress New address of the contract
      */
-    function updateContract(bytes32 _name, address _newAddress) external onlyRole(UPGRADER_ROLE) nonReentrant {
+    function updateContract(bytes32 _name, address _newAddress, bytes4 _interfaceId) external onlyUpgrader nonReentrant {
         require(_newAddress != address(0), "ContractRegistry: zero address");
         require(contracts[_name] != address(0), "ContractRegistry: not registered");
         require(contracts[_name] != _newAddress, "ContractRegistry: same address");
@@ -81,6 +108,12 @@ contract ContractRegistry is AccessControl, ReentrancyGuard {
         address oldAddress = contracts[_name];
         contracts[_name] = _newAddress;
 
+        // Update interface ID if provided
+        if (_interfaceId != bytes4(0)) {
+            contractInterfaces[_name] = _interfaceId;
+            emit ContractInterfaceRegistered(_name, _interfaceId);
+        }
+        
         // Increment version and update history
         contractVersions[_name]++;
         implementationHistory[_name].push(_newAddress);
@@ -93,7 +126,7 @@ contract ContractRegistry is AccessControl, ReentrancyGuard {
      * @param _name Name of the contract (as bytes32)
      * @param _isActive Whether the contract is active
      */
-    function setContractStatus(bytes32 _name, bool _isActive) external onlyRole(ADMIN_ROLE) {
+    function setContractStatus(bytes32 _name, bool _isActive) external onlyAdmin {
         require(contracts[_name] != address(0), "ContractRegistry: not registered");
 
         contractActive[_name] = _isActive;
@@ -132,6 +165,16 @@ contract ContractRegistry is AccessControl, ReentrancyGuard {
     }
 
     /**
+    * @dev Get the interface ID of a contract
+     * @param _name Name of the contract (as bytes32)
+     * @return Interface ID of the contract
+     */
+    function getContractInterface(bytes32 _name) external view returns (bytes4) {
+        require(contracts[_name] != address(0), "ContractRegistry: not registered");
+        return contractInterfaces[_name];
+    }
+    
+    /**
      * @dev Get the implementation history of a contract
      * @param _name Name of the contract (as bytes32)
      * @return Array of historical addresses
@@ -152,7 +195,7 @@ contract ContractRegistry is AccessControl, ReentrancyGuard {
     /**
      * @dev Pause the entire system in case of emergency
      */
-    function pauseSystem() external onlyRole(ADMIN_ROLE) {
+    function pauseSystem() external onlyAdmin onlyEmergency {
         require(!systemPaused, "ContractRegistry: already paused");
         systemPaused = true;
         emit SystemPaused(msg.sender);
@@ -161,7 +204,7 @@ contract ContractRegistry is AccessControl, ReentrancyGuard {
     /**
      * @dev Resume the system after emergency
      */
-    function resumeSystem() external onlyRole(ADMIN_ROLE) {
+    function resumeSystem() external onlyAdmin {
         require(systemPaused, "ContractRegistry: not paused");
         systemPaused = false;
         emit SystemResumed(msg.sender);

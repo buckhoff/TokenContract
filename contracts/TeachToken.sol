@@ -13,13 +13,10 @@ import "./RegistryAware.sol";
  * @dev Implementation of the TEACH Token for the TeacherSupport Platform on Polygon
  */
 contract TeachToken is ERC20, ERC20Burnable, Pausable, AccessControl, ReentrancyGuard, RegistryAware {
+    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
     bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");
-
-    bytes32 public constant STABILITY_FUND_NAME = keccak256("PLATFORM_STABILITY_FUND");
-    bytes32 public constant STAKING_CONTRACT_NAME = keccak256("TOKEN_STAKING");
-    bytes32 public constant GOVERNANCE_NAME = keccak256("TEACHER_GOVERNANCE");
     
     // Maximum supply cap
     uint256 public constant MAX_SUPPLY = 5_000_000_000 * 10**18; // 5 billion tokens
@@ -40,25 +37,39 @@ contract TeachToken is ERC20, ERC20Burnable, Pausable, AccessControl, Reentrancy
     event RecoveryTokenStatusChanged(address indexed token, bool allowed);
     event ERC20TokensRecovered(address indexed token, address indexed to, uint256 amount);
     event RegistrySet(address indexed registry);
+    event BurnNotificationSent(uint256 amount);
+    event BurnNotificationFailed(uint256 amount);
+
+    modifier onlyAdmin() {
+        require(hasRole(ADMIN_ROLE, msg.sender), "TeachCrowdSale: caller is not admin role");
+        _;
+    }
+
+    modifier onlyPauser() {
+        require(hasRole(PAUSER_ROLE, msg.sender), "TeachCrowdSale: caller is not pauser role");
+        _;
+    }
+
+    modifier onlyMinter() {
+        require(hasRole(MINTER_ROLE, msg.sender), "TeachCrowdSale: caller is not minter role");
+        _;
+    }
+
+    modifier onlyBurner() {
+        require(hasRole(BURNER_ROLE, msg.sender), "TeachCrowdSale: caller is not burner role");
+        _;
+    }
     
     /**
      * @dev Constructor that initializes the token with name, symbol, and roles
      */
     constructor() ERC20("TeacherSupport Token", "TEACH") {
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _grantRole(ADMIN_ROLE, msg.sender);
         _grantRole(PAUSER_ROLE, msg.sender);
         _grantRole(MINTER_ROLE, msg.sender);
         _grantRole(BURNER_ROLE, msg.sender);
         initialDistributionDone = false;
-
-        // Initial minting for token distribution
-        // _mint(msg.sender, 1_600_000_000 * 10**18); // 32% for Platform Ecosystem
-        //_mint(msg.sender, 1_100_000_000 * 10**18); // 22% for Community Incentives
-        //_mint(msg.sender, 700_000_000 * 10**18);   // 14% for Initial Liquidity
-        //_mint(msg.sender, 500_000_000 * 10**18);   // 10% for Public Presale
-        //_mint(msg.sender, 500_000_000 * 10**18);   // 10% for Team and Development
-        //_mint(msg.sender, 400_000_000 * 10**18);   // 8% for Educational Partners
-        //_mint(msg.sender, 200_000_000 * 10**18);   // 4% for Reserve
     }
 
     /**
@@ -163,25 +174,35 @@ contract TeachToken is ERC20, ERC20Burnable, Pausable, AccessControl, Reentrancy
      * Requirements: Caller must have the MINTER_ROLE
      * Total supply must not exceed MAX_SUPPLY
      */
-    function mint(address to, uint256 amount) public onlyRole(MINTER_ROLE) {
+    function mint(address to, uint256 amount) public onlyMinter {
         require(totalSupply() + amount <= MAX_SUPPLY, "TeachToken: Max supply exceeded");
         _mint(to, amount);
     }
 
+    /**
+    * @dev Override burn function to add stability fund notification
+     * @param amount The amount of tokens to burn
+     */
+    function burn(uint256 amount) public override nonReentrant whenSystemNotPaused {
+        super.burn(amount);
+
+        // Notify stability fund about the burn if registry is set
+        _notifyBurn(amount);
+
+        emit TokensBurned(_msgSender(), amount);
+    }
+    
     /**
      * @dev Burns tokens from a specified address
      * Can only be called by an account with BURNER_ROLE
      * @param from The address to burn tokens from
      * @param amount The amount of tokens to burn
      */
-    function burnFrom(address from, uint256 amount) public override onlyRole(BURNER_ROLE) nonReentrant whenSystemNotPaused {
+    function burnFrom(address from, uint256 amount) public override onlyBurner nonReentrant whenSystemNotPaused {
         _spendAllowance(from, _msgSender(), amount);
         _burn(from, amount);
 
-        // If the stability fund is registered, notify it about the burn
-        if (address(registry) != address(0)) {
-            try this.notifyBurn(amount) {} catch {}
-        }
+        _notifyBurn(amount);
         
         emit TokensBurned(from, amount);
     }
@@ -190,20 +211,36 @@ contract TeachToken is ERC20, ERC20Burnable, Pausable, AccessControl, Reentrancy
      * @dev Burn with deflationary effect notification to stability fund
      * @param amount Amount burned
      */
-    function notifyBurn(uint256 amount) external {
-        require(msg.sender == address(this), "TeachToken: unauthorized");
+    function _notifyBurn(uint256 amount) internal {
 
         if (address(registry) != address(0)) {
-            try IContractRegistry(registry).isContractActive(STABILITY_FUND_NAME) returns (bool isActive) {
+            bytes32 stabilityFundName = keccak256("PLATFORM_STABILITY_FUND");
+            
+            try registry.isContractActive(stabilityFundName) returns (bool isActive) {
                 if (isActive) {
-                    address stabilityFund = IContractRegistry(registry).getContractAddress(STABILITY_FUND_NAME);
-                    // Call the stability fund's processBurnedTokens function
-                    (bool success, ) = stabilityFund.call(
-                        abi.encodeWithSignature("processBurnedTokens(uint256)", amount)
-                    );
-                    // We don't revert if this call fails to maintain the primary burn functionality
+                    
+                    try registry.getContractAddress(stabilityFundName) returns (address stabilityFund) {
+                        // Create the calldata
+                        bytes memory callData = abi.encodeWithSignature(
+                            "processBurnedTokens(uint256)",
+                            amount
+                        );
+                        // Call the stability fund's processBurnedTokens function
+                        (bool success, ) = _safeContractCall(stabilityFundName, callData);
+                        
+                        // We don't revert if this call fails to maintain the primary burn functionality
+                        if (success) {
+                            emit BurnNotificationSent(amount);
+                        } else {
+                            emit BurnNotificationFailed(amount, "Call to stability fund failed");
+                        }
+                    } catch {
+                    emit BurnNotificationFailed(amount, "Failed to get stability fund address");
+                    }
                 }
-            } catch {}
+            } catch{
+                    emit BurnNotificationFailed(amount, "Failed to check stability fund status");
+            }
         }
     }
     
