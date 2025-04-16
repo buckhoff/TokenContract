@@ -244,7 +244,7 @@ contract TeachToken is
     function _notifyBurn(uint256 amount) internal {
 
         if (address(registry) != address(0)) {
-            bytes32 stabilityFundName = keccak256("PLATFORM_STABILITY_FUND");
+            bytes32 stabilityFundName = "PLATFORM_STABILITY_FUND";
             
             try registry.isContractActive(stabilityFundName) returns (bool isActive) {
                 if (isActive) {
@@ -370,13 +370,13 @@ contract TeachToken is
         require(amount > 0, "TeachToken: Zero amount");
         require(recoveryAllowedTokens[_tokenAddress], "TeachToken: Token recovery not allowed");
 
-        IERC20 token = IERC20(tokenAddress);
+        IERC20Upgradeable token = IERC20Upgradeable(tokenAddress);
         require(token.balanceOf(address(this)) >= amount, "TeachToken: Insufficient balance");
 
         bool success = token.transfer(msg.sender, amount);
         require(success, "TeachToken: Transfer failed");
 
-        emit ERC20TokensRecovered(_tokenAddress, msg.sender, _amount);
+        emit ERC20TokensRecovered(tokenAddress, msg.sender, amount);
     }
 
     // Add to initialize method
@@ -436,19 +436,37 @@ contract TeachToken is
         }
     }
 
-    // Use cached addresses if registry lookup fails
-    function getTokenAddress() internal returns (address) {
-        // Try registry first
-        if (address(registry) != address(0)) {
-            try registry.getContractAddress(TOKEN_NAME) returns (address addr) {
-                if (addr != address(0)) {
-                    _cachedTokenAddress = addr; // Update cache
-                    return addr;
+    /**
+     * @dev Retrieves the address of the STAKING contract, with fallback mechanisms
+     * @return The address of the token contract
+     */
+    function getStabilityAddressWithFallback() internal returns (address) {
+        // First attempt: Try registry lookup
+        if (address(registry) != address(0) && !registryOfflineMode) {
+            try registry.getContractAddress(PLATFORM_STABILITY_FUND) returns (address tokenAddress) {
+                if (tokenAddress != address(0)) {
+                    // Update cache with successful lookup
+                    _cachedTokenAddress = tokenAddress;
+                    _lastCacheUpdate = block.timestamp;
+                    return tokenAddress;
                 }
-            } catch {}
+            } catch {
+                // Registry lookup failed, continue to fallbacks
+            }
         }
 
-        // Fall back to cached address
-        return _cachedTokenAddress;
+        // Second attempt: Use cached address if available and not too old
+        if (_cachedTokenAddress != address(0) && block.timestamp - _lastCacheUpdate < 1 days) {
+            return _cachedTokenAddress;
+        }
+
+        // Third attempt: Use explicitly set fallback address
+        address fallbackAddress = _fallbackAddresses[TOKEN_NAME];
+        if (fallbackAddress != address(0)) {
+            return fallbackAddress;
+        }
+
+        // Final fallback: Use hardcoded address (if appropriate) or revert
+        revert("Token address unavailable through all fallback mechanisms");
     }
 }

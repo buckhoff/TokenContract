@@ -1209,20 +1209,38 @@ contract PlatformStabilityFund is
         }
     }
 
-    // Use cached addresses if registry lookup fails
-    function getTokenAddress() internal returns (address) {
-        // Try registry first
-        if (address(registry) != address(0)) {
-            try registry.getContractAddress(TOKEN_NAME) returns (address addr) {
-                if (addr != address(0)) {
-                    _cachedTokenAddress = addr; // Update cache
-                    return addr;
+    /**
+     * @dev Retrieves the address of the token contract, with fallback mechanisms
+     * @return The address of the token contract
+     */
+    function getTokenAddressWithFallback() internal returns (address) {
+        // First attempt: Try registry lookup
+        if (address(registry) != address(0) && !registryOfflineMode) {
+            try registry.getContractAddress(TOKEN_NAME) returns (address tokenAddress) {
+                if (tokenAddress != address(0)) {
+                    // Update cache with successful lookup
+                    _cachedTokenAddress = tokenAddress;
+                    _lastCacheUpdate = block.timestamp;
+                    return tokenAddress;
                 }
-            } catch {}
+            } catch {
+                // Registry lookup failed, continue to fallbacks
+            }
         }
 
-        // Fall back to cached address
-        return _cachedTokenAddress;
+        // Second attempt: Use cached address if available and not too old
+        if (_cachedTokenAddress != address(0) && block.timestamp - _lastCacheUpdate < 1 days) {
+            return _cachedTokenAddress;
+        }
+
+        // Third attempt: Use explicitly set fallback address
+        address fallbackAddress = _fallbackAddresses[TOKEN_NAME];
+        if (fallbackAddress != address(0)) {
+            return fallbackAddress;
+        }
+
+        // Final fallback: Use hardcoded address (if appropriate) or revert
+        revert("Token address unavailable through all fallback mechanisms");
     }
 
 }
