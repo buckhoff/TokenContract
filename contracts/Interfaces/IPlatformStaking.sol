@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.29;
 
 /**
- * @title ITeacherStaking
+ * @title IPlatformStaking
  * @dev Interface for the TokenStaking contract
  */
-interface ITeacherStaking {
+interface IPlatformStaking {
     /**
      * @dev Get user stake information
      */

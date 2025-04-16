@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.29;
 
 /**
- * @title ITeacherGovernance
- * @dev Interface for the TeacherGovernance contract
+ * @title IPlatformGovernance
+ * @dev Interface for the PlatformGovernance contract
  */
-interface ITeacherGovernance {
+interface IPlatformGovernance {
     /**
      * @dev Update voting power for an address
      * @param _voter Address to update voting power for

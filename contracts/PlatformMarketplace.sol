@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.29;
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/security/Pausable.sol";
-import "@openzeppelin/contracts/access/AccessControl.sol";
-import "./RegistryAware.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "./Registry/RegistryAwareUpgradeable.sol";
+import "./Constants.sol";
 
 interface IPlatformStabilityFund {
     function getVerifiedPrice() external view returns (uint256);
@@ -14,21 +16,18 @@ interface IPlatformStabilityFund {
 }
 
 /**
- * @title TeacherMarketplace
- * @dev Contract for teachers to create resources and for users to purchase them with TEACH tokens
+ * @title PlatformMarketplace
+ * @dev Contract for end users to create resources and for users to purchase them with platform tokens
  */
-contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable, AccessControl, RegistryAware {
-    // Registry contract names
-    bytes32 public constant TEACH_TOKEN_NAME = keccak256("TEACH_TOKEN");
-    bytes32 public constant STABILITY_FUND_NAME = keccak256("PLATFORM_STABILITY_FUND");
-    bytes32 public constant GOVERNANCE_NAME = keccak256("TEACHER_GOVERNANCE");
-
-    // Role constants
-    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
-    bytes32 public constant EMERGENCY_ROLE = keccak256("EMERGENCY_ROLE");
-
-    // The TeachToken contract
-    IERC20 public teachToken;
+contract PlatformMarketplace is 
+    Initializable,
+    OwnableUpgradeable, 
+    ReentrancyGuardUpgradeable, 
+    PausableUpgradeable, 
+    AccessControlUpgradeable,
+    RegistryAwareUpgradeable,
+    Constants
+{
     
     // Struct to store resource information
     struct Resource {
@@ -57,7 +56,15 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable, AccessControl
     address public feeRecipient;
 
     IPlatformStabilityFund public stabilityFund;
-    
+
+    bool public inEmergencyRecovery;
+    mapping(address => bool) public emergencyRecoveryApprovals;
+    uint256 public requiredRecoveryApprovals;
+
+    address private _cachedTokenAddress;
+    address private _cachedStabilityFundAddress;
+    uint256 private _lastCacheUpdate;
+
     // Events
     event ResourceCreated(uint256 indexed resourceId, address indexed creator, string metadataURI, uint256 price);
     event ResourcePurchased(uint256 indexed resourceId, address indexed buyer, address indexed creator, uint256 price);
@@ -88,6 +95,9 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable, AccessControl
     event DisputeCreated(uint256 indexed resourceId, address indexed buyer, address indexed seller, string reason);
     event DisputeResolved(uint256 indexed resourceId, bool refunded);
 
+    event EmergencyRecoveryInitiated(address indexed recoveryAdmin, uint256 timestamp);
+    event EmergencyRecoveryCompleted(address indexed recoveryAdmin, uint256 timestamp);
+    
     // Subscription model variables
     mapping(address => uint256) public subscriptionEndTime;
     uint256 public monthlySubscriptionFee;
@@ -105,81 +115,44 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable, AccessControl
     event SubscriptionPurchased(address indexed user, uint256 duration, uint256 endTime);
     event BulkPurchaseDiscountApplied(address indexed buyer, uint256 resourceCount, uint256 discountPercent);
 
-    /**
-     * @dev Calculates token price from the stability fund (if available)
-     * @param _stableAmount Amount in stable coins
-     * @return tokenAmount Amount in TEACH tokens
-     */
-    function calculateTokenPrice(uint256 _stableAmount) public view returns (uint256 tokenAmount) {
-        if (address(registry) != address(0) && registry.isContractActive(STABILITY_FUND_NAME)) {
-            try IPlatformStabilityFund(registry.getContractAddress(STABILITY_FUND_NAME)).getVerifiedPrice() returns (uint256 verifiedPrice) {
-                if (verifiedPrice > 0) {
-                    return (_stableAmount * 1e18) / verifiedPrice;
-                }
-            } catch {
-                // Fall back to a default calculation if stability fund call fails
-            }
-        }
-
-        // Fallback calculation or default price if no stability fund
-        return _stableAmount * 10; // Example fallback (10 TEACH per stable coin)
+    modifier onlyAdmin() {
+        require(hasRole(ADMIN_ROLE, msg.sender), "PlatformMarketplace: caller is not admin role");
+        _;
     }
 
-    /**
-     * @dev Sets the secondary market status
-     * @param _resourceId Resource ID
-     * @param _isResellable Whether the resource can be resold
-     */
-    function setResourceResellable(uint256 _resourceId, bool _isResellable) external {
-        Resource storage resource = resources[_resourceId];
-        require(resource.creator == msg.sender || hasRole(ADMIN_ROLE, msg.sender), "TeacherMarketplace: not authorized");
-        require(resource.creator != address(0), "TeacherMarketplace: resource does not exist");
-
-        // Update resellable status in new struct field or mapping
-        // Implementation depends on how you want to store this
-    }
-
-    /**
-     * @dev Creates a new educational resource
-     * @param _metadataURI IPFS URI containing resource metadata
-     * @param _price Price in TEACH tokens
-     * @return resourceId The ID of the newly created resource
-     */
-    function createResource(string memory _metadataURI, uint256 _price) external nonReentrant whenSystemNotPaused whenNotPaused returns (uint256)
-    {
-        require(bytes(_metadataURI).length > 0, "TeacherMarketplace: empty metadata URI");
-        require(_price > 0, "TeacherMarketplace: zero price");
-
-        uint256 resourceId = _resourceIdCounter;
-        _resourceIdCounter++;
-
-        resources[resourceId] = Resource({
-            creator: msg.sender,
-            metadataURI: _metadataURI,
-            price: _price,
-            isActive: true,
-            sales: 0,
-            rating: 0,
-            ratingCount: 0
-        });
-
-        emit ResourceCreated(resourceId, msg.sender, _metadataURI, _price);
-
-        return resourceId;
-    }
+    modifier onlyEmergency() {
+        require(hasRole(EMERGENCY_ROLE, msg.sender), "PlatformMarketplace: caller is not emergency role");
+        _;
+    } 
 
     /**
      * @dev Constructor sets the token address, fee percentage, and fee recipient
-     * @param _teachToken Address of the TEACH token contract
+     * @param _token Address of the platform token contract
      * @param _feePercent Platform fee percentage (e.g., 5% = 500)
      * @param _feeRecipient Address to receive platform fees
      */
-    constructor(address _teachToken, uint256 _feePercent, address _feeRecipient) Ownable(msg.sender) {
-        require(_teachToken != address(0), "TeacherMarketplace: zero token address");
-        require(_feePercent <= 3000, "TeacherMarketplace: fee too high");
-        require(_feeRecipient != address(0), "TeacherMarketplace: zero fee recipient");
+    constructor(){
+       _disableInitializers();
+    }
+
+    /**
+    * @dev Initializes the contract replacing the constructor
+     */
+    function initialize(
+        address _token, 
+        uint256 _feePercent, 
+        address _feeRecipient
+    ) initializer public {
+        __Pausable_init();
+        __AccessControl_init();
+        __ReentrancyGuard_init();
+        __Ownable_init(msg.sender); 
         
-        teachToken = IERC20(_teachToken);
+        require(_token != address(0), "PlatformMarketplace: zero token address");
+        require(_feePercent <= 3000, "PlatformMarketplace: fee too high");
+        require(_feeRecipient != address(0), "PlatformMarketplace: zero fee recipient");
+        
+        token = IERC20Upgradeable(_token);
         platformFeePercent = _feePercent;
         feeRecipient = _feeRecipient;
         _resourceIdCounter = 1;
@@ -188,21 +161,23 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable, AccessControl
         _setupRole(EMERGENCY_ROLE, msg.sender);
 
         // Set default subscription fee
-        monthlySubscriptionFee = 100 * 10**18; // 100 TEACH tokens per month
+        monthlySubscriptionFee = 100 * 10**18; // 100 platformtokens per month
         yearlySubscriptionDiscount = 2000; // 20% discount for yearly subscription
 
         // Set up default discount tiers
         discountTiers.push(DiscountTier({minAmount: 5, discountPercent: 500}));   // 5+ resources: 5% discount
         discountTiers.push(DiscountTier({minAmount: 10, discountPercent: 1000})); // 10+ resources: 10% discount
         discountTiers.push(DiscountTier({minAmount: 25, discountPercent: 1500})); // 25+ resources: 15% discount
+
+        requiredRecoveryApprovals = 3; // Default to 3 approvals
     }
 
     /**
      * @dev Sets the registry contract address
      * @param _registry Address of the registry contract
      */
-    function setRegistry(address _registry) external onlyOwner {
-        _setRegistry(_registry, keccak256("TEACHER_MARKETPLACE"));
+    function setRegistry(address _registry) external onlyAdmin {
+        _setRegistry(_registry, keccak256("PLATFORM_MARKETPLACE"));
         emit RegistrySet(_registry);
     }
 
@@ -210,17 +185,17 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable, AccessControl
      * @dev Update contract references from registry
      * This ensures contracts always have the latest addresses
      */
-    function updateContractReferences() external onlyRole(ADMIN_ROLE) {
-        require(address(registry) != address(0), "TeacherMarketplace: registry not set");
+    function updateContractReferences() external onlyAdmin {
+        require(address(registry) != address(0), "PlatformMarketplace: registry not set");
 
-        // Update TeachToken reference
-        if (registry.isContractActive(TEACH_TOKEN_NAME)) {
-            address newTeachToken = registry.getContractAddress(TEACH_TOKEN_NAME);
-            address oldTeachToken = address(teachToken);
+        // Update Token reference
+        if (registry.isContractActive(TOKEN_NAME)) {
+            address newToken = registry.getContractAddress(TOKEN_NAME);
+            address oldToken = address(token);
 
-            if (newTeachToken != oldTeachToken) {
-                teachToken = IERC20(newTeachToken);
-                emit ContractReferenceUpdated(TEACH_TOKEN_NAME, oldTeachToken, newTeachToken);
+            if (newToken != oldToken) {
+                token = IERC20(newToken);
+                emit ContractReferenceUpdated(TOKEN_NAME, oldToken, newToken);
             }
         }
 
@@ -235,12 +210,12 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable, AccessControl
     /**
      * @dev Creates a new educational resource
      * @param _metadataURI IPFS URI containing resource metadata
-     * @param _price Price in TEACH tokens
+     * @param _price Price in platform tokens
      * @return resourceId The ID of the newly created resource
      */
     function createResource(string memory _metadataURI, uint256 _price) external nonReentrant whenNotPaused returns (uint256) {
-        require(bytes(_metadataURI).length > 0, "TeacherMarketplace: empty metadata URI");
-        require(_price > 0, "TeacherMarketplace: zero price");
+        require(bytes(_metadataURI).length > 0, "PlatformMarketplace: empty metadata URI");
+        require(_price > 0, "PlatformMarketplace: zero price");
         
         uint256 resourceId = _resourceIdCounter;
         _resourceIdCounter++;
@@ -264,16 +239,16 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable, AccessControl
      * @dev Updates an existing resource
      * @param _resourceId Resource ID to update
      * @param _metadataURI New IPFS URI containing resource metadata
-     * @param _price New price in TEACH tokens
+     * @param _price New price in platform tokens
      * @param _isActive Whether the resource is active and available for purchase
      */
     function updateResource(uint256 _resourceId, string memory _metadataURI, uint256 _price, bool _isActive) external whenNotPaused nonReentrant {
         Resource storage resource = resources[_resourceId];
         
-        require(resource.creator != address(0), "TeacherMarketplace: resource does not exist");
-        require(resource.creator == msg.sender, "TeacherMarketplace: not resource creator");
-        require(bytes(_metadataURI).length > 0, "TeacherMarketplace: empty metadata URI");
-        require(_price > 0, "TeacherMarketplace: zero price");
+        require(resource.creator != address(0), "PlatformMarketplace: resource does not exist");
+        require(resource.creator == msg.sender, "PlatformMarketplace: not resource creator");
+        require(bytes(_metadataURI).length > 0, "PlatformMarketplace: empty metadata URI");
+        require(_price > 0, "PlatformMarketplace: zero price");
         
         resource.metadataURI = _metadataURI;
         resource.price = _price;
@@ -283,16 +258,16 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable, AccessControl
     }
     
     /**
-     * @dev Purchases a resource using TEACH tokens
+     * @dev Purchases a resource using platform tokens
      * @param _resourceId Resource ID to purchase
      */
     function purchaseResource(uint256 _resourceId) external whenSystemNotPaused whenNotPaused nonReentrant {
         Resource storage resource = resources[_resourceId];
         
-        require(resource.creator != address(0), "TeacherMarketplace: resource does not exist");
-        require(resource.isActive, "TeacherMarketplace: resource not active");
-        require(!userPurchases[msg.sender][_resourceId], "TeacherMarketplace: already purchased");
-        require(resource.creator != msg.sender, "TeacherMarketplace: cannot purchase own resource");
+        require(resource.creator != address(0), "PlatformMarketplace: resource does not exist");
+        require(resource.isActive, "PlatformMarketplace: resource not active");
+        require(!userPurchases[msg.sender][_resourceId], "PlatformMarketplace: already purchased");
+        require(resource.creator != msg.sender, "PlatformMarketplace: cannot purchase own resource");
 
         // Check if user has an active subscription
         if (subscriptionEndTime[msg.sender] >= block.timestamp) {
@@ -309,8 +284,8 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable, AccessControl
         uint256 creatorAmount = price - platformFee;
         
         // Transfer tokens
-        require(teachToken.transferFrom(msg.sender, feeRecipient, platformFee), "TeacherMarketplace: fee transfer failed");
-        require(teachToken.transferFrom(msg.sender, resource.creator, creatorAmount), "TeacherMarketplace: creator transfer failed");
+        require(token.transferFrom(msg.sender, feeRecipient, platformFee), "PlatformMarketplace: fee transfer failed");
+        require(token.transferFrom(msg.sender, resource.creator, creatorAmount), "PlatformMarketplace: creator transfer failed");
         
         // Mark as purchased and update sales
         userPurchases[msg.sender][_resourceId] = true;
@@ -330,8 +305,8 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable, AccessControl
      * @param _rating Rating value (1-5)
      */
     function rateResource(uint256 _resourceId, uint256 _rating) external nonReentrant {
-        require(userPurchases[msg.sender][_resourceId], "TeacherMarketplace: not purchased");
-        require(_rating >= 1 && _rating <= 5, "TeacherMarketplace: invalid rating");
+        require(userPurchases[msg.sender][_resourceId], "PlatformMarketplace: not purchased");
+        require(_rating >= 1 && _rating <= 5, "PlatformMarketplace: invalid rating");
         
         Resource storage resource = resources[_resourceId];
         
@@ -347,8 +322,8 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable, AccessControl
      * @dev Updates the platform fee percentage
      * @param _newFeePercent New fee percentage (e.g., 5% = 500)
      */
-    function updatePlatformFee(uint256 _newFeePercent) external onlyOwner {
-        require(_newFeePercent <= 3000, "TeacherMarketplace: fee too high");
+    function updatePlatformFee(uint256 _newFeePercent) external onlyAdmin {
+        require(_newFeePercent <= 3000, "PlatformMarketplace: fee too high");
         platformFeePercent = _newFeePercent;
         emit PlatformFeeUpdated(_newFeePercent);
     }
@@ -357,8 +332,8 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable, AccessControl
      * @dev Updates the fee recipient address
      * @param _newFeeRecipient New fee recipient address
      */
-    function updateFeeRecipient(address _newFeeRecipient) external onlyOwner {
-        require(_newFeeRecipient != address(0), "TeacherMarketplace: zero fee recipient");
+    function updateFeeRecipient(address _newFeeRecipient) external onlyAdmin {
+        require(_newFeeRecipient != address(0), "PlatformMarketplace: zero fee recipient");
         feeRecipient = _newFeeRecipient;
         emit FeeRecipientUpdated(_newFeeRecipient);
     }
@@ -368,7 +343,7 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable, AccessControl
      * @param _resourceId Resource ID to query
      * @return creator Resource creator address
      * @return metadataURI IPFS URI with resource metadata
-     * @return price Resource price in TEACH tokens
+     * @return price Resource price in platform tokens
      * @return isActive Whether resource is active
      * @return sales Number of sales
      * @return rating Average resource rating
@@ -412,20 +387,20 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable, AccessControl
             address stabilityFund = registry.getContractAddress(STABILITY_FUND_NAME);
             require(
                 msg.sender == stabilityFund || hasRole(EMERGENCY_ROLE, msg.sender),
-                "TeacherMarketplace: not authorized"
+                "PlatformMarketplace: not authorized"
             );
         } else {
-            require(hasRole(EMERGENCY_ROLE, msg.sender), "TeacherMarketplace: not authorized");
+            require(hasRole(EMERGENCY_ROLE, msg.sender), "PlatformMarketplace: not authorized");
         }
         _pause();
     }
 
-    function unpauseMarketplace() external onlyRole(ADMIN_ROLE) {
+    function unpauseMarketplace() external onlyAdmin {
         _unpause();
     }
 
-    function setStabilityFund(address _stabilityFund) external onlyOwner {
-        require(_stabilityFund != address(0), "TeacherMarketplace: zero address");
+    function setStabilityFund(address _stabilityFund) external onlyAdmin {
+        require(_stabilityFund != address(0), "PlatformMarketplace: zero address");
         stabilityFund = IPlatformStabilityFund(_stabilityFund);
     }
     
@@ -440,7 +415,7 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable, AccessControl
      * @param _fee Total platform fee collected
      */
     function shareFeeWithStabilityFund(uint256 _fee) external {
-        require(msg.sender == address(this), "TeacherMarketplace: unauthorized");
+        require(msg.sender == address(this), "PlatformMarketplace: unauthorized");
 
         address stabilityFund = registry.getContractAddress(STABILITY_FUND_NAME);
 
@@ -449,7 +424,7 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable, AccessControl
 
         if (portionToShare > 0) {
             // Approve the stability fund to take the tokens
-            teachToken.approve(stabilityFund, portionToShare);
+            token.approve(stabilityFund, portionToShare);
 
             // Call the processPlatformFees function in StabilityFund
             try IPlatformStabilityFund(stabilityFund).processPlatformFees(portionToShare) {
@@ -466,11 +441,11 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable, AccessControl
      * @param _reason Reason for the dispute
      */
     function createDispute(uint256 _resourceId, string memory _reason) external nonReentrant {
-        require(userPurchases[msg.sender][_resourceId], "TeacherMarketplace: not purchased");
-        require(!resourceDisputes[_resourceId].resolved, "TeacherMarketplace: dispute already exists or resolved");
+        require(userPurchases[msg.sender][_resourceId], "PlatformMarketplace: not purchased");
+        require(!resourceDisputes[_resourceId].resolved, "PlatformMarketplace: dispute already exists or resolved");
 
         Resource storage resource = resources[_resourceId];
-        require(resource.creator != address(0), "TeacherMarketplace: resource does not exist");
+        require(resource.creator != address(0), "PlatformMarketplace: resource does not exist");
 
         resourceDisputes[_resourceId] = DisputeInfo({
             buyer: msg.sender,
@@ -490,11 +465,11 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable, AccessControl
      * @param _resourceId Resource ID of the dispute
      * @param _refund Whether to refund the buyer
      */
-    function resolveDispute(uint256 _resourceId, bool _refund) external onlyRole(ADMIN_ROLE) nonReentrant {
+    function resolveDispute(uint256 _resourceId, bool _refund) external onlyAdmin nonReentrant {
         DisputeInfo storage dispute = resourceDisputes[_resourceId];
-        require(!dispute.resolved, "TeacherMarketplace: already resolved");
-        require(dispute.buyer != address(0), "TeacherMarketplace: dispute does not exist");
-        require(block.timestamp <= dispute.createdAt + disputeResolutionPeriod, "TeacherMarketplace: resolution period ended");
+        require(!dispute.resolved, "PlatformMarketplace: already resolved");
+        require(dispute.buyer != address(0), "PlatformMarketplace: dispute does not exist");
+        require(block.timestamp <= dispute.createdAt + disputeResolutionPeriod, "PlatformMarketplace: resolution period ended");
 
         dispute.resolved = true;
 
@@ -504,7 +479,7 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable, AccessControl
 
             // Use feeRecipient's balance (platform) to refund
             uint256 platformFee = (dispute.amount * platformFeePercent) / 10000;
-            require(teachToken.transferFrom(feeRecipient, dispute.buyer, dispute.amount), "TeacherMarketplace: refund failed");
+            require(token.transferFrom(feeRecipient, dispute.buyer, dispute.amount), "PlatformMarketplace: refund failed");
         }
 
         emit DisputeResolved(_resourceId, _refund);
@@ -514,8 +489,8 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable, AccessControl
      * @dev Sets the dispute resolution period
      * @param _newPeriod New period in seconds
      */
-    function setDisputeResolutionPeriod(uint256 _newPeriod) external onlyRole(ADMIN_ROLE) {
-        require(_newPeriod > 0, "TeacherMarketplace: zero period");
+    function setDisputeResolutionPeriod(uint256 _newPeriod) external onlyAdmin {
+        require(_newPeriod > 0, "PlatformMarketplace: zero period");
         disputeResolutionPeriod = _newPeriod;
     }
 
@@ -544,7 +519,7 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable, AccessControl
         }
 
         // Transfer tokens
-        require(teachToken.transferFrom(msg.sender, feeRecipient, fee), "TeacherMarketplace: payment failed");
+        require(token.transferFrom(msg.sender, feeRecipient, fee), "PlatformMarketplace: payment failed");
 
         // Share with stability fund
         if (address(registry) != address(0) && registry.isContractActive(STABILITY_FUND_NAME)) {
@@ -559,8 +534,8 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable, AccessControl
      * @param _monthlyFee Monthly subscription fee
      * @param _yearlyDiscount Yearly subscription discount percentage
      */
-    function setSubscriptionFees(uint256 _monthlyFee, uint256 _yearlyDiscount) external onlyRole(ADMIN_ROLE) {
-        require(_yearlyDiscount <= 5000, "TeacherMarketplace: discount too high");
+    function setSubscriptionFees(uint256 _monthlyFee, uint256 _yearlyDiscount) external onlyAdmin {
+        require(_yearlyDiscount <= 5000, "PlatformMarketplace: discount too high");
         monthlySubscriptionFee = _monthlyFee;
         yearlySubscriptionDiscount = _yearlyDiscount;
     }
@@ -570,7 +545,7 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable, AccessControl
      * @param _resourceIds Array of resource IDs to purchase
      */
     function bulkPurchaseResources(uint256[] memory _resourceIds) external nonReentrant whenSystemNotPaused whenNotPaused {
-        require(_resourceIds.length > 0, "TeacherMarketplace: empty purchase");
+        require(_resourceIds.length > 0, "PlatformMarketplace: empty purchase");
 
         // Calculate total cost and validate resources
         uint256 totalCost = 0;
@@ -579,10 +554,10 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable, AccessControl
             uint256 resourceId = _resourceIds[i];
             Resource storage resource = resources[resourceId];
 
-            require(resource.creator != address(0), "TeacherMarketplace: resource does not exist");
-            require(resource.isActive, "TeacherMarketplace: resource not active");
-            require(!userPurchases[msg.sender][resourceId], "TeacherMarketplace: already purchased");
-            require(resource.creator != msg.sender, "TeacherMarketplace: cannot purchase own resource");
+            require(resource.creator != address(0), "PlatformMarketplace: resource does not exist");
+            require(resource.isActive, "PlatformMarketplace: resource not active");
+            require(!userPurchases[msg.sender][resourceId], "PlatformMarketplace: already purchased");
+            require(resource.creator != msg.sender, "PlatformMarketplace: cannot purchase own resource");
 
             totalCost += resource.price;
         }
@@ -617,7 +592,7 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable, AccessControl
         uint256 platformFee = (totalCost * platformFeePercent) / 10000;
 
         // Transfer platform fee
-        require(teachToken.transferFrom(msg.sender, feeRecipient, platformFee), "TeacherMarketplace: fee transfer failed");
+        require(token.transferFrom(msg.sender, feeRecipient, platformFee), "PlatformMarketplace: fee transfer failed");
 
         // Process each resource
         for (uint256 i = 0; i < _resourceIds.length; i++) {
@@ -629,7 +604,7 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable, AccessControl
             uint256 creatorFee = discountedPrice - ((discountedPrice * platformFeePercent) / 10000);
 
             // Transfer to creator
-            require(teachToken.transferFrom(msg.sender, resource.creator, creatorFee), "TeacherMarketplace: creator transfer failed");
+            require(token.transferFrom(msg.sender, resource.creator, creatorFee), "PlatformMarketplace: creator transfer failed");
 
             // Mark as purchased
             userPurchases[msg.sender][resourceId] = true;
@@ -652,17 +627,17 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable, AccessControl
     function updateDiscountTiers(
         uint256[] memory _minAmounts,
         uint256[] memory _discountPercents
-    ) external onlyRole(ADMIN_ROLE) {
-        require(_minAmounts.length == _discountPercents.length, "TeacherMarketplace: arrays length mismatch");
-        require(_minAmounts.length > 0, "TeacherMarketplace: empty tiers");
+    ) external onlyAdmin {
+        require(_minAmounts.length == _discountPercents.length, "PlatformMarketplace: arrays length mismatch");
+        require(_minAmounts.length > 0, "PlatformMarketplace: empty tiers");
 
         // Clear existing tiers
         delete discountTiers;
 
         // Add new tiers
         for (uint256 i = 0; i < _minAmounts.length; i++) {
-            require(_minAmounts[i] > 0, "TeacherMarketplace: zero min amount");
-            require(_discountPercents[i] <= 5000, "TeacherMarketplace: discount too high");
+            require(_minAmounts[i] > 0, "PlatformMarketplace: zero min amount");
+            require(_discountPercents[i] <= 5000, "PlatformMarketplace: discount too high");
 
             discountTiers.push(DiscountTier({
                 minAmount: _minAmounts[i],
@@ -671,4 +646,128 @@ contract TeacherMarketplace is Ownable, ReentrancyGuard, Pausable, AccessControl
         }
     }
 
+    /**
+     * @dev Calculates token price from the stability fund (if available)
+     * @param _stableAmount Amount in stable coins
+     * @return tokenAmount Amount in platform tokens
+     */
+    function calculateTokenPrice(uint256 _stableAmount) public view returns (uint256 tokenAmount) {
+        if (address(registry) != address(0) && registry.isContractActive(STABILITY_FUND_NAME)) {
+            try IPlatformStabilityFund(registry.getContractAddress(STABILITY_FUND_NAME)).getVerifiedPrice() returns (uint256 verifiedPrice) {
+                if (verifiedPrice > 0) {
+                    return (_stableAmount.mul(1e18)).div(verifiedPrice);
+                }
+            } catch {
+                // Fall back to a default calculation if stability fund call fails
+            }
+        }
+
+        // Fallback calculation or default price if no stability fund
+        return _stableAmount.mul(10); // Example fallback (10 tokens per stable coin)
+    }
+
+    /**
+     * @dev Sets the secondary market status
+     * @param _resourceId Resource ID
+     * @param _isResellable Whether the resource can be resold
+     */
+    function setResourceResellable(uint256 _resourceId, bool _isResellable) external {
+        Resource storage resource = resources[_resourceId];
+        require(resource.creator == msg.sender || hasRole(ADMIN_ROLE, msg.sender), "PlatformMarketplace: not authorized");
+        require(resource.creator != address(0), "PlatformMarketplace: resource does not exist");
+
+        // Update resellable status in new struct field or mapping
+        // Implementation depends on how you want to store this
+    }
+
+    /**
+     * @dev Creates a new educational resource
+     * @param _metadataURI IPFS URI containing resource metadata
+     * @param _price Price in platform tokens
+     * @return resourceId The ID of the newly created resource
+     */
+    function createResource(string memory _metadataURI, uint256 _price) external nonReentrant whenSystemNotPaused whenNotPaused returns (uint256)
+    {
+        require(bytes(_metadataURI).length > 0, "PlatformMarketplace: empty metadata URI");
+        require(_price > 0, "PlatformMarketplace: zero price");
+
+        uint256 resourceId = _resourceIdCounter;
+        _resourceIdCounter++;
+
+        resources[resourceId] = Resource({
+            creator: msg.sender,
+            metadataURI: _metadataURI,
+            price: _price,
+            isActive: true,
+            sales: 0,
+            rating: 0,
+            ratingCount: 0
+        });
+
+        emit ResourceCreated(resourceId, msg.sender, _metadataURI, _price);
+
+        return resourceId;
+    }
+
+    // Add emergency recovery functions
+    function initiateEmergencyRecovery() external onlyEmergency {
+        require(paused(), "Marketplace: not paused");
+        inEmergencyRecovery = true;
+        emit EmergencyRecoveryInitiated(msg.sender, block.timestamp);
+    }
+
+    function approveRecovery() external onlyAdmin {
+        require(inEmergencyRecovery, "Marketplace: not in recovery mode");
+        require(!emergencyRecoveryApprovals[msg.sender], "Marketplace: already approved");
+
+        emergencyRecoveryApprovals[msg.sender] = true;
+
+        uint256 approvalCount = 0;
+        for (uint i = 0; i < getRoleMemberCount(ADMIN_ROLE); i++) {
+            if (emergencyRecoveryApprovals[getRoleMember(ADMIN_ROLE, i)]) {
+                approvalCount++;
+            }
+        }
+
+        if (approvalCount >= requiredRecoveryApprovals) {
+            inEmergencyRecovery = false;
+            _unpause();
+            emit EmergencyRecoveryCompleted(msg.sender, block.timestamp);
+        }
+    }
+
+    // Update cache periodically
+    function updateAddressCache() public {
+        if (address(registry) != address(0)) {
+            try registry.getContractAddress(TOKEN_NAME) returns (address tokenAddress) {
+                if (tokenAddress != address(0)) {
+                    _cachedTokenAddress = tokenAddress;
+                }
+            } catch {}
+
+            try registry.getContractAddress(STABILITY_FUND_NAME) returns (address stabilityFund) {
+                if (stabilityFund != address(0)) {
+                    _cachedStabilityFundAddress = stabilityFund;
+                }
+            } catch {}
+
+            _lastCacheUpdate = block.timestamp;
+        }
+    }
+
+    // Use cached addresses if registry lookup fails
+    function getTokenAddress() internal returns (address) {
+        // Try registry first
+        if (address(registry) != address(0)) {
+            try registry.getContractAddress(TOKEN_NAME) returns (address addr) {
+                if (addr != address(0)) {
+                    _cachedTokenAddress = addr; // Update cache
+                    return addr;
+                }
+            } catch {}
+        }
+
+        // Fall back to cached address
+        return _cachedTokenAddress;
+    }
 }

@@ -1,32 +1,26 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/utils/math/Math.sol";
-import "@openzeppelin/contracts/access/AccessControl.sol";
-import "./RegistryAware.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "./Registry/RegistryAwareUpgradeable.sol";
+import "./Constants.sol";
 
 /**
  * @title TokenStaking
  * @dev Contract for staking TEACH tokens to earn rewards with 50/50 split between users and schools
  */
-contract TokenStaking is Ownable, ReentrancyGuard, AccessControl, RegistryAware {
-    using Math for uint256;
-
-    // Registry contract names
-    bytes32 public constant TEACH_TOKEN_NAME = keccak256("TEACH_TOKEN");
-    bytes32 public constant STABILITY_FUND_NAME = keccak256("PLATFORM_STABILITY_FUND");
-    bytes32 public constant GOVERNANCE_NAME = keccak256("TEACHER_GOVERNANCE");
-
-    // Role constants
-    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
-    bytes32 public constant MANAGER_ROLE = keccak256("MANAGER_ROLE");
-    bytes32 public constant EMERGENCY_ROLE = keccak256("EMERGENCY_ROLE");
-   
-    // The TeachToken contract
-    IERC20 public teachToken;
+contract TokenStaking is 
+    Initializable,
+    OwnableUpgradeable,
+    ReentrancyGuardUpgradeable,
+    AccessControlUpgradeable,
+    RegistryAwareUpgradeable,
+    Constants
+{
     
     // Struct for staking pool information
     struct StakingPool {
@@ -91,6 +85,23 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl, RegistryAware 
 
     // Flag for emergency pause
     bool public paused;
+
+    /**
+   * @dev Modifier to restrict certain functions to the price oracle
+     */
+    modifier onlyPriceOracle() {
+        require(hasRole(MANAGER_ROLE, msg.sender), "PlatformStabilityFund: not price oracle role");
+        _;
+    }
+    modifier onlyAdmin() {
+        require(hasRole(ADMIN_ROLE, msg.sender), "PlatformStabilityFund: caller is not admin role");
+        _;
+    }
+
+    modifier onlyEmergency() {
+        require(hasRole(EMERGENCY_ROLE, msg.sender), "PlatformStabilityFund: caller is not emergency role");
+        _;
+    }
     
     // Events
     event StakingPoolCreated(uint256 indexed poolId, string name, uint256 rewardRate, uint256 lockDuration);
@@ -108,7 +119,13 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl, RegistryAware 
     event UnstakedTokensClaimed(address indexed user, uint256 indexed poolId, uint256 amount);
     event RegistrySet(address indexed registry);
     event ContractReferenceUpdated(bytes32 indexed contractName, address indexed oldAddress, address indexed newAddress);
-    
+    event AddressPlacedInCooldown(address indexed suspiciousAddress, uint256 endTime);
+    event AddressRemovedFromCooldown(address indexed cooldownaddress);
+    event FlashLoanProtectionConfigured(uint256 maxDailyUserVolume, uint256 maxSingleConversionAmount, uint256 minTimeBetweenActions, bool enabled);
+
+    constructor(){
+        _disableInitializers();
+    }
     /**
      * @dev Modifier to restrict school reward withdrawals to platform manager
      */
@@ -116,21 +133,45 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl, RegistryAware 
         require(msg.sender == platformRewardsManager, "TokenStaking: not platform manager");
         _;
     }
-    
+
     /**
-     * @dev Constructor sets the token address and platform rewards manager
-     * @param _teachToken Address of the TEACH token
+    * @dev Modifier to ensure the contract and system are not paused
+     */
+    modifier whenNotPaused() {
+        // Check local pause state
+        require(!paused, "TokenStaking: paused");
+
+        // Check system pause state if registry is set
+        if (address(registry) != address(0)) {
+            try registry.isSystemPaused() returns (bool systemPaused) {
+                require(!systemPaused, "TokenStaking: system is paused");
+            } catch {
+                // If registry call fails, continue using local pause state
+            }
+        }
+        _;
+    }
+
+    /**
+     * @dev Initializes the contract with initial parameters
+     * @param _token Address of the platform token
      * @param _platformRewardsManager Address of the platform rewards manager
      */
-    constructor(address _teachToken, address _platformRewardsManager) Ownable(msg.sender) {
+    function initialize(
+    address _teachToken, address _platformRewardsManager) initializer public {
         require(_teachToken != address(0), "TokenStaking: zero token address");
         require(_platformRewardsManager != address(0), "TokenStaking: zero platform manager address");
+
+        __Ownable_init(msg.sender);
+        __ReentrancyGuard_init();
+        __AccessControl_init();
         
-        teachToken = IERC20(_teachToken);
+        token = IERC20Upgradeable(_token);
         platformRewardsManager = _platformRewardsManager;
         lastRewardAdjustment = block.timestamp;
         cooldownPeriod = 2 days; // 2-day cooldown by default
         emergencyUnstakeFee = 2000; // 20% fee by default
+        
         _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _setupRole(ADMIN_ROLE, msg.sender);
         _setupRole(MANAGER_ROLE, _platformRewardsManager);
@@ -141,7 +182,7 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl, RegistryAware 
      * @dev Sets the registry contract address
      * @param _registry Address of the registry contract
      */
-    function setRegistry(address _registry) external onlyOwner {
+    function setRegistry(address _registry) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _setRegistry(_registry, keccak256("TOKEN_STAKING"));
         emit RegistrySet(_registry);
     }
@@ -150,17 +191,17 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl, RegistryAware 
      * @dev Update contract references from registry
      * This ensures contracts always have the latest addresses
      */
-    function updateContractReferences() external onlyRole(ADMIN_ROLE) {
+    function updateContractReferences() external onlyAdmin {
         require(address(registry) != address(0), "TokenStaking: registry not set");
 
         // Update TeachToken reference
-        if (registry.isContractActive(TEACH_TOKEN_NAME)) {
-            address newTeachToken = registry.getContractAddress(TEACH_TOKEN_NAME);
-            address oldTeachToken = address(teachToken);
+        if (registry.isContractActive(TOKEN_NAME)) {
+            address newToken = registry.getContractAddress(TOKEN_NAME);
+            address oldToken = address(token);
 
-            if (newTeachToken != oldTeachToken) {
-                teachToken = IERC20(newTeachToken);
-                emit ContractReferenceUpdated(TEACH_TOKEN_NAME, oldTeachToken, newTeachToken);
+            if (newToken != oldToken) {
+                token = IERC20Upgradeable(newToken);
+                emit ContractReferenceUpdated(TOKEN_NAME, oldToken, newToken);
             }
         }
     }
@@ -204,7 +245,7 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl, RegistryAware 
     /**
      * @dev Resume staking operations after emergency
      */
-    function unpauseStaking() external onlyRole(ADMIN_ROLE) {
+    function unpauseStaking() external onlyAdmin {
         // Check if system is still paused before unpausing locally
         if (address(registry) != address(0)) {
             try registry.isSystemPaused() returns (bool systemPaused) {
@@ -248,7 +289,7 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl, RegistryAware 
         uint256 _rewardRate,
         uint256 _lockDuration,
         uint256 _earlyWithdrawalFee
-    ) external onlyRole(ADMIN_ROLE) returns (uint256) {
+    ) external onlyAdmin returns (uint256) {
         require(bytes(_name).length > 0, "TokenStaking: empty pool name");
         require(_earlyWithdrawalFee <= 3000, "TokenStaking: fee too high");
         
@@ -273,7 +314,7 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl, RegistryAware 
      * @param _schoolAddress Address of the school
      * @param _name Name of the school
      */
-    function registerSchool(address _schoolAddress, string memory _name) external onlyRole(ADMIN_ROLE) {
+    function registerSchool(address _schoolAddress, string memory _name) external onlyAdmin {
         require(_schoolAddress != address(0), "TokenStaking: zero school address");
         require(bytes(_name).length > 0, "TokenStaking: empty school name");
         require(!schools[_schoolAddress].isRegistered, "TokenStaking: already registered");
@@ -296,7 +337,7 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl, RegistryAware 
      * @param _name New name of the school
      * @param _isActive Whether the school is active
      */
-    function updateSchool(address _schoolAddress, string memory _name, bool _isActive) external onlyRole(ADMIN_ROLE) {
+    function updateSchool(address _schoolAddress, string memory _name, bool _isActive) external onlyAdmin {
         require(schools[_schoolAddress].isRegistered, "TokenStaking: school not registered");
         
         schools[_schoolAddress].name = _name;
@@ -309,12 +350,13 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl, RegistryAware 
      * @dev Updates the platform rewards manager address
      * @param _newManager New platform rewards manager address
      */
-    function updatePlatformRewardsManager(address _newManager) external onlyRole(ADMIN_ROLE) {
+    function updatePlatformRewardsManager(address _newManager) external onlyAdmin {
         require(_newManager != address(0), "TokenStaking: zero manager address");
         
         emit PlatformRewardsManagerUpdated(platformRewardsManager, _newManager);
         
         platformRewardsManager = _newManager;
+        _setupRole(MANAGER_ROLE, _newManager);
     }
     
     /**
@@ -356,9 +398,9 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl, RegistryAware 
         require(_amount > 0, "TokenStaking: zero amount");
 
         // Get token from registry if available
-        IERC20 token = teachToken;
-        if (address(registry) != address(0) && registry.isContractActive(TEACH_TOKEN_NAME)) {
-            token = IERC20(registry.getContractAddress(TEACH_TOKEN_NAME));
+        IERC20Upgradeable token = token;
+        if (address(registry) != address(0) && registry.isContractActive(TOKEN_NAME)) {
+            token = IERC20Upgradeable(registry.getContractAddress(TOKEN_NAME));
         }
         
         require(_amount <= token.balanceOf(msg.sender), "TokenStaking: insufficient balance");
@@ -390,7 +432,7 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl, RegistryAware 
         pool.totalStaked += _amount;
         
         // Transfer tokens from user to contract
-        require(teachToken.transferFrom(msg.sender, address(this), _amount), "TokenStaking: transfer failed");
+        require(token.transferFrom(msg.sender, address(this), _amount), "TokenStaking: transfer failed");
         
         // Notify governance about stake update if it's registered
         if (address(registry) != address(0) && registry.isContractActive(GOVERNANCE_NAME)) {
@@ -439,13 +481,13 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl, RegistryAware 
         }
 
         // Get token from registry if available
-        IERC20 token = teachToken;
-        if (address(registry) != address(0) && registry.isContractActive(TEACH_TOKEN_NAME)) {
-            token = IERC20(registry.getContractAddress(TEACH_TOKEN_NAME));
+        IERC20Upgradeable token = token;
+        if (address(registry) != address(0) && registry.isContractActive(TOKEN_NAME)) {
+            token = IERC20Upgradeable(registry.getContractAddress(TOKEN_NAME));
         }
         
         // Transfer tokens back to user
-        require(teachToken.transfer(msg.sender, amountToReturn), "TokenStaking: transfer failed");
+        require(token.transfer(msg.sender, amountToReturn), "TokenStaking: transfer failed");
         
         emit Unstaked(msg.sender, _poolId, _amount, fee);
     }
@@ -497,6 +539,10 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl, RegistryAware 
         
         // Ensure we have enough rewards to pay out
         require(totalReward <= rewardsPool, "TokenStaking: insufficient rewards");
+
+        // Store the old rewards pool for assertion
+        uint256 oldRewardsPool = rewardsPool;
+        uint256 oldUserBalance = token.balanceOf(_user);
         
         // Update rewards pool
         rewardsPool -= totalReward;
@@ -505,14 +551,14 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl, RegistryAware 
         schools[schoolBeneficiary].totalRewards += schoolReward;
         
         // Transfer user portion to user
-        require(teachToken.transfer(_user, userReward), "TokenStaking: user transfer failed");
+        require(token.transfer(_user, userReward), "TokenStaking: user transfer failed");
         
         // School portion remains in contract to be managed by platform
         
         emit RewardClaimed(_user, _poolId, userReward, schoolBeneficiary, schoolReward);
 
         assert(rewardsPool == oldRewardsPool - totalReward);
-        assert(teachToken.balanceOf(_user) == oldUserBalance + userReward);
+        assert(token.balanceOf(_user) == oldUserBalance + userReward);
         
         return totalReward;
     }
@@ -522,7 +568,7 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl, RegistryAware 
      * @param _school Address of the school
      * @param _amount Amount to withdraw
      */
-    function withdrawSchoolRewards(address _school, uint256 _amount) external onlyRole(MANAGER_ROLE) nonReentrant {
+    function withdrawSchoolRewards(address _school, uint256 _amount) external onlyManager nonReentrant {
         require(schools[_school].isRegistered, "TokenStaking: school not registered");
         require(_amount > 0, "TokenStaking: zero amount");
         require(_amount <= schools[_school].totalRewards, "TokenStaking: insufficient school rewards");
@@ -531,7 +577,7 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl, RegistryAware 
         schools[_school].totalRewards -= _amount;
         
         // Transfer tokens to platform manager for conversion
-        require(teachToken.transfer(platformRewardsManager, _amount), "TokenStaking: transfer failed");
+        require(token.transfer(platformRewardsManager, _amount), "TokenStaking: transfer failed");
         
         emit SchoolRewardWithdrawn(_school, _amount);
     }
@@ -567,7 +613,7 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl, RegistryAware 
         require(_amount > 0, "TokenStaking: zero amount");
         
         // Transfer tokens to the contract
-        require(teachToken.transferFrom(msg.sender, address(this), _amount), "TokenStaking: transfer failed");
+        require(token.transferFrom(msg.sender, address(this), _amount), "TokenStaking: transfer failed");
         
         // Update rewards pool
         rewardsPool += _amount;
@@ -578,7 +624,7 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl, RegistryAware 
     /**
      * @dev Adjusts reward rates based on total staked tokens and available rewards
      */
-    function adjustRewardRates() external onlyOwner {
+    function adjustRewardRates() external onlyRole(DEFAULT_ADMIN_ROLE) {
         uint256 totalStakedAcrossPools = 0;
         
         // Calculate total staked tokens across all pools
@@ -784,10 +830,10 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl, RegistryAware 
      * @param _token Address of the token to recover
      * @param _amount Amount to recover
      */
-    function recoverTokens(address _token, uint256 _amount) external onlyOwner {
-        require(_token != address(teachToken), "TokenStaking: cannot recover staking token");
-        
-        IERC20 token = IERC20(_token);
+    function recoverTokens(address _token, uint256 _amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(_token != address(token), "TokenStaking: cannot recover staking token");
+
+        IERC20Upgradeable token = IERC20Upgradeable(_token);
         require(token.transfer(owner(), _amount), "TokenStaking: transfer failed");
     }
 
@@ -795,7 +841,7 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl, RegistryAware 
     * @dev Updates the cooldown period for unstaking
     * @param _cooldownPeriod New cooldown period in seconds
     */
-    function setCooldownPeriod(uint96 _cooldownPeriod) external onlyOwner {
+    function setCooldownPeriod(uint96 _cooldownPeriod) external onlyAdmin {
         cooldownPeriod = _cooldownPeriod;
     }
 
@@ -866,7 +912,7 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl, RegistryAware 
         request.claimed = true;
 
         // Transfer tokens back to user
-        require(teachToken.transfer(msg.sender, amountToClaim), "TokenStaking: transfer failed");
+        require(token.transfer(msg.sender, amountToClaim), "TokenStaking: transfer failed");
 
         emit UnstakedTokensClaimed(msg.sender, _poolId, amountToClaim);
     }
@@ -885,7 +931,7 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl, RegistryAware 
     * @dev Sets the emergency unstake fee
     * @param _fee Fee percentage (scaled by 100)
     */
-    function setEmergencyUnstakeFee(uint16 _fee) external onlyOwner {
+    function setEmergencyUnstakeFee(uint16 _fee) external onlyAdmin {
         require(_fee <= 5000, "TokenStaking: fee too high"); // Max 50%
         emergencyUnstakeFee = _fee;
     }
@@ -895,7 +941,7 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl, RegistryAware 
     * @param _poolId ID of the pool to unstake from
     * @param _amount Amount of tokens to unstake
     */
-    function emergencyUnstake(uint256 _poolId, uint256 _amount) external onlyRole(EMERGENCY_ROLE) nonReentrant {
+    function emergencyUnstake(uint256 _poolId, uint256 _amount) external onlyEmergency nonReentrant {
         require(_poolId < stakingPools.length, "TokenStaking: invalid pool ID");
         require(_amount > 0, "TokenStaking: zero amount");
 
@@ -921,7 +967,7 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl, RegistryAware 
         rewardsPool += emergencyFee;
 
         // Transfer tokens immediately to user (no cooldown)
-        require(teachToken.transfer(msg.sender, amountToReturn), "TokenStaking: transfer failed");
+        require(token.transfer(msg.sender, amountToReturn), "TokenStaking: transfer failed");
 
         emit Unstaked(msg.sender, _poolId, _amount, emergencyFee);
     }
@@ -931,7 +977,7 @@ contract TokenStaking is Ownable, ReentrancyGuard, AccessControl, RegistryAware 
         for (uint256 i = 0; i < stakingPools.length; i++) {
             totalStaked += stakingPools[i].totalStaked;
         }
-        assert(teachToken.balanceOf(address(this)) == totalStaked + rewardsPool);
+        assert(token.balanceOf(address(this)) == totalStaked + rewardsPool);
     }
 
     /**

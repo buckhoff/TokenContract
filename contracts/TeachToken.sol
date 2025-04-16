@@ -1,22 +1,29 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.17;
+pragma solidity ^0.8.29;
 
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
-import "@openzeppelin/contracts/access/AccessControl.sol";
-import "@openzeppelin/contracts/security/Pausable.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import "./RegistryAware.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20BurnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "./Registry/RegistryAwareUpgradeable.sol";
+import "./Constants.sol";
 
 /**
  * @title TeachToken
  * @dev Implementation of the TEACH Token for the TeacherSupport Platform on Polygon
  */
-contract TeachToken is ERC20, ERC20Burnable, Pausable, AccessControl, ReentrancyGuard, RegistryAware {
-    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
-    bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
-    bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
-    bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");
+contract TeachToken is
+    Initializable,
+    ERC20Upgradeable,
+    ERC20BurnableUpgradeable,
+    PausableUpgradeable,
+    AccessControlUpgradeable,
+    ReentrancyGuardUpgradeable,
+    RegistryAwareUpgradeable,
+    Constants
+{
     
     // Maximum supply cap
     uint256 public constant MAX_SUPPLY = 5_000_000_000 * 10**18; // 5 billion tokens
@@ -25,8 +32,16 @@ contract TeachToken is ERC20, ERC20Burnable, Pausable, AccessControl, Reentrancy
     bool private initialDistributionDone;
 
     // Recovery mechanism for accidentally sent tokens
-    mapping(address => bool) public recoveryAllowedTokens; 
-    
+    mapping(address => bool) public recoveryAllowedTokens;
+
+    bool public inEmergencyRecovery;
+    mapping(address => bool) public emergencyRecoveryApprovals;
+    uint256 public requiredRecoveryApprovals;
+
+    address private _cachedTokenAddress;
+    address private _cachedStabilityFundAddress;
+    uint256 private _lastCacheUpdate;
+
     // Events
     event MinterAdded(address indexed account);
     event MinterRemoved(address indexed account);
@@ -38,8 +53,10 @@ contract TeachToken is ERC20, ERC20Burnable, Pausable, AccessControl, Reentrancy
     event ERC20TokensRecovered(address indexed token, address indexed to, uint256 amount);
     event RegistrySet(address indexed registry);
     event BurnNotificationSent(uint256 amount);
-    event BurnNotificationFailed(uint256 amount);
-
+    event BurnNotificationFailed(uint256 amount, string reason);
+    event EmergencyRecoveryInitiated(address indexed recoveryAdmin, uint256 timestamp);
+    event EmergencyRecoveryCompleted(address indexed recoveryAdmin);
+    
     modifier onlyAdmin() {
         require(hasRole(ADMIN_ROLE, msg.sender), "TeachCrowdSale: caller is not admin role");
         _;
@@ -63,12 +80,25 @@ contract TeachToken is ERC20, ERC20Burnable, Pausable, AccessControl, Reentrancy
     /**
      * @dev Constructor that initializes the token with name, symbol, and roles
      */
-    constructor() ERC20("TeacherSupport Token", "TEACH") {
-        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
-        _grantRole(ADMIN_ROLE, msg.sender);
-        _grantRole(PAUSER_ROLE, msg.sender);
-        _grantRole(MINTER_ROLE, msg.sender);
-        _grantRole(BURNER_ROLE, msg.sender);
+    constructor() {
+        _disableInitializers();
+    }
+
+    /**
+    * @dev Initializes the contract replacing the constructor
+     */
+    function initialize() initializer public {
+        __ERC20_init("TeacherSupport Token", "TEACH");
+        __ERC20Burnable_init();
+        __Pausable_init();
+        __AccessControl_init();
+        __ReentrancyGuard_init();
+        
+        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _setupRole(ADMIN_ROLE, msg.sender);
+        _setupRole(PAUSER_ROLE, msg.sender);
+        _setupRole(MINTER_ROLE, msg.sender);
+        _setupRole(BURNER_ROLE, msg.sender);
         initialDistributionDone = false;
     }
 
@@ -175,7 +205,7 @@ contract TeachToken is ERC20, ERC20Burnable, Pausable, AccessControl, Reentrancy
      * Total supply must not exceed MAX_SUPPLY
      */
     function mint(address to, uint256 amount) public onlyMinter {
-        require(totalSupply() + amount <= MAX_SUPPLY, "TeachToken: Max supply exceeded");
+        require(totalSupply().add(amount) <= MAX_SUPPLY, "TeachToken: Max supply exceeded");
         _mint(to, amount);
     }
 
@@ -235,11 +265,11 @@ contract TeachToken is ERC20, ERC20Burnable, Pausable, AccessControl, Reentrancy
                             emit BurnNotificationFailed(amount, "Call to stability fund failed");
                         }
                     } catch {
-                    emit BurnNotificationFailed(amount, "Failed to get stability fund address");
+                        emit BurnNotificationFailed(amount, "Failed to get stability fund address");
                     }
                 }
             } catch{
-                    emit BurnNotificationFailed(amount, "Failed to check stability fund status");
+                emit BurnNotificationFailed(amount, "Failed to check stability fund status");
             }
         }
     }
@@ -347,5 +377,78 @@ contract TeachToken is ERC20, ERC20Burnable, Pausable, AccessControl, Reentrancy
         require(success, "TeachToken: Transfer failed");
 
         emit ERC20TokensRecovered(_tokenAddress, msg.sender, _amount);
+    }
+
+    // Add to initialize method
+    function initialize() initializer public {
+        // existing code
+        requiredRecoveryApprovals = 3; // Default value
+    }
+
+    // Add emergency recovery functions
+    function initiateEmergencyRecovery() external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(paused(), "Token: not paused");
+        inEmergencyRecovery = true;
+        emit EmergencyRecoveryInitiated(msg.sender, block.timestamp);
+    }
+
+    function approveRecovery() external onlyRole(ADMIN_ROLE) {
+        require(inEmergencyRecovery, "Token: not in recovery mode");
+        require(!emergencyRecoveryApprovals[msg.sender], "Token: already approved");
+
+        emergencyRecoveryApprovals[msg.sender] = true;
+
+        if (_countRecoveryApprovals() >= requiredRecoveryApprovals) {
+            inEmergencyRecovery = false;
+            _unpause();
+            emit EmergencyRecoveryCompleted(msg.sender);
+        }
+    }
+
+    function _countRecoveryApprovals() internal view returns (uint256) {
+        uint256 count = 0;
+        uint256 memberCount = getRoleMemberCount(ADMIN_ROLE);
+        for (uint i = 0; i < memberCount; i++) {
+            address admin = getRoleMember(ADMIN_ROLE, i);
+            if (emergencyRecoveryApprovals[admin]) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    // Update cache periodically
+    function updateAddressCache() public {
+        if (address(registry) != address(0)) {
+            try registry.getContractAddress(TOKEN_NAME) returns (address tokenAddress) {
+                if (tokenAddress != address(0)) {
+                    _cachedTokenAddress = tokenAddress;
+                }
+            } catch {}
+
+            try registry.getContractAddress(STABILITY_FUND_NAME) returns (address stabilityFund) {
+                if (stabilityFund != address(0)) {
+                    _cachedStabilityFundAddress = stabilityFund;
+                }
+            } catch {}
+
+            _lastCacheUpdate = block.timestamp;
+        }
+    }
+
+    // Use cached addresses if registry lookup fails
+    function getTokenAddress() internal returns (address) {
+        // Try registry first
+        if (address(registry) != address(0)) {
+            try registry.getContractAddress(TOKEN_NAME) returns (address addr) {
+                if (addr != address(0)) {
+                    _cachedTokenAddress = addr; // Update cache
+                    return addr;
+                }
+            } catch {}
+        }
+
+        // Fall back to cached address
+        return _cachedTokenAddress;
     }
 }

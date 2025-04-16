@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.29;
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/utils/Counters.sol";
-import "@openzeppelin/contracts/access/AccessControl.sol";
-import "./RegistryAware.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "./Registry/RegistryAwareUpgradeable.sol";
+import "./Constants.sol";
 
 // Add the interface for staking contract
 interface ITokenStaking {
@@ -15,42 +16,33 @@ interface ITokenStaking {
         uint256 startTime,
         uint256 lastClaimTime,
         uint256 pendingReward,
-        address schoolBeneficiary,
+        address secondaryBeneficiary,
         uint256 userRewardPortion,
-        uint256 schoolRewardPortion
+        uint256 secondaryRewardPortion
     );
     function getPoolCount() external view returns (uint256);
 }
 
 /**
- * @title TeacherGovernance
+ * @title PlatformGovernance
  * @dev Contract for decentralized governance of the TeacherSupport platform
  */
-contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryAware {
-    using Counters for Counters.Counter;
-
-    // Registry contract names
-    bytes32 public constant TEACH_TOKEN_NAME = keccak256("TEACH_TOKEN");
-    bytes32 public constant STABILITY_FUND_NAME = keccak256("PLATFORM_STABILITY_FUND");
-    bytes32 public constant STAKING_NAME = keccak256("TOKEN_STAKING");
-    bytes32 public constant MARKETPLACE_NAME = keccak256("TEACHER_MARKETPLACE");
-    bytes32 public constant CROWDSALE_NAME = keccak256("TEACH_CROWDSALE");
-    bytes32 public constant TEACHER_REWARD_NAME = keccak256("TEACHER_REWARD");
-
-    // Role constants
-    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
-    bytes32 public constant EMERGENCY_ROLE = keccak256("EMERGENCY_ROLE");
+contract PlatformGovernance is
+    Initializable,
+    OwnableUpgradeable,
+    ReentrancyGuardUpgradeable,
+    AccessControlUpgradeable,
+    RegistryAwareUpgradeable,
+    Constants
+{
 
     // Staking contract reference
     ITokenStaking public stakingContract;
     
-    // The TeachToken contract
-    IERC20 public teachToken;
-    
     // Proposal counter
-    Counters.Counter private _proposalIdCounter;
+    uint256 private _proposalIdCounter;
     
-    // Voting power threshold to create a proposal (in TEACH tokens)
+    // Voting power threshold to create a proposal (in platform tokens)
     uint256 public proposalThreshold;
     
     // Minimum voting period in seconds
@@ -73,14 +65,6 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
 
     // Pending parameter change
     PendingParameterChange public pendingChange;
-
-    Counters.Counter private _proposalIdCounter;
-    uint256 public proposalThreshold;
-    uint256 public minVotingPeriod;
-    uint256 public maxVotingPeriod;
-    uint256 public quorumThreshold;
-    uint256 public executionDelay;
-    uint256 public executionPeriod;
     
     // Add state variables
     uint96 public treasuryBalance;
@@ -153,6 +137,10 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
     
     // Mapping to track if an address token voting power is locked
     mapping(address => uint256) public votingPowerLocked;
+
+    address private _cachedTokenAddress;
+    address private _cachedStabilityFundAddress;
+    uint256 private _lastCacheUpdate;
     
     // Events
     event ProposalCreated(
@@ -206,15 +194,28 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
     event RegistrySet(address indexed registry);
     event ContractReferenceUpdated(bytes32 indexed contractName, address indexed oldAddress, address indexed newAddress);
     event SystemEmergencyTriggered(address indexed triggeredBy, string reason);
+
+    event RecoveryRequirementsUpdated(uint16 requiredGuardians, uint16 emergencyPeriod);
+    event ProposalCanceledByGovernance(uint256 indexed proposalId, address indexed governor, string reason);
     
     ITokenStaking public stakingContract;
     bool public stakingWeightEnabled;
     uint16 public maxStakingMultiplier; // multiplier scaled by 100 (e.g., 200 = 2x)
     uint16 public maxStakingPeriod; // in days
 
+    modifier onlyAdmin() {
+        require(hasRole(ADMIN_ROLE, msg.sender), "PlatformGovernance: caller is not admin role");
+        _;
+    }
+
+    modifier onlyEmergency() {
+        require(hasRole(EMERGENCY_ROLE, msg.sender), "PlatformGovernance: caller is not emergency role");
+        _;
+    }
+    
     /**
      * @dev Constructor sets the token address and governance parameters
-     * @param _teachToken Address of the TEACH token contract
+     * @param _token Address of the platform token contract
      * @param _proposalThreshold Voting power needed to create a proposal
      * @param _minVotingPeriod Minimum voting period in seconds
      * @param _maxVotingPeriod Maximum voting period in seconds
@@ -222,20 +223,33 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
      * @param _executionDelay Time delay before execution in seconds
      * @param _executionPeriod Execution time window in seconds
      */
-    constructor(
-        address _teachToken,
+    constructor(){
+        _disableInitializers();
+    }
+
+    function initialize(
+        address _token,
         uint256 _proposalThreshold,
         uint256 _minVotingPeriod,
         uint256 _maxVotingPeriod,
         uint256 _quorumThreshold,
         uint256 _executionDelay,
         uint256 _executionPeriod
-    ) Ownable(msg.sender) {
-        require(_teachToken != address(0), "TeacherGovernance: zero token address");
-        require(_quorumThreshold <= 5000, "TeacherGovernance: quorum too high");
-        require(_minVotingPeriod <= _maxVotingPeriod, "TeacherGovernance: invalid voting periods");
+    ) initializer public {
         
-        teachToken = IERC20(_teachToken);
+        __Ownable_init(msg.sender);
+        __ReentrancyGuard_init();
+        __AccessControl_init();
+
+        _setupRole(ADMIN_ROLE, msg.sender);
+        _setupRole(EMERGENCY_ROLE, msg.sender);
+        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        
+        require(_token != address(0), "PlatformGovernance: zero token address");
+        require(_quorumThreshold <= 5000, "PlatformGovernance: quorum too high");
+        require(_minVotingPeriod <= _maxVotingPeriod, "PlatformGovernance: invalid voting periods");
+        
+        token =IERC20Upgradeable(_token);
         proposalThreshold = _proposalThreshold;
         minVotingPeriod = _minVotingPeriod;
         maxVotingPeriod = _maxVotingPeriod;
@@ -244,7 +258,7 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
         executionPeriod = _executionPeriod;
         emergencyPeriod = 24; // 24 hours emergency period by default
         requiredGuardians = 3; // Require 3 guardians to cancel a proposal
-        allowedTokens[_teachToken] = true; // Allow TEACH token by default
+        allowedTokens[_token] = true; // Allow platform token by default
     }
     
     /**
@@ -265,24 +279,24 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
     ) external whenSystemNotPaused returns (uint256) {
         if (address(registry) != address(0)) {
             try registry.isSystemPaused() returns (bool paused) {
-                require(!paused, "TeacherGovernance: system is paused");
+                require(!paused, "PlatformGovernance: system is paused");
             } catch {
                 // If registry call fails, continue with the proposal creation
             }
         }
         
         // Use governance token from registry if available
-        IERC20 governanceToken = teachToken;
-        if (address(registry) != address(0) && registry.isContractActive(TEACH_TOKEN_NAME)) {
-            governanceToken = IERC20(registry.getContractAddress(TEACH_TOKEN_NAME));
+        IERC20Upgradeable governanceToken = token;
+        if (address(registry) != address(0) && registry.isContractActive(TOKEN_NAME)) {
+            governanceToken =IERC20Upgradeable(registry.getContractAddress(TOKEN_NAME));
         }
         
-        require(governanceToken.balanceOf(msg.sender) >= proposalThreshold, "TeacherGovernance: below proposal threshold");
-        require(_targets.length > 0, "TeacherGovernance: empty proposal");
-        require(_targets.length == _signatures.length, "TeacherGovernance: mismatched signatures");
-        require(_targets.length == _calldatas.length, "TeacherGovernance: mismatched calldatas");
-        require(_votingPeriod >= minVotingPeriod, "TeacherGovernance: voting period too short");
-        require(_votingPeriod <= maxVotingPeriod, "TeacherGovernance: voting period too long");
+        require(governanceToken.balanceOf(msg.sender) >= proposalThreshold, "PlatformGovernance: below proposal threshold");
+        require(_targets.length > 0, "PlatformGovernance: empty proposal");
+        require(_targets.length == _signatures.length, "PlatformGovernance: mismatched signatures");
+        require(_targets.length == _calldatas.length, "PlatformGovernance: mismatched calldatas");
+        require(_votingPeriod >= minVotingPeriod, "PlatformGovernance: voting period too short");
+        require(_votingPeriod <= maxVotingPeriod, "PlatformGovernance: voting period too long");
 
         // Check if any system contracts are targets
         for (uint256 i = 0; i < _targets.length; i++) {
@@ -291,18 +305,18 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
             // Check if target is a core contract
             if (address(registry) != address(0)) {
                 bytes32[] memory contractNames = new bytes32[](6);
-                contractNames[0] = TEACH_TOKEN_NAME;
+                contractNames[0] = TOKEN_NAME;
                 contractNames[1] = STABILITY_FUND_NAME;
                 contractNames[2] = STAKING_NAME;
                 contractNames[3] = MARKETPLACE_NAME;
                 contractNames[4] = CROWDSALE_NAME;
-                contractNames[5] = TEACHER_REWARD_NAME;
+                contractNames[5] = PLATFORM_REWARD_NAME;
 
                 for (uint256 j = 0; j < contractNames.length; j++) {
                     if (registry.isContractActive(contractNames[j])) {
                         if (target == registry.getContractAddress(contractNames[j])) {
                             // Target is a system contract, require additional permissions
-                            require(hasRole(ADMIN_ROLE, msg.sender), "TeacherGovernance: not authorized for system contracts");
+                            require(hasRole(ADMIN_ROLE, msg.sender), "PlatformGovernance: not authorized for system contracts");
                         }
                     }
                 }
@@ -348,17 +362,17 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
         uint8 _voteType,
         string memory _reason
     ) external nonReentrant {
-        require(_voteType <= uint8(VoteType.Abstain), "TeacherGovernance: invalid vote type");
-        require(_proposalId < _proposalIdCounter.current(), "TeacherGovernance: proposal doesn't exist");
-        require(bytes(_reason).length <= 200, "TeacherGovernance: reason too long");
+        require(_voteType <= uint8(VoteType.Abstain), "PlatformGovernance: invalid vote type");
+        require(_proposalId < _proposalIdCounter.current(), "PlatformGovernance: proposal doesn't exist");
+        require(bytes(_reason).length <= 200, "PlatformGovernance: reason too long");
         
         Proposal storage proposal = proposals[_proposalId];
-        require(block.timestamp >= proposal.startTime, "TeacherGovernance: voting not started");
-        require(block.timestamp <= proposal.endTime, "TeacherGovernance: voting ended");
-        require(!proposal.receipts[msg.sender].hasVoted, "TeacherGovernance: already voted");
+        require(block.timestamp >= proposal.startTime, "PlatformGovernance: voting not started");
+        require(block.timestamp <= proposal.endTime, "PlatformGovernance: voting ended");
+        require(!proposal.receipts[msg.sender].hasVoted, "PlatformGovernance: already voted");
         
         uint256 votes = getVotingPower(msg.sender);
-        require(votes > 0, "TeacherGovernance: no voting power");
+        require(votes > 0, "PlatformGovernance: no voting power");
         
         // Update voter receipt
         proposal.receipts[msg.sender] = Receipt({
@@ -387,7 +401,7 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
      * @param _proposalId ID of the proposal to execute
      */
     function executeProposal(uint256 _proposalId) external nonReentrant {
-        require(state(_proposalId) == ProposalState.Queued, "TeacherGovernance: proposal not queued");
+        require(state(_proposalId) == ProposalState.Queued, "PlatformGovernance: proposal not queued");
         
         Proposal storage proposal = proposals[_proposalId];
         proposal.executed = true;
@@ -395,7 +409,7 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
         // Execute each transaction in the proposal
         for (uint256 i = 0; i < proposal.targets.length; i++) {
             (bool success, ) = proposal.targets[i].call(proposal.calldatas[i]);
-            require(success, "TeacherGovernance: transaction execution reverted");
+            require(success, "PlatformGovernance: transaction execution reverted");
         }
         
         emit ProposalExecuted(_proposalId);
@@ -410,7 +424,7 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
         require(
             currentState == ProposalState.Pending || 
             currentState == ProposalState.Active,
-            "TeacherGovernance: cannot cancel proposal"
+            "PlatformGovernance: cannot cancel proposal"
         );
         
         Proposal storage proposal = proposals[_proposalId];
@@ -418,8 +432,8 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
         // Only proposer or if proposer drops below threshold can cancel
         require(
             msg.sender == proposal.proposer || 
-            teachToken.balanceOf(proposal.proposer) < proposalThreshold,
-            "TeacherGovernance: not authorized"
+            token.balanceOf(proposal.proposer) < proposalThreshold,
+            "PlatformGovernance: not authorized"
         );
         
         proposal.canceled = true;
@@ -461,7 +475,7 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
         }
         
         // Check if quorum and vote success
-        uint256 totalSupply = teachToken.totalSupply();
+        uint256 totalSupply = token.totalSupply();
         uint256 quorumVotes = (totalSupply * quorumThreshold) / 10000;
         
         if (proposal.forVotes + proposal.againstVotes + proposal.abstainVotes < quorumVotes) {
@@ -520,8 +534,8 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
     * @dev Sets the timelock delay for parameter changes
     * @param _newDelay New delay in seconds
      */
-    function setParameterChangeDelay(uint256 _newDelay) external onlyOwner {
-        require(_newDelay <= 30 days, "TeacherGovernance: delay too long");
+    function setParameterChangeDelay(uint256 _newDelay) external onlyAdmin {
+        require(_newDelay <= 30 days, "PlatformGovernance: delay too long");
 
         emit TimelockDelayUpdated(parameterChangeDelay, _newDelay);
         parameterChangeDelay = _newDelay;
@@ -543,9 +557,9 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
         uint256 _quorumThreshold,
         uint256 _executionDelay,
         uint256 _executionPeriod
-    ) external onlyOwner {
-        require(_minVotingPeriod <= _maxVotingPeriod, "TeacherGovernance: invalid voting periods");
-        require(_quorumThreshold <= 5000, "TeacherGovernance: quorum too high");
+    ) external onlyAdmin {
+        require(_minVotingPeriod <= _maxVotingPeriod, "PlatformGovernance: invalid voting periods");
+        require(_quorumThreshold <= 5000, "PlatformGovernance: quorum too high");
         
         proposalThreshold = _proposalThreshold;
         minVotingPeriod = _minVotingPeriod;
@@ -614,10 +628,10 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
         uint256 _quorumThreshold,
         uint256 _executionDelay,
         uint256 _executionPeriod
-    ) external onlyOwner {
-        require(_minVotingPeriod <= _maxVotingPeriod, "TeacherGovernance: invalid voting periods");
-        require(_quorumThreshold <= 5000, "TeacherGovernance: quorum too high");
-        require(!pendingChange.isPending, "TeacherGovernance: change already pending");
+    ) external onlyAdmin {
+        require(_minVotingPeriod <= _maxVotingPeriod, "PlatformGovernance: invalid voting periods");
+        require(_quorumThreshold <= 5000, "PlatformGovernance: quorum too high");
+        require(!pendingChange.isPending, "PlatformGovernance: change already pending");
 
         // Schedule the change
         pendingChange = PendingParameterChange({
@@ -646,10 +660,10 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
     * @dev Executes a scheduled parameter change after timelock delay
     */
     function executeParameterChange() external {
-        require(pendingChange.isPending, "TeacherGovernance: no pending change");
+        require(pendingChange.isPending, "PlatformGovernance: no pending change");
         require(
             block.timestamp >= pendingChange.scheduledTime + parameterChangeDelay,
-            "TeacherGovernance: timelock not expired"
+            "PlatformGovernance: timelock not expired"
         );
 
         // Update the parameters
@@ -678,8 +692,8 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
     /**
     * @dev Cancels a scheduled parameter change
     */
-    function cancelParameterChange() external onlyOwner {
-        require(pendingChange.isPending, "TeacherGovernance: no pending change");
+    function cancelParameterChange() external onlyAdmin {
+        require(pendingChange.isPending, "PlatformGovernance: no pending change");
 
         // Clear the pending change
         pendingChange.isPending = false;
@@ -698,7 +712,7 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
         uint256 _quorumThreshold,
         uint256 _executionDelay,
         uint256 _executionPeriod
-    ) external onlyOwner {
+    ) external onlyAdmin {
         // Simply call the schedule function
         scheduleParameterChange(
             _proposalThreshold,
@@ -720,10 +734,10 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
         address _stakingContract,
         uint16 _maxStakingMultiplier,
         uint16 _maxStakingPeriod
-    ) external onlyOwner {
-        require(_stakingContract != address(0), "TeacherGovernance: zero staking address");
-        require(_maxStakingMultiplier >= 100, "TeacherGovernance: multiplier must be >= 100");
-        require(_maxStakingPeriod > 0, "TeacherGovernance: period must be > 0");
+    ) external onlyAdmin {
+        require(_stakingContract != address(0), "PlatformGovernance: zero staking address");
+        require(_maxStakingMultiplier >= 100, "PlatformGovernance: multiplier must be >= 100");
+        require(_maxStakingPeriod > 0, "PlatformGovernance: period must be > 0");
 
         stakingContract = ITokenStaking(_stakingContract);
         maxStakingMultiplier = _maxStakingMultiplier;
@@ -737,7 +751,7 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
     * @return power The weighted voting power
      */
     function getVotingPower(address _voter) public view returns (uint256 power) {
-        uint256 tokenBalance = teachToken.balanceOf(_voter);
+        uint256 tokenBalance = token.balanceOf(_voter);
     
         if (!stakingWeightEnabled || address(stakingContract) == address(0)) {
             return tokenBalance; // Basic voting power is just token balance
@@ -759,9 +773,9 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
                             uint256 startTime,
                             uint256 lastClaimTime,
                             uint256 pendingReward,
-                            address schoolBeneficiary,
+                            address secondaryBeneficiary,
                             uint256 userRewardPortion,
-                            uint256 schoolRewardPortion
+                            uint256 secondaryRewardPortion
                         ) {
                             if (stakedAmount > 0) {
                                 // Calculate staking duration in days
@@ -799,9 +813,9 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
                         uint256 startTime,
                         uint256 lastClaimTime,
                         uint256 pendingReward,
-                        address schoolBeneficiary,
+                        address secondaryBeneficiary,
                         uint256 userRewardPortion,
-                        uint256 schoolRewardPortion
+                        uint256 secondaryRewardPortion
                     ) {
                         if (stakedAmount > 0) {
                             // Calculate staking duration in days
@@ -845,7 +859,7 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
 	* @param _token Address of the token
 	* @param _allowed Whether the token is allowed
 	*/
-	function setTokenAllowance(address _token, bool _allowed) external onlyOwner {
+	function setTokenAllowance(address _token, bool _allowed) external onlyAdmin {
 		allowedTokens[_token] = _allowed;
 		emit TokenAllowanceChanged(_token, _allowed);
 	}
@@ -856,13 +870,13 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
 	* @param _amount Amount to deposit
 	*/
 	function depositToTreasury(address _token, uint256 _amount) external nonReentrant {
-		require(_amount > 0, "TeacherGovernance: zero amount");
-		require(allowedTokens[_token], "TeacherGovernance: token not allowed");
+		require(_amount > 0, "PlatformGovernance: zero amount");
+		require(allowedTokens[_token], "PlatformGovernance: token not allowed");
 		
-		IERC20 token = IERC20(_token);
-		require(token.transferFrom(msg.sender, address(this), _amount), "TeacherGovernance: transfer failed");
+		IERC20 token = IERC20Upgradeable(_token);
+		require(token.transferFrom(msg.sender, address(this), _amount), "PlatformGovernance: transfer failed");
 		
-		if (_token == address(teachToken)) {
+		if (_token == address(token)) {
 			treasuryBalance += uint96(_amount);
 		}
 		
@@ -881,18 +895,18 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
 		uint256 _amount
 	) external nonReentrant {
 		// Only executable through a proposal
-		require(msg.sender == address(this), "TeacherGovernance: only via proposal");
-		require(_amount > 0, "TeacherGovernance: zero amount");
-		require(_recipient != address(0), "TeacherGovernance: zero recipient");
-		require(allowedTokens[_token], "TeacherGovernance: token not allowed");
+		require(msg.sender == address(this), "PlatformGovernance: only via proposal");
+		require(_amount > 0, "PlatformGovernance: zero amount");
+		require(_recipient != address(0), "PlatformGovernance: zero recipient");
+		require(allowedTokens[_token], "PlatformGovernance: token not allowed");
 		
-		IERC20 token = IERC20(_token);
-		if (_token == address(teachToken)) {
-			require(_amount <= treasuryBalance, "TeacherGovernance: insufficient treasury");
+		IERC20 token = IERC20Upgradeable(_token);
+		if (_token == address(token)) {
+			require(_amount <= treasuryBalance, "PlatformGovernance: insufficient treasury");
 			treasuryBalance -= uint96(_amount);
 		}
 		
-		require(token.transfer(_recipient, _amount), "TeacherGovernance: transfer failed");
+		require(token.transfer(_recipient, _amount), "PlatformGovernance: transfer failed");
 		
 		emit TreasuryWithdrawal(_token, _recipient, _amount);
 	}
@@ -903,19 +917,19 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
 	* @return balance Token balance in treasury
 	*/
 	function getTreasuryBalance(address _token) external view returns (uint256 balance) {
-		if (_token == address(teachToken)) {
+		if (_token == address(token)) {
 			return treasuryBalance;
 		} else {
-			return IERC20(_token).balanceOf(address(this));
+			return IERC20Upgradeable(_token).balanceOf(address(this));
 		}
 	}  
 	/**
 	* @dev Add a new guardian address
 	* @param _guardian Address to add as guardian
 	*/
-	function addGuardian(address _guardian) external onlyOwner {
-		require(_guardian != address(0), "TeacherGovernance: zero guardian address");
-		require(!guardians[_guardian], "TeacherGovernance: already guardian");
+	function addGuardian(address _guardian) external onlyAdmin {
+		require(_guardian != address(0), "PlatformGovernance: zero guardian address");
+		require(!guardians[_guardian], "PlatformGovernance: already guardian");
 		
 		guardians[_guardian] = true;
 		emit GuardianAdded(_guardian);
@@ -925,8 +939,8 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
 	* @dev Remove a guardian address
 	* @param _guardian Address to remove as guardian
 	*/
-	function removeGuardian(address _guardian) external onlyOwner {
-		require(guardians[_guardian], "TeacherGovernance: not a guardian");
+	function removeGuardian(address _guardian) external onlyAdmin {
+		require(guardians[_guardian], "PlatformGovernance: not a guardian");
 		
 		guardians[_guardian] = false;
 		emit GuardianRemoved(_guardian);
@@ -937,7 +951,7 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
 	* @param _emergencyPeriod Time in hours to allow emergency cancellation
 	* @param _requiredGuardians Minimum guardians required to cancel proposal
 	*/
-	function setEmergencyParameters(uint16 _emergencyPeriod, uint16 _requiredGuardians) external onlyOwner {
+	function setEmergencyParameters(uint16 _emergencyPeriod, uint16 _requiredGuardians) external onlyAdmin {
 		emergencyPeriod = _emergencyPeriod;
 		requiredGuardians = _requiredGuardians;
 	}
@@ -948,14 +962,14 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
 	* @param _reason Reason for cancellation
 	*/
 	function voteToCancel(uint256 _proposalId, string calldata _reason) external {
-		require(guardians[msg.sender], "TeacherGovernance: not a guardian");
-		require(!guardianCancellations[_proposalId][msg.sender], "TeacherGovernance: already voted");
+		require(guardians[msg.sender], "PlatformGovernance: not a guardian");
+		require(!guardianCancellations[_proposalId][msg.sender], "PlatformGovernance: already voted");
 		
 		ProposalState currentState = state(_proposalId);
 		require(
 			currentState == ProposalState.Pending || 
 			currentState == ProposalState.Active,
-			"TeacherGovernance: cannot cancel proposal"
+			"PlatformGovernance: cannot cancel proposal"
 		);
 		
 		Proposal storage proposal = proposals[_proposalId];
@@ -963,7 +977,7 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
 		// Check if within emergency period
 		require(
 			block.timestamp <= proposal.startTime + (emergencyPeriod * 1 hours),
-			"TeacherGovernance: emergency period expired"
+			"PlatformGovernance: emergency period expired"
 		);
 		
 		// Record guardian's vote
@@ -993,7 +1007,7 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
      * @dev Sets the registry contract address
      * @param _registry Address of the registry contract
      */
-    function setRegistry(address _registry) external onlyOwner {
+    function setRegistry(address _registry) external onlyAdmin {
         _setRegistry(_registry, keccak256("TEACHER_GOVERNANCE"));
         emit RegistrySet(_registry);
     }
@@ -1002,17 +1016,17 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
      * @dev Update contract references from registry
      * This ensures contracts always have the latest addresses
      */
-    function updateContractReferences() external onlyRole(ADMIN_ROLE) {
-        require(address(registry) != address(0), "TeacherGovernance: registry not set");
+    function updateContractReferences() external onlyAdmin {
+        require(address(registry) != address(0), "PlatformGovernance: registry not set");
 
-        // Update TeachToken reference
-        if (registry.isContractActive(TEACH_TOKEN_NAME)) {
-            address newTeachToken = registry.getContractAddress(TEACH_TOKEN_NAME);
-            address oldTeachToken = address(teachToken);
+        // Update token reference
+        if (registry.isContractActive(TOKEN_NAME)) {
+            address newTeachToken = registry.getContractAddress(TOKEN_NAME);
+            address oldTeachToken = address(token);
 
             if (newTeachToken != oldTeachToken) {
-                teachToken = IERC20(newTeachToken);
-                emit ContractReferenceUpdated(TEACH_TOKEN_NAME, oldTeachToken, newTeachToken);
+                token = IERC20Upgradeable(newTeachToken);
+                emit ContractReferenceUpdated(TOKEN_NAME, oldTeachToken, newTeachToken);
             }
         }
 
@@ -1033,8 +1047,8 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
      * @dev Triggers system-wide emergency mode
      * @param _reason Reason for the emergency
      */
-    function triggerSystemEmergency(string memory _reason) external onlyRole(EMERGENCY_ROLE) {
-        require(address(registry) != address(0), "TeacherGovernance: registry not set");
+    function triggerSystemEmergency(string memory _reason) external onlyEmergency {
+        require(address(registry) != address(0), "PlatformGovernance: registry not set");
 
         // Pause the registry
         try registry.pauseSystem() {
@@ -1080,8 +1094,8 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
         }
 
         // Notify rewards
-        if (registry.isContractActive(TEACHER_REWARD_NAME)) {
-            address rewards = registry.getContractAddress(TEACHER_REWARD_NAME);
+        if (registry.isContractActive(PLATFORM_REWARD_NAME)) {
+            address rewards = registry.getContractAddress(PLATFORM_REWARD_NAME);
             (bool success, ) = rewards.call(
                 abi.encodeWithSignature("pauseRewards()")
             );
@@ -1089,5 +1103,71 @@ contract TeacherGovernance is Ownable, ReentrancyGuard, AccessControl, RegistryA
         }
 
         emit SystemEmergencyTriggered(msg.sender, _reason);
+    }
+
+    // Add emergency recovery for governance operations
+    function setRecoveryRequirements(uint16 _requiredGuardians, uint16 _emergencyPeriod) external onlyAdmin {
+        requiredGuardians = _requiredGuardians;
+        emergencyPeriod = _emergencyPeriod;
+        emit RecoveryRequirementsUpdated(_requiredGuardians, _emergencyPeriod);
+    }
+
+    // Add proposal cancellation by governor consensus
+    function cancelProposalByGovernance(uint256 _proposalId, string calldata _reason) external onlyAdmin {
+        ProposalState currentState = state(_proposalId);
+        require(
+            currentState == ProposalState.Queued ||
+            currentState == ProposalState.Succeeded,
+            "Governance: cannot cancel proposal"
+        );
+
+        Proposal storage proposal = proposals[_proposalId];
+        proposal.canceled = true;
+
+        // Remove from active proposals
+        for (uint256 i = 0; i < activeProposalIds.length; i++) {
+            if (activeProposalIds[i] == _proposalId) {
+                activeProposalIds[i] = activeProposalIds[activeProposalIds.length - 1];
+                activeProposalIds.pop();
+                break;
+            }
+        }
+
+        emit ProposalCanceledByGovernance(_proposalId, msg.sender, _reason);
+    }
+
+    // Update cache periodically
+    function updateAddressCache() public {
+        if (address(registry) != address(0)) {
+            try registry.getContractAddress(TOKEN_NAME) returns (address tokenAddress) {
+                if (tokenAddress != address(0)) {
+                    _cachedTokenAddress = tokenAddress;
+                }
+            } catch {}
+
+            try registry.getContractAddress(STABILITY_FUND_NAME) returns (address stabilityFund) {
+                if (stabilityFund != address(0)) {
+                    _cachedStabilityFundAddress = stabilityFund;
+                }
+            } catch {}
+
+            _lastCacheUpdate = block.timestamp;
+        }
+    }
+
+    // Use cached addresses if registry lookup fails
+    function getTokenAddress() internal returns (address) {
+        // Try registry first
+        if (address(registry) != address(0)) {
+            try registry.getContractAddress(TOKEN_NAME) returns (address addr) {
+                if (addr != address(0)) {
+                    _cachedTokenAddress = addr; // Update cache
+                    return addr;
+                }
+            } catch {}
+        }
+
+        // Fall back to cached address
+        return _cachedTokenAddress;
     }
 }

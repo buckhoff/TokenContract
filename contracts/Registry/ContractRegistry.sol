@@ -1,19 +1,16 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.29;
 
-import "@openzeppelin/contracts/access/AccessControl.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 
 /**
  * @title ContractRegistry
  * @dev Central registry to manage contract addresses and versions for the TeacherSupport ecosystem
  * This facilitates cross-contract communication and upgradability
  */
-contract ContractRegistry is AccessControl, ReentrancyGuard {
-    
-    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
-    bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
-    bytes32 public constant EMERGENCY_ROLE = keccak256("EMERGENCY_ROLE");
+contract ContractRegistry is Initializable, AccessControlUpgradeable, ReentrancyGuardUpgradeable {
 
     // Contract names mapped to their addresses
     mapping(bytes32 => address) private contracts;
@@ -33,6 +30,10 @@ contract ContractRegistry is AccessControl, ReentrancyGuard {
     // Emergency pause status for the entire system
     bool public systemPaused;
 
+    mapping(address => bool) public emergencyRecoveryApprovals;
+    uint256 public requiredRecoveryApprovals;
+    bool public inEmergencyRecovery;
+    
     // Registry contract interfaces map (contract name => interface ID)
     mapping(bytes32 => bytes4) private contractInterfaces;
     
@@ -43,9 +44,12 @@ contract ContractRegistry is AccessControl, ReentrancyGuard {
     event SystemPaused(address indexed by);
     event SystemResumed(address indexed by);
     event ContractInterfaceRegistered(bytes32 indexed contractName, bytes4 interfaceId);
+    event EmergencyRecoveryInitiated(address indexed recoveryAdmin, uint256 timestamp);
+    event EmergencyRecoveryCompleted(address indexed recoveryAdmin);
+    event RecoveryApprovalsUpdated(uint256 requiredApprovals);
     
     modifier onlyAdmin() {
-        require(hasRole(ADMIN_ROLE, msg.sender), "TeachCrowdSale: caller is not admin role");
+        require(hasRole(ADMIN_ROLE, msg.sender), "ContractRegistry: caller is not admin role");
         _;
     }
 
@@ -63,6 +67,16 @@ contract ContractRegistry is AccessControl, ReentrancyGuard {
      * @dev Constructor sets the initial admin
      */
     constructor() {
+        _disableInitializers();
+    }
+
+    /**
+     * @dev Initialize function to replace constructor
+     */
+    function initialize() initializer public {
+        __AccessControl_init();
+        __ReentrancyGuard_init();
+        
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(ADMIN_ROLE, msg.sender);
         _grantRole(UPGRADER_ROLE, msg.sender);
@@ -92,6 +106,8 @@ contract ContractRegistry is AccessControl, ReentrancyGuard {
         // Add to implementation history
         implementationHistory[_name].push(_address);
 
+        requiredRecoveryApprovals = 3; // Default value
+        
         emit ContractRegistered(_name, _address, 1);
     }
 
@@ -228,5 +244,41 @@ contract ContractRegistry is AccessControl, ReentrancyGuard {
         assembly {
             result := mload(add(_str, 32))
         }
+    }
+
+    // Add emergency recovery functions
+    function initiateEmergencyRecovery() external onlyEmergency {
+        require(systemPaused, "ContractRegistry: system not paused");
+        inEmergencyRecovery = true;
+        emit EmergencyRecoveryInitiated(msg.sender, block.timestamp);
+    }
+
+    function approveRecovery() external onlyAdmin {
+        require(inEmergencyRecovery, "ContractRegistry: not in recovery mode");
+        require(!emergencyRecoveryApprovals[msg.sender], "ContractRegistry: already approved");
+
+        emergencyRecoveryApprovals[msg.sender] = true;
+
+        if (_countRecoveryApprovals() >= requiredRecoveryApprovals) {
+            inEmergencyRecovery = false;
+            systemPaused = false;
+            emit EmergencyRecoveryCompleted(msg.sender);
+        }
+    }
+
+    function _countRecoveryApprovals() internal view returns (uint256) {
+        uint256 count = 0;
+        for (uint i = 0; i < getRoleMemberCount(ADMIN_ROLE); i++) {
+            if (emergencyRecoveryApprovals[getRoleMember(ADMIN_ROLE, i)]) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    function setRequiredRecoveryApprovals(uint256 _required) external onlyAdmin {
+        require(_required > 0, "ContractRegistry: invalid approval count");
+        requiredRecoveryApprovals = _required;
+        emit RecoveryApprovalsUpdated(_required);
     }
 }

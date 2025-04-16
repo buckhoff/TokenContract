@@ -1,44 +1,35 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.29;
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/access/AccessControl.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/utils/math/Math.sol";
-import "./RegistryAware.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "./Registry/RegistryAwareUpgradeable.sol";
+import "./Constants.sol";
 
-    
 /**
  * @title PlatformStabilityFund
- * @dev Contract that protects the platform from TEACH token price volatility
+ * @dev Contract that protects the platform from platform token price volatility
  *      during the donation-to-funding conversion process
  */
-contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware {
-    using Math for uint256;
+contract PlatformStabilityFund is
+    Initializable,
+    OwnableUpgradeable,
+    ReentrancyGuardUpgradeable,
+    AccessControlUpgradeable,
+    RegistryAwareUpgradeable,
+    Constants
+{
 
     struct PriceObservation {
         uint256 timestamp;
         uint256 price;
     }
 
-    // Registry contract names
-    bytes32 public constant TEACH_TOKEN_NAME = keccak256("TEACH_TOKEN");
-    bytes32 public constant MARKETPLACE_NAME = keccak256("TEACHER_MARKETPLACE");
-    bytes32 public constant GOVERNANCE_NAME = keccak256("TEACHER_GOVERNANCE");
-    bytes32 public constant CROWDSALE_NAME = keccak256("TEACH_CROWDSALE");
-    bytes32 public constant STAKING_NAME = keccak256("TOKEN_STAKING");
-    bytes32 public constant TEACHER_REWARD_NAME = keccak256("TEACHER_REWARD");
-    
-    bytes32 public constant ORACLE_ROLE = keccak256("ORACLE_ROLE");
-    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
-    bytes32 public constant EMERGENCY_ROLE = keccak256("EMERGENCY_ROLE");
-    bytes32 public constant BURNER_ROLE = keccak256("BURNER_ROLE");
-    
-    // The TeachToken contract
-    IERC20 public teachToken;
-
     // Stable coin used for funding payouts (e.g., USDC)
-    IERC20 public stableCoin;
+    IERC20Upgradeable public stableCoin;
 
     // Fund parameters
     uint256 public reserveRatio;               // Target reserve ratio (10000 = 100%)
@@ -89,11 +80,19 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
     uint256 public observationInterval = 1 hours;
     uint256 public twapWindowSize = 12; // Use 12 hours for TWAP by default
     bool public twapEnabled = true;
-    
+
+    bool public inEmergencyRecovery;
+    mapping(address => bool) public emergencyRecoveryApprovals;
+    uint256 public requiredRecoveryApprovals;
+
+    address private _cachedTokenAddress;
+    address private _cachedStabilityFundAddress;
+    uint256 private _lastCacheUpdate;
+
     // Events
     event ReservesAdded(address indexed contributor, uint256 amount);
     event ReservesWithdrawn(address indexed recipient, uint256 amount);
-    event TokensConverted(address indexed project, uint256 teachAmount, uint256 stableAmount, uint256 subsidyAmount);
+    event TokensConverted(address indexed project, uint256 tokenAmount, uint256 stableAmount, uint256 subsidyAmount);
     event PriceUpdated(uint256 oldPrice, uint256 newPrice);
     event FundParametersUpdated(uint256 reserveRatio, uint256 minReserveRatio, uint256 platformFee, uint256 lowValueFee, uint256 threshold);
     event PriceOracleUpdated(address indexed oldOracle, address indexed newOracle);
@@ -123,22 +122,38 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
     event SuspiciousActivity(address indexed user, string reason, uint256 amount);
     event PriceObservationRecorded(uint256 timestamp, uint256 price, uint8 index);
     event TWAPConfigUpdated(uint256 windowSize, uint256 interval, bool enabled);
+    event EmergencyRecoveryInitiated(address indexed recoveryAdmin, uint256 timestamp);
+    event EmergencyRecoveryCompleted(address indexed recoveryAdmin, uint256 timestamp);
     
     /**
      * @dev Modifier to restrict certain functions to the price oracle
      */
     modifier onlyPriceOracle() {
-        require(msg.sender == priceOracle, "PlatformStabilityFund: not oracle");
+        require(hasRole(ORACLE_ROLE, msg.sender), "PlatformStabilityFund: not price oracle role");
+        _;
+    }
+    modifier onlyAdmin() {
+        require(hasRole(ADMIN_ROLE, msg.sender), "PlatformStabilityFund: caller is not admin role");
         _;
     }
 
+    modifier onlyBurner() {
+        require(hasRole(BURNER_ROLE, msg.sender), "PlatformStabilityFund: caller is not burner role");
+        _;
+    }
+
+    modifier onlyEmergency() {
+        require(hasRole(EMERGENCY_ROLE, msg.sender), "PlatformStabilityFund: caller is not emergency role");
+        _;
+    }
+    
     modifier whenNotPaused() {
         if (address(registry) != address(0)) {
             try registry.isSystemPaused() returns (bool systemPaused) {
-                require(!systemPaused, "StabilityFund: system is paused");
+                require(!systemPaused, "PlatformStabilityFund: system is paused");
             } catch {
                 // If registry call fails, fall back to local pause state
-                require(!paused, "StabilityFund: paused");
+                require(!paused, "PlatformStabilityFund: paused");
             }
         } else {
             require(!paused, "PlatformStabilityFund: paused");
@@ -150,7 +165,7 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
         if (flashLoanProtectionEnabled) {
             // Check if this is the first action today
             require(!addressCooldown[msg.sender], "PlatformStabilityFund: address in suspicious activity cooldown");
-            uint256 dayStart = block.timestamp - (block.timestamp % 1 days);
+            uint256 dayStart = block.timestamp.sub(block.timestamp % 1 days);
             if (lastActionTimestamp[msg.sender] < dayStart) {
                 dailyConversionVolume[msg.sender] = 0;
             }
@@ -182,7 +197,7 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
     
     /**
      * @dev Constructor sets initial parameters and token addresses
-     * @param _teachToken Address of the TEACH token
+     * @param _token Address of the ERC20 token
      * @param _stableCoin Address of the stable coin for reserves
      * @param _priceOracle Address authorized to update price
      * @param _initialPrice Initial token price in stable coin units (scaled by 1e18)
@@ -192,8 +207,15 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
      * @param _lowValueFeePercent Reduced fee during low token value
      * @param _valueThreshold Threshold for low value detection
      */
-    constructor(
-        address _teachToken,
+    constructor(){
+        _disableInitializers();
+    }
+
+    /**
+    * @dev Initializes the contract replacing the constructor
+     */
+    function initialize(  
+        address _token,
         address _stableCoin,
         address _priceOracle,
         uint256 _initialPrice,
@@ -202,8 +224,13 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
         uint256 _platformFeePercent,
         uint256 _lowValueFeePercent,
         uint256 _valueThreshold
-    ) Ownable(msg.sender) {
-        require(_teachToken != address(0), "PlatformStabilityFund: zero teach token address");
+    ) initializer public {
+        __Pausable_init();
+        __AccessControl_init();
+        __ReentrancyGuard_init();
+        __Ownable_init(msg.sender);
+        
+        require(_token != address(0), "PlatformStabilityFund: zero token address");
         require(_stableCoin != address(0), "PlatformStabilityFund: zero stable coin address");
         require(_priceOracle != address(0), "PlatformStabilityFund: zero oracle address");
         require(_initialPrice > 0, "PlatformStabilityFund: zero initial price");
@@ -211,7 +238,7 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
         require(_platformFeePercent >= _lowValueFeePercent, "PlatformStabilityFund: regular fee must be >= low value fee");
         require(_valueThreshold > 0, "PlatformStabilityFund: zero threshold");
 
-        teachToken = IERC20(_teachToken);
+        token = IERC20(_token);
         stableCoin = IERC20(_stableCoin);
         priceOracle = _priceOracle;
         tokenPrice = _initialPrice;
@@ -246,7 +273,7 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
     * @dev Sets the registry contract address
     * @param _registry Address of the registry contract
     */
-    function setRegistry(address _registry) external onlyRole(ADMIN_ROLE) {
+    function setRegistry(address _registry) external onlyAdmin {
         _setRegistry(_registry, keccak256("PLATFORM_STABILITY_FUND"));
         emit RegistrySet(_registry);
     }
@@ -255,7 +282,7 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
      * @dev Updates the token price and checks if low value mode should be activated
      * @param _newPrice New token price in stable coin units (scaled by 1e18)
      */
-    function updatePrice(uint256 _newPrice) external onlyRole(ORACLE_ROLE) {
+    function updatePrice(uint256 _newPrice) external onlyPriceOracle {
         require(_newPrice > 0, "PlatformStabilityFund: zero price");
 
         emit PriceUpdated(tokenPrice, _newPrice);
@@ -271,7 +298,7 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
      * @dev Updates the baseline price (governance function)
      * @param _newBaselinePrice New baseline price in stable coin units (scaled by 1e18)
      */
-    function updateBaselinePrice(uint256 _newBaselinePrice) external onlyRole(ADMIN_ROLE) {
+    function updateBaselinePrice(uint256 _newBaselinePrice) external onlyAdmin {
         require(_newBaselinePrice > 0, "PlatformStabilityFund: zero baseline price");
 
         emit BaselinePriceUpdated(baselinePrice, _newBaselinePrice);
@@ -286,7 +313,7 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
     * @dev Updates the current fee based on token price relative to baseline
     * @return uint16 The newly calculated fee percentage
     */
-    function updateCurrentFee() public onlyRole(ADMIN_ROLE) returns (uint16) {
+    function updateCurrentFee() public onlyAdmin returns (uint16) {
         uint256 valueDropPercent = 0;
         uint256 verifiedPrice = getVerifiedPrice();
         
@@ -352,12 +379,12 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
      * @dev Withdraws stable coins from reserves (only owner)
      * @param _amount Amount of stable coins to withdraw
      */
-    function withdrawReserves(uint256 _amount) external onlyRole(ADMIN_ROLE) nonReentrant {
+    function withdrawReserves(uint256 _amount) external onlyAdmin nonReentrant {
         require(_amount > 0, "PlatformStabilityFund: zero amount");
         uint256 verifiedPrice = getVerifiedPrice();
         
         // Calculate maximum withdrawable amount based on min reserve ratio
-        uint256 totalTokenValue = (teachToken.totalSupply() * verifiedPrice) / 1e18;
+        uint256 totalTokenValue = (token.totalSupply() * verifiedPrice) / 1e18;
         uint256 minReserveRequired = (totalTokenValue * minReserveRatio) / 10000;
 
         uint256 excessReserves = 0;
@@ -376,19 +403,19 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
     }
 
     /**
-     * @dev Converts TEACH tokens to stable coins for project funding with stability protection
+     * @dev Converts ERC20 tokens to stable coins for project funding with stability protection
      * @param _project Address of the project receiving funds
-     * @param _teachAmount Amount of TEACH tokens to convert
+     * @param _tokenAmount Amount of ERC20 tokens to convert
      * @param _minReturn Minimum stable coin amount to receive
      * @return stableAmount Amount of stable coins sent to the project
      */
     function convertTokensToFunding(
         address _project,
-        uint256 _teachAmount,
+        uint256 _tokenAmount,
         uint256 _minReturn
-    ) external onlyRole(ADMIN_ROLE) nonReentrant whenNotPaused flashLoanGuard(_teachAmount) returns (uint256 stableAmount) {
+    ) external onlyAdmin nonReentrant whenNotPaused flashLoanGuard(_tokenAmount) returns (uint256 stableAmount) {
         require(_project != address(0), "PlatformStabilityFund: zero project address");
-        require(_teachAmount > 0, "PlatformStabilityFund: zero amount");
+        require(_tokenAmount > 0, "PlatformStabilityFund: zero amount");
 
         uint256 oldReserves = totalReserves;
         uint256 oldStableBalance = stableCoin.balanceOf(_project);
@@ -396,10 +423,10 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
         uint256 verifiedPrice = getVerifiedPrice();
         
         // Calculate expected value at baseline price
-        uint256 baselineValue = (_teachAmount * baselinePrice) / 1e18;
+        uint256 baselineValue = (_tokenAmount * baselinePrice) / 1e18;
 
         // Calculate current value
-        uint256 currentValue = (_teachAmount * verifiedPrice) / 1e18;
+        uint256 currentValue = (_tokenAmount * verifiedPrice) / 1e18;
 
         // Apply platform fee based on value mode
         uint256 feePercent = updateCurrentFee();
@@ -428,15 +455,15 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
         }
         totalConversions += 1;
 
-        // Transfer TEACH tokens from sender to contract
-        require(teachToken.transferFrom(msg.sender, address(this), _teachAmount), "PlatformStabilityFund: teach transfer failed");
+        // Transfer ERC20 tokens from sender to contract
+        require(token.transferFrom(msg.sender, address(this), _tokenAmount), "PlatformStabilityFund: token transfer failed");
 
         // Transfer stable coins to project
         if (stableAmount > 0) {
             require(stableCoin.transfer(_project, stableAmount), "PlatformStabilityFund: stable transfer failed");
         }
 
-        emit TokensConverted(_project, _teachAmount, stableAmount, subsidy);
+        emit TokensConverted(_project, _tokenAmount, stableAmount, subsidy);
 
         checkAndPauseIfCritical();
 
@@ -454,7 +481,7 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
      */
     function getReserveRatioHealth() public view returns (uint256) {
         uint256 verifiedPrice = getVerifiedPrice();
-        uint256 totalTokenValue = (teachToken.totalSupply() * verifiedPrice) / 1e18;
+        uint256 totalTokenValue = (token.totalSupply() * verifiedPrice) / 1e18;
 
         if (totalTokenValue == 0) {
             return 10000; // 100% if no tokens
@@ -465,13 +492,13 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
 
     /**
      * @dev Simulates a token conversion without executing it
-     * @param _teachAmount Amount of TEACH tokens to convert
+     * @param _tokenAmount Amount of ERC20 tokens to convert
      * @return expectedValue Expected stable coin value based on current price
      * @return subsidyAmount Expected subsidy amount (if any)
      * @return finalAmount Final amount after subsidy
      * @return feeAmount Platform fee amount
      */
-    function simulateConversion(uint256 _teachAmount) external view returns (
+    function simulateConversion(uint256 _tokenAmount) external view returns (
         uint256 expectedValue,
         uint256 subsidyAmount,
         uint256 finalAmount,
@@ -479,10 +506,10 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
     ) {
         uint256 verifiedPrice = getVerifiedPrice();
         // Calculate expected value at current price
-        expectedValue = (_teachAmount * verifiedPrice) / 1e18;
+        expectedValue = (_tokenAmount * verifiedPrice) / 1e18;
 
         // Calculate baseline value
-        uint256 baselineValue = (_teachAmount * baselinePrice) / 1e18;
+        uint256 baselineValue = (_tokenAmount * baselinePrice) / 1e18;
 
         // Apply platform fee based on value mode
         uint256 feePercent = currentFeePercent;
@@ -520,7 +547,7 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
         uint256 _platformFeePercent,
         uint256 _lowValueFeePercent,
         uint256 _valueThreshold
-    ) external onlyRole(ADMIN_ROLE) {
+    ) external onlyAdmin {
         require(_reserveRatio > _minReserveRatio, "PlatformStabilityFund: invalid reserve ratios");
         require(_platformFeePercent >= _lowValueFeePercent, "PlatformStabilityFund: regular fee must be >= low value fee");
         require(_valueThreshold > 0, "PlatformStabilityFund: zero threshold");
@@ -541,7 +568,7 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
      * @dev Updates the price oracle address
      * @param _newOracle New price oracle address
      */
-    function updatePriceOracle(address _newOracle) external onlyRole(ADMIN_ROLE) {
+    function updatePriceOracle(address _newOracle) external onlyAdmin {
         require(_newOracle != address(0), "PlatformStabilityFund: zero oracle address");
 
         emit PriceOracleUpdated(priceOracle, _newOracle);
@@ -550,18 +577,18 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
     }
 
     /**
-     * @dev Swap TEACH tokens for stable coins
-     * @param _teachAmount Amount of TEACH tokens to swap
+     * @dev Swap platform tokens for stable coins
+     * @param _tokenAmount Amount of platform tokens to swap
      * @param _minReturn Minimum stable coin amount to receive
      * @return stableAmount Amount of stable coins received
      */
-    function swapTokensForStable(uint256 _teachAmount, uint256 _minReturn) external nonReentrant flashLoanGuard(_teachAmount) returns (uint256 stableAmount) {
-        require(_teachAmount > 0, "PlatformStabilityFund: zero amount");
+    function swapTokensForStable(uint256 _tokenAmount, uint256 _minReturn) external nonReentrant flashLoanGuard(_tokenAmount) returns (uint256 stableAmount) {
+        require(_tokenAmount > 0, "PlatformStabilityFund: zero amount");
 
         uint256 verifiedPrice = getVerifiedPrice();
         
-        // Calculate the value of TEACH tokens at current price
-        stableAmount = (_teachAmount * verifiedPrice) / 1e18;
+        // Calculate the value of platform tokens at current price
+        stableAmount = (_tokenAmount * verifiedPrice) / 1e18;
 
         // Check minimum return
         require(stableAmount >= _minReturn, "PlatformStabilityFund: below min return");
@@ -572,8 +599,8 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
         // Update state
         totalReserves -= stableAmount;
 
-        // Transfer TEACH tokens from sender to contract
-        require(teachToken.transferFrom(msg.sender, address(this), _teachAmount), "PlatformStabilityFund: teach transfer failed");
+        // Transfer platform tokens from sender to contract
+        require(token.transferFrom(msg.sender, address(this), _tokenAmount), "PlatformStabilityFund: token transfer failed");
 
         // Transfer stable coins to sender
         require(stableCoin.transfer(msg.sender, stableAmount), "PlatformStabilityFund: stable transfer failed");
@@ -606,7 +633,7 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
     /**
     * @dev Manually pauses the fund in case of emergency
     */
-    function emergencyPause() external onlyRole(EMERGENCY_ROLE){
+    function emergencyPause() external onlyEmergency{
         require(msg.sender == owner() || msg.sender == emergencyAdmin, "PlatformStabilityFund: not authorized");
         require(!paused, "PlatformStabilityFund: already paused");
 
@@ -617,7 +644,7 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
     /**
     * @dev Resumes the fund from pause state
     */
-    function resumeFromPause() external onlyRole(ADMIN_ROLE) {
+    function resumeFromPause() external onlyAdmin {
         require(paused, "PlatformStabilityFund: not paused");
 
         // Ensure reserves are above critical threshold before resuming
@@ -633,7 +660,7 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
     * @dev Sets the critical reserve threshold percentage
     * @param _threshold New threshold as percentage of min reserve ratio
     */
-    function setCriticalReserveThreshold(uint16 _threshold) external onlyRole(ADMIN_ROLE) {
+    function setCriticalReserveThreshold(uint16 _threshold) external onlyAdmin{
         require(_threshold > 100, "PlatformStabilityFund: threshold must be > 100%");
         require(_threshold <= 200, "PlatformStabilityFund: threshold too high");
 
@@ -648,7 +675,7 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
     * @dev Updates the emergency admin address
     * @param _newAdmin New emergency admin address
     */
-    function setEmergencyAdmin(address _newAdmin) external onlyRole(ADMIN_ROLE) {
+    function setEmergencyAdmin(address _newAdmin) external onlyAdmin {
         require(_newAdmin != address(0), "PlatformStabilityFund: zero admin address");
 
         emit EmergencyAdminUpdated(emergencyAdmin, _newAdmin);
@@ -671,7 +698,7 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
         uint16 _adjustmentFactor,
         uint16 _dropThreshold,
         uint16 _maxDropPercent
-    ) external onlyRole(ADMIN_ROLE) {
+    ) external onlyAdmin {
         require(_maxFee >= _baseFee && _baseFee >= _minFee, "PlatformStabilityFund: invalid fee range");
         require(_maxDropPercent > _dropThreshold, "PlatformStabilityFund: invalid drop thresholds");
         require(_adjustmentFactor > 0, "PlatformStabilityFund: zero adjustment factor");
@@ -691,22 +718,22 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
 
     /**
     * @dev Process burned tokens and convert a portion to reserves
-    * @param _burnedAmount Amount of TEACH tokens that were burned
+    * @param _burnedAmount Amount of platform tokens that were burned
     */
-    function processBurnedTokens(uint256 _burnedAmount) external onlyRole(BURNER_ROLE){
+    function processBurnedTokens(uint256 _burnedAmount) external onlyBurner{
         require(_burnedAmount > 0, "PlatformStabilityFund: zero burn amount");
 
         // If the registry is set, verify the caller is either a registered burner or the token contract
         if (address(registry) != address(0)) {
-            if (registry.isContractActive(TEACH_TOKEN_NAME)) {
-                address tokenAddress = registry.getContractAddress(TEACH_TOKEN_NAME);
+            if (registry.isContractActive(TOKEN_NAME)) {
+                address tokenAddress = registry.getContractAddress(TOKEN_NAME);
                 require(
                     msg.sender == tokenAddress || hasRole(BURNER_ROLE, msg.sender),
-                    "StabilityFund: not authorized"
+                    "PlatformStabilityFund: not authorized"
                 );
             }
         } else {
-            require(hasRole(BURNER_ROLE, msg.sender), "StabilityFund: not authorized");
+            require(hasRole(BURNER_ROLE, msg.sender), "PlatformStabilityFund: not authorized");
         }
         
         uint256 verifiedPrice = getVerifiedPrice();
@@ -727,7 +754,7 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
     * @dev Process platform fees and add a portion to reserves
     * @param _feeAmount Amount of platform fees collected
     */
-    function processPlatformFees(uint256 _feeAmount) external onlyRole(ADMIN_ROLE) {
+    function processPlatformFees(uint256 _feeAmount) external onlyAdmin {
         require(_feeAmount > 0, "PlatformStabilityFund: zero fee amount");
 
         // Calculate portion to add to reserves
@@ -751,7 +778,7 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
     function updateReplenishmentParameters(
         uint16 _burnPercent,
         uint16 _feePercent
-    ) external onlyRole(ADMIN_ROLE) {
+    ) external onlyAdmin {
         require(_burnPercent <= 5000, "PlatformStabilityFund: burn percent too high");
         require(_feePercent <= 10000, "PlatformStabilityFund: fee percent too high");
 
@@ -766,7 +793,7 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
     * @param _burner Address of the burner
     * @param _authorized Whether the address is authorized
     */
-    function setAuthBurner(address _burner, bool _authorized) external onlyRole(ADMIN_ROLE) {
+    function setAuthBurner(address _burner, bool _authorized) external onlyAdmin {
         require(_burner != address(0), "PlatformStabilityFund: zero burner address");
         
         if (_authorized) {
@@ -781,7 +808,7 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
     function _checkReserveRatioInvariant() internal view {
         if (!paused) {
             uint256 verifiedPrice = getVerifiedPrice();
-            uint256 totalTokenValue = (teachToken.totalSupply() * verifiedPrice) / 1e18;
+            uint256 totalTokenValue = (token.totalSupply() * verifiedPrice) / 1e18;
             uint256 minRequired = (totalTokenValue * minReserveRatio) / 10000;
             assert(totalReserves >= minRequired);
         }
@@ -792,7 +819,7 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
         uint256 _maxSingleConversionAmount,
         uint256 _minTimeBetweenActions,
         bool _enabled
-    ) external onlyRole(ADMIN_ROLE) {
+    ) external onlyAdmin {
         maxDailyUserVolume = _maxDailyUserVolume;
         maxSingleConversionAmount = _maxSingleConversionAmount;
         minTimeBetweenActions = _minTimeBetweenActions;
@@ -828,24 +855,24 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
         }
     }
 
-    function placeSuspiciousAddressInCooldown(address _suspiciousAddress) external onlyRole(EMERGENCY_ROLE) {
+    function placeSuspiciousAddressInCooldown(address _suspiciousAddress) external onlyEmergency {
         addressCooldown[_suspiciousAddress] = true;
         emit AddressPlacedInCooldown(_suspiciousAddress, block.timestamp + suspiciousCooldownPeriod);
     }
 
-    function removeSuspiciousAddressCooldown(address _address) external onlyRole(ADMIN_ROLE) {
+    function removeSuspiciousAddressCooldown(address _address) external onlyAdmin {
         addressCooldown[_address] = false;
         emit AddressRemovedFromCooldown(_address);
     }
 
     function _postActionCheck(
         address _user,
-        uint256 _teachAmount,
+        uint256 _tokenAmount,
         uint256 _stableAmount
     ) internal {
         uint256 verifiedPrice = getVerifiedPrice();
         // Check for abnormal price impact
-        uint256 expectedValue = (_teachAmount * verifiedPrice) / 1e18;
+        uint256 expectedValue = (_tokenAmount * verifiedPrice) / 1e18;
         uint256 priceImpact = 0;
 
         if (expectedValue > _stableAmount) {
@@ -854,11 +881,11 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
 
         // If price impact is abnormally high, log suspicious activity
         if (priceImpact > 500) { // 5% threshold
-            emit SuspiciousActivity(_user, "High price impact conversion", _teachAmount);
+            emit SuspiciousActivity(_user, "High price impact conversion", _tokenAmount);
         }
 
         // Run detection algorithm
-        detectSuspiciousActivity(_user, _teachAmount);
+        detectSuspiciousActivity(_user, _tokenAmount);
     }
 
     function recordPriceObservation() public {
@@ -881,7 +908,7 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
         }
     }
 
-    function updatePrice(uint256 _newPrice) external onlyRole(ORACLE_ROLE) {
+    function updatePrice(uint256 _newPrice) external onlyPriceOracle {
         require(_newPrice > 0, "PlatformStabilityFund: zero price");
 
         uint256 verifiedPrice = getVerifiedPrice();
@@ -983,7 +1010,7 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
         uint256 _windowSize,
         uint256 _interval,
         bool _enabled
-    ) external onlyRole(ADMIN_ROLE) {
+    ) external onlyAdmin {
         require(_windowSize > 0 && _windowSize <= MAX_PRICE_OBSERVATIONS, "PlatformStabilityFund: invalid window size");
         require(_interval > 0, "PlatformStabilityFund: interval cannot be zero");
 
@@ -1021,8 +1048,8 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
      * @dev Emergency notification to all connected contracts
      * Called when critical stability issues are detected
      */
-    function notifyEmergencyToConnectedContracts() external onlyRole(EMERGENCY_ROLE) {
-        require(address(registry) != address(0), "StabilityFund: registry not set");
+    function notifyEmergencyToConnectedContracts() external onlyEmergency {
+        require(address(registry) != address(0), "PlatformStabilityFund: registry not set");
 
         // Try to notify the marketplace to pause
         try registry.isContractActive(MARKETPLACE_NAME) returns (bool isActive) {
@@ -1070,19 +1097,19 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
             emit EmergencyNotificationFailed(STAKING_NAME);
         }
 
-        // Try to notify teacher rewards
-        try registry.isContractActive(TEACHER_REWARD_NAME) returns (bool isActive) {
+        // Try to notify platform rewards
+        try registry.isContractActive(PLATFORM_REWARD_NAME) returns (bool isActive) {
             if (isActive) {
-                address rewards = registry.getContractAddress(TEACHER_REWARD_NAME);
+                address rewards = registry.getContractAddress(PLATFORM_REWARD_NAME);
                 (bool success, ) = rewards.call(
                     abi.encodeWithSignature("pauseRewards()")
                 );
                 if (!success) {
-                    emit EmergencyNotificationFailed(TEACHER_REWARD_NAME);
+                    emit EmergencyNotificationFailed(PLATFORM_REWARD_NAME);
                 }
             }
         } catch {
-            emit EmergencyNotificationFailed(TEACHER_REWARD_NAME);
+            emit EmergencyNotificationFailed(PLATFORM_REWARD_NAME);
         }
 
         // Trigger the emergency pause in this contract as well
@@ -1091,32 +1118,111 @@ contract PlatformStabilityFund is AccessControl, ReentrancyGuard, RegistryAware 
     }
 
     /**
-     * @dev Get the TeachToken address from the registry
-     * @return Address of the TeachToken contract
+     * @dev Get the Token address from the registry
+     * @return Address of the Token contract
      */
-    function getTeachTokenFromRegistry() public view returns (address) {
-        require(address(registry) != address(0), "StabilityFund: registry not set");
-        require(registry.isContractActive(TEACH_TOKEN_NAME), "StabilityFund: TEACH token not active");
+    function getPlatformTokenFromRegistry() public view returns (address) {
+        require(address(registry) != address(0), "PlatformStabilityFund: registry not set");
+        require(registry.isContractActive(TOKEN_NAME), "PlatformStabilityFund: token not active");
 
-        return registry.getContractAddress(TEACH_TOKEN_NAME);
+        return registry.getContractAddress(TOKEN_NAME);
     }
 
     /**
     * @dev Update contract references from registry
      * This ensures contracts always have the latest addresses
      */
-    function updateContractReferences() external onlyRole(ADMIN_ROLE) {
-        require(address(registry) != address(0), "StabilityFund: registry not set");
+    function updateContractReferences() external onlyAdmin {
+        require(address(registry) != address(0), "PlatformStabilityFund: registry not set");
 
-        // Update TeachToken reference
-        if (registry.isContractActive(TEACH_TOKEN_NAME)) {
-            address newTeachToken = registry.getContractAddress(TEACH_TOKEN_NAME);
-            address oldTeachToken = address(teachToken);
+        // Update Token reference
+        if (registry.isContractActive(TOKEN_NAME)) {
+            address newToken = registry.getContractAddress(TOKEN_NAME);
+            address oldToken = address(token);
 
-            if (newTeachToken != oldTeachToken) {
-                teachToken = IERC20(newTeachToken);
-                emit ContractReferenceUpdated(TEACH_TOKEN_NAME, oldTeachToken, newTeachToken);
+            if (newToken != oldToken) {
+                token = IERC20(newToken);
+                emit ContractReferenceUpdated(TOKEN_NAME, oldToken, newToken);
             }
         }
     }
+
+    // Add initialization
+    function initializeEmergencyRecovery(uint256 _requiredApprovals) external onlyAdmin {
+        requiredRecoveryApprovals = _requiredApprovals;
+    }
+
+// Add recovery function
+    function initiateEmergencyRecovery() external onlyEmergency {
+        require(paused, "StabilityFund: not paused");
+        inEmergencyRecovery = true;
+        emit EmergencyRecoveryInitiated(msg.sender, block.timestamp);
+    }
+
+    function approveRecovery() external onlyAdmin {
+        require(inEmergencyRecovery, "StabilityFund: not in recovery mode");
+        require(!emergencyRecoveryApprovals[msg.sender], "StabilityFund: already approved");
+
+        emergencyRecoveryApprovals[msg.sender] = true;
+
+        if (_countRecoveryApprovals() >= requiredRecoveryApprovals) {
+            _executeRecovery();
+        }
+    }
+
+    function _countRecoveryApprovals() internal view returns (uint256) {
+        uint256 count = 0;
+        // Iterate through all admin role holders
+        bytes32 role = ADMIN_ROLE;
+        for (uint i = 0; i < getRoleMemberCount(role); i++) {
+            address admin = getRoleMember(role, i);
+            if (emergencyRecoveryApprovals[admin]) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    function _executeRecovery() internal {
+        inEmergencyRecovery = false;
+        paused = false;
+        // Reset any emergency state variables
+        emit EmergencyRecoveryCompleted(msg.sender, block.timestamp);
+    }
+
+    // Update cache periodically
+    function updateAddressCache() public {
+        if (address(registry) != address(0)) {
+            try registry.getContractAddress(TOKEN_NAME) returns (address tokenAddress) {
+                if (tokenAddress != address(0)) {
+                    _cachedTokenAddress = tokenAddress;
+                }
+            } catch {}
+
+            try registry.getContractAddress(STABILITY_FUND_NAME) returns (address stabilityFund) {
+                if (stabilityFund != address(0)) {
+                    _cachedStabilityFundAddress = stabilityFund;
+                }
+            } catch {}
+
+            _lastCacheUpdate = block.timestamp;
+        }
+    }
+
+    // Use cached addresses if registry lookup fails
+    function getTokenAddress() internal returns (address) {
+        // Try registry first
+        if (address(registry) != address(0)) {
+            try registry.getContractAddress(TOKEN_NAME) returns (address addr) {
+                if (addr != address(0)) {
+                    _cachedTokenAddress = addr; // Update cache
+                    return addr;
+                }
+            } catch {}
+        }
+
+        // Fall back to cached address
+        return _cachedTokenAddress;
+    }
+
 }

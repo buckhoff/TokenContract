@@ -1,30 +1,28 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/security/Pausable.sol";
-import "@openzeppelin/contracts/access/AccessControl.sol";
-import "./RegistryAware.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "./Registry/RegistryAwareUpgradeable.sol";
+import "./Constants.sol";
 
 /**
  * @title TeacherReward
  * @dev Contract for incentivizing and rewarding teachers based on performance metrics
  */
-contract TeacherReward is Ownable, ReentrancyGuard, Pausable, AccessControl, RegistryAware {
-    bytes32 public constant TEACH_TOKEN_NAME = keccak256("TEACH_TOKEN");
-    bytes32 public constant STABILITY_FUND_NAME = keccak256("PLATFORM_STABILITY_FUND");
-    bytes32 public constant GOVERNANCE_NAME = keccak256("TEACHER_GOVERNANCE");
-    bytes32 public constant MARKETPLACE_NAME = keccak256("TEACHER_MARKETPLACE");
-
-    // Role constants
-    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
-    bytes32 public constant VERIFIER_ROLE = keccak256("VERIFIER_ROLE");
-    bytes32 public constant EMERGENCY_ROLE = keccak256("EMERGENCY_ROLE");
-    
-    // The TeachToken contract
-    IERC20 public teachToken;
+contract TeacherReward is 
+    Initializable,
+    OwnableUpgradeable,
+    ReentrancyGuardUpgradeable,
+    PausableUpgradeable,
+    AccessControlUpgradeable,
+    RegistryAwareUpgradeable,
+    Constants
+{
     
     // Teacher registration status
     struct Teacher {
@@ -91,8 +89,8 @@ contract TeacherReward is Ownable, ReentrancyGuard, Pausable, AccessControl, Reg
     mapping(address => bool) public verifiers;
 
     // Reputation impact on reward calculation
-    uint256 public performanceMultiplierBase = 100; // 1.0x multiplier base
-    uint256 public maxPerformanceMultiplier = 300;  // 3.0x maximum multiplier
+    uint256 public performanceMultiplierBase; // multiplier base
+    uint256 public maxPerformanceMultiplier;  // maximum multiplier
     
     // Events
     event TeacherRegistered(address indexed teacher);
@@ -105,20 +103,11 @@ contract TeacherReward is Ownable, ReentrancyGuard, Pausable, AccessControl, Reg
     event RewardParametersUpdated(uint256 baseRate, uint256 multiplier, uint256 maxDaily, uint256 minPeriod);
     event RegistrySet(address indexed registry);
     event ContractReferenceUpdated(bytes32 indexed contractName, address indexed oldAddress, address indexed newAddress);
-    
-    /**
-     * @dev Modifier to check if caller is a teacher
-     */
-    modifier onlyTeacher() {
-        require(teachers[msg.sender].isRegistered, "TeacherReward: not registered");
-        _;
-    }
-    
-    /**
-     * @dev Modifier to check if caller is a verifier
-     */
-    modifier onlyVerifier() {
-        require(verifiers[msg.sender], "TeacherReward: not a verifier");
+    event AchievementAwarded(address indexed teacher, uint256 indexed achievementId, uint256 count);
+    event PeerReviewSubmitted(address indexed teacher, address indexed reviewer, uint256 score);
+
+    modifier onlyAdmin() {
+        require(hasRole(ADMIN_ROLE, msg.sender), "TeacherReward: caller is not admin role");
         _;
     }
     
@@ -130,20 +119,63 @@ contract TeacherReward is Ownable, ReentrancyGuard, Pausable, AccessControl, Reg
      * @param _maxDailyReward Maximum rewards claimable per day
      * @param _minimumClaimPeriod Minimum time between claims in seconds
      */
-    constructor(
-        address _teachToken,
+    constructor(){
+        _disableInitializers();
+    }
+
+    /**
+     * @dev Modifier to check if caller is a teacher
+     */
+    modifier onlyTeacher() {
+        require(teachers[msg.sender].isRegistered, "TeacherReward: not registered");
+        _;
+    }
+
+    /**
+     * @dev Modifier to check if caller is a verifier
+     */
+    modifier onlyVerifier() {
+        require(verifiers[msg.sender], "TeacherReward: not a verifier");
+        _;
+    }
+
+    /**
+     * @dev Initializes the contract with initial parameters
+     * @param _teachToken Address of the TEACH token contract
+     * @param _baseRewardRate Base tokens per day for verified teachers
+     * @param _reputationMultiplier Reputation impact on rewards (100 = 1x)
+     * @param _maxDailyReward Maximum rewards claimable per day
+     * @param _minimumClaimPeriod Minimum time between claims in seconds
+     */
+    function initialize(
+        address _token,
         uint256 _baseRewardRate,
         uint256 _reputationMultiplier,
         uint256 _maxDailyReward,
         uint256 _minimumClaimPeriod
-    ) Ownable(msg.sender) {
-        require(_teachToken != address(0), "TeacherReward: zero token address");
+    ) initializer public {
+        require(_token != address(0), "TeacherReward: zero token address");
+
+        __Ownable_init(msg.sender);
+        __ReentrancyGuard_init();
+        __Pausable_init();
+        __AccessControl_init();
         
-        teachToken = IERC20(_teachToken);
+        token = IERC20Upgradeable(_token);
         baseRewardRate = _baseRewardRate;
         reputationMultiplier = _reputationMultiplier;
         maxDailyReward = _maxDailyReward;
         minimumClaimPeriod = _minimumClaimPeriod;
+
+        // Default values for performance multipliers
+        performanceMultiplierBase = 100; // 1.0x multiplier base
+        maxPerformanceMultiplier = 300;  // 3.0x maximum multiplier
+
+        // Make deployer the first verifier
+        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _setupRole(ADMIN_ROLE, msg.sender);
+        _setupRole(VERIFIER_ROLE, msg.sender);
+        _setupRole(EMERGENCY_ROLE, msg.sender);
         
         // Make deployer the first verifier
         verifiers[msg.sender] = true;
@@ -154,7 +186,7 @@ contract TeacherReward is Ownable, ReentrancyGuard, Pausable, AccessControl, Reg
      * @dev Sets the registry contract address
      * @param _registry Address of the registry contract
      */
-    function setRegistry(address _registry) external onlyOwner {
+    function setRegistry(address _registry) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _setRegistry(_registry, keccak256("TEACHER_REWARD"));
         emit RegistrySet(_registry);
     }
@@ -163,17 +195,17 @@ contract TeacherReward is Ownable, ReentrancyGuard, Pausable, AccessControl, Reg
      * @dev Update contract references from registry
      * This ensures contracts always have the latest addresses
      */
-    function updateContractReferences() external onlyRole(ADMIN_ROLE) {
+    function updateContractReferences() external onlyAdmin {
         require(address(registry) != address(0), "TeacherReward: registry not set");
 
         // Update TeachToken reference
-        if (registry.isContractActive(TEACH_TOKEN_NAME)) {
-            address newTeachToken = registry.getContractAddress(TEACH_TOKEN_NAME);
-            address oldTeachToken = address(teachToken);
+        if (registry.isContractActive(TOKEN_NAME)) {
+            address newToken = registry.getContractAddress(TOKEN_NAME);
+            address oldToken = address(token);
 
-            if (newTeachToken != oldTeachToken) {
-                teachToken = IERC20(newTeachToken);
-                emit ContractReferenceUpdated(TEACH_TOKEN_NAME, oldTeachToken, newTeachToken);
+            if (newToken != oldToken) {
+                token = IERC20Upgradeable(newToken);
+                emit ContractReferenceUpdated(TOKEN_NAME, oldToken, newToken);
             }
         }
     }
@@ -287,7 +319,7 @@ contract TeacherReward is Ownable, ReentrancyGuard, Pausable, AccessControl, Reg
         rewardPool -= pendingReward;
         
         // Transfer tokens
-        require(teachToken.transfer(msg.sender, pendingReward), "TeacherReward: transfer failed");
+        require(token.transfer(msg.sender, pendingReward), "TeacherReward: transfer failed");
         
         emit RewardClaimed(msg.sender, pendingReward);
     }
@@ -300,7 +332,7 @@ contract TeacherReward is Ownable, ReentrancyGuard, Pausable, AccessControl, Reg
         require(_amount > 0, "TeacherReward: zero amount");
         
         // Transfer tokens from caller to contract
-        require(teachToken.transferFrom(msg.sender, address(this), _amount), "TeacherReward: transfer failed");
+        require(token.transferFrom(msg.sender, address(this), _amount), "TeacherReward: transfer failed");
         
         // Increase reward pool
         rewardPool += _amount;
@@ -333,11 +365,12 @@ contract TeacherReward is Ownable, ReentrancyGuard, Pausable, AccessControl, Reg
      * @dev Adds a new verifier
      * @param _verifier Address of the new verifier
      */
-    function addVerifier(address _verifier) external onlyOwner {
+    function addVerifier(address _verifier) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(_verifier != address(0), "TeacherReward: zero address");
         require(!verifiers[_verifier], "TeacherReward: already a verifier");
         
         verifiers[_verifier] = true;
+        _setupRole(VERIFIER_ROLE, _verifier);
         
         emit VerifierAdded(_verifier);
     }
@@ -346,10 +379,11 @@ contract TeacherReward is Ownable, ReentrancyGuard, Pausable, AccessControl, Reg
      * @dev Removes a verifier
      * @param _verifier Address of the verifier to remove
      */
-    function removeVerifier(address _verifier) external onlyOwner {
+    function removeVerifier(address _verifier) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(verifiers[_verifier], "TeacherReward: not a verifier");
         
         verifiers[_verifier] = false;
+        revokeRole(VERIFIER_ROLE, _verifier);
         
         emit VerifierRemoved(_verifier);
     }
@@ -392,19 +426,7 @@ contract TeacherReward is Ownable, ReentrancyGuard, Pausable, AccessControl, Reg
     }
 
     // Add pause and unpause functions
-    function pauseRewards() external onlyOwner {
-        _pause();
-    }
-
-    function unpauseRewards() external onlyOwner {
-        _unpause();
-    }
-
-    /**
-     * @dev Emergency pause for rewards system, can be triggered by StabilityFund
-     */
     function pauseRewards() external {
-        // Check if caller is StabilityFund, has EMERGENCY_ROLE, or is the governance contract
         if (address(registry) != address(0)) {
             if (registry.isContractActive(STABILITY_FUND_NAME)) {
                 address stabilityFund = registry.getContractAddress(STABILITY_FUND_NAME);
@@ -431,8 +453,11 @@ contract TeacherReward is Ownable, ReentrancyGuard, Pausable, AccessControl, Reg
         } else {
             require(hasRole(EMERGENCY_ROLE, msg.sender), "TeacherReward: not authorized");
         }
-
         _pause();
+    }
+
+    function unpauseRewards() external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _unpause();
     }
 
     /**
@@ -448,7 +473,7 @@ contract TeacherReward is Ownable, ReentrancyGuard, Pausable, AccessControl, Reg
         string memory _description,
         uint256 _rewardAmount,
         bool _repeatable
-    ) external onlyRole(ADMIN_ROLE) returns (uint256) {
+    ) external onlyAdmin returns (uint256) {
         require(bytes(_name).length > 0, "TeacherReward: empty name");
         require(bytes(_description).length > 0, "TeacherReward: empty description");
 
@@ -490,9 +515,9 @@ contract TeacherReward is Ownable, ReentrancyGuard, Pausable, AccessControl, Reg
             rewardPool -= achievement.rewardAmount;
 
             // Get token from registry if available
-            IERC20 token = teachToken;
-            if (address(registry) != address(0) && registry.isContractActive(TEACH_TOKEN_NAME)) {
-                token = IERC20(registry.getContractAddress(TEACH_TOKEN_NAME));
+            IERC20Upgradeable token = token;
+            if (address(registry) != address(0) && registry.isContractActive(TOKEN_NAME)) {
+                token = IERC20Upgradeable(registry.getContractAddress(TOKEN_NAME));
             }
 
             // Transfer tokens
@@ -643,6 +668,6 @@ contract TeacherReward is Ownable, ReentrancyGuard, Pausable, AccessControl, Reg
         }
 
         // Check for achievement triggers
-        checkResourceAchievements(_teacher);
+        // checkResourceAchievements(_teacher);
     }
 }
