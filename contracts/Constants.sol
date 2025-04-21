@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.29;
 
-abstract contract Constants{
+library Constants{
     // Constants for contract names (can be in a shared Constants.sol file)
     bytes32 internal constant TOKEN_NAME = keccak256("TOKEN");
     bytes32 internal constant STABILITY_FUND_NAME = keccak256("PLATFORM_STABILITY_FUND");
@@ -21,7 +21,5 @@ abstract contract Constants{
     bytes32 internal constant MINTER_ROLE = keccak256("MINTER_ROLE");
     bytes32 internal constant BURNER_ROLE = keccak256("BURNER_ROLE");
     bytes32 internal constant RECORDER_ROLE = keccak256("RECORDER_ROLE");
-
-    // The TeachToken contract
-    IERC20Upgradeable internal token;
+    bytes32 internal constant ORACLE_ROLE = keccak256("ORACLE_ROLE");
 }

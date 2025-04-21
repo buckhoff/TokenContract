@@ -2,8 +2,9 @@
 pragma solidity ^0.8.29;
 
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {Constants} from "./Constants.sol"
 
 /**
  * @title ContractRegistry
@@ -11,7 +12,7 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
  * This facilitates cross-contract communication and upgradability
  */
 contract ContractRegistry is Initializable, AccessControlUpgradeable, ReentrancyGuardUpgradeable {
-
+    
     // Contract names mapped to their addresses
     mapping(bytes32 => address) private contracts;
 
@@ -49,17 +50,17 @@ contract ContractRegistry is Initializable, AccessControlUpgradeable, Reentrancy
     event RecoveryApprovalsUpdated(uint256 requiredApprovals);
     
     modifier onlyAdmin() {
-        require(hasRole(ADMIN_ROLE, msg.sender), "ContractRegistry: caller is not admin role");
+        require(hasRole(Constants.ADMIN_ROLE, msg.sender), "ContractRegistry: caller is not admin role");
         _;
     }
 
     modifier onlyUpgrader() {
-        require(hasRole(UPGRADER_ROLE, msg.sender), "ContractRegistry: caller is not upgrader role");
+        require(hasRole(Constants.UPGRADER_ROLE, msg.sender), "ContractRegistry: caller is not upgrader role");
         _;
     }
 
     modifier onlyEmergency() {
-        require(hasRole(EMERGENCY_ROLE, msg.sender), "ContractRegistry: caller is not emergency role");
+        require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "ContractRegistry: caller is not emergency role");
         _;
     }
     
@@ -78,9 +79,9 @@ contract ContractRegistry is Initializable, AccessControlUpgradeable, Reentrancy
         __ReentrancyGuard_init();
         
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
-        _grantRole(ADMIN_ROLE, msg.sender);
-        _grantRole(UPGRADER_ROLE, msg.sender);
-        _grantRole(EMERGENCY_ROLE, msg.sender);
+        _grantRole(Constants.ADMIN_ROLE, msg.sender);
+        _grantRole(Constants.UPGRADER_ROLE, msg.sender);
+        _grantRole(Constants.EMERGENCY_ROLE, msg.sender);
         systemPaused = false;
     }
 
@@ -268,8 +269,8 @@ contract ContractRegistry is Initializable, AccessControlUpgradeable, Reentrancy
 
     function _countRecoveryApprovals() internal view returns (uint256) {
         uint256 count = 0;
-        for (uint i = 0; i < getRoleMemberCount(ADMIN_ROLE); i++) {
-            if (emergencyRecoveryApprovals[getRoleMember(ADMIN_ROLE, i)]) {
+        for (uint i = 0; i < getRoleMemberCount(Constants.ADMIN_ROLE); i++) {
+            if (emergencyRecoveryApprovals[getRoleMember(Constants.ADMIN_ROLE, i)]) {
                 count++;
             }
         }
@@ -280,5 +281,13 @@ contract ContractRegistry is Initializable, AccessControlUpgradeable, Reentrancy
         require(_required > 0, "ContractRegistry: invalid approval count");
         requiredRecoveryApprovals = _required;
         emit RecoveryApprovalsUpdated(_required);
+    }
+
+    function getRoleMemberCount(bytes32 role) internal view returns (uint256) {
+        return _roles[role].members.length();
+    }
+
+    function getRoleMember(bytes32 role, uint256 index) internal view returns (address) {
+        return _roles[role].members.at(index);
     }
 }

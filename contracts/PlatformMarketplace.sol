@@ -8,7 +8,7 @@ import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
-import "./Constants.sol";
+import {Constants} from "./Constants.sol"
 
 interface IPlatformStabilityFund {
     function getVerifiedPrice() external view returns (uint256);
@@ -116,12 +116,12 @@ contract PlatformMarketplace is
     event BulkPurchaseDiscountApplied(address indexed buyer, uint256 resourceCount, uint256 discountPercent);
 
     modifier onlyAdmin() {
-        require(hasRole(ADMIN_ROLE, msg.sender), "PlatformMarketplace: caller is not admin role");
+        require(hasRole(Constants.ADMIN_ROLE, msg.sender), "PlatformMarketplace: caller is not admin role");
         _;
     }
 
     modifier onlyEmergency() {
-        require(hasRole(EMERGENCY_ROLE, msg.sender), "PlatformMarketplace: caller is not emergency role");
+        require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "PlatformMarketplace: caller is not emergency role");
         _;
     } 
 
@@ -156,9 +156,9 @@ contract PlatformMarketplace is
         platformFeePercent = _feePercent;
         feeRecipient = _feeRecipient;
         _resourceIdCounter = 1;
-        _setupRole(ADMIN_ROLE, msg.sender);
-        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
-        _setupRole(EMERGENCY_ROLE, msg.sender);
+        _setupRole(Constants.ADMIN_ROLE, msg.sender);
+        _setupRole(Constants.DEFAULT_ADMIN_ROLE, msg.sender);
+        _setupRole(Constants.EMERGENCY_ROLE, msg.sender);
 
         // Set default subscription fee
         monthlySubscriptionFee = 100 * 10**18; // 100 platformtokens per month
@@ -177,7 +177,7 @@ contract PlatformMarketplace is
      * @param _registry Address of the registry contract
      */
     function setRegistry(address _registry) external onlyAdmin {
-        _setRegistry(_registry, keccak256("PLATFORM_MARKETPLACE"));
+        _setRegistry(_registry, Constants.PLATFORM_MARKETPLACE);
         emit RegistrySet(_registry);
     }
 
@@ -189,21 +189,21 @@ contract PlatformMarketplace is
         require(address(registry) != address(0), "PlatformMarketplace: registry not set");
 
         // Update Token reference
-        if (registry.isContractActive(TOKEN_NAME)) {
-            address newToken = registry.getContractAddress(TOKEN_NAME);
+        if (registry.isContractActive(Constants.TOKEN_NAME)) {
+            address newToken = registry.getContractAddress(Constants.TOKEN_NAME);
             address oldToken = address(token);
 
             if (newToken != oldToken) {
                 token = IERC20(newToken);
-                emit ContractReferenceUpdated(TOKEN_NAME, oldToken, newToken);
+                emit ContractReferenceUpdated(Constants.TOKEN_NAME, oldToken, newToken);
             }
         }
 
         // Update StabilityFund reference for price oracle
-        if (registry.isContractActive(STABILITY_FUND_NAME)) {
-            address stabilityFund = registry.getContractAddress(STABILITY_FUND_NAME);
+        if (registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
+            address stabilityFund = registry.getContractAddress(Constants.STABILITY_FUND_NAME);
             // No need to store this reference as we'll fetch it when needed
-            emit ContractReferenceUpdated(STABILITY_FUND_NAME, address(0), stabilityFund);
+            emit ContractReferenceUpdated(Constants.STABILITY_FUND_NAME, address(0), stabilityFund);
         }
     }
     
@@ -292,7 +292,7 @@ contract PlatformMarketplace is
         resource.sales += 1;
 
         // If we have a connection to the stability fund, share a portion of fees with it
-        if (address(registry) != address(0) && registry.isContractActive(STABILITY_FUND_NAME)) {
+        if (address(registry) != address(0) && registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
             try this.shareFeeWithStabilityFund(platformFee) {} catch {}
         }
         
@@ -383,14 +383,14 @@ contract PlatformMarketplace is
     // Add pause and unpause functions
     function pauseMarketplace() external {
         // Check if caller is StabilityFund or has EMERGENCY_ROLE
-        if (address(registry) != address(0) && registry.isContractActive(STABILITY_FUND_NAME)) {
-            address stabilityFund = registry.getContractAddress(STABILITY_FUND_NAME);
+        if (address(registry) != address(0) && registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
+            address stabilityFund = registry.getContractAddress(Constants.STABILITY_FUND_NAME);
             require(
-                msg.sender == stabilityFund || hasRole(EMERGENCY_ROLE, msg.sender),
+                msg.sender == stabilityFund || hasRole(Constants.EMERGENCY_ROLE, msg.sender),
                 "PlatformMarketplace: not authorized"
             );
         } else {
-            require(hasRole(EMERGENCY_ROLE, msg.sender), "PlatformMarketplace: not authorized");
+            require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "PlatformMarketplace: not authorized");
         }
         _pause();
     }
@@ -417,7 +417,7 @@ contract PlatformMarketplace is
     function shareFeeWithStabilityFund(uint256 _fee) external {
         require(msg.sender == address(this), "PlatformMarketplace: unauthorized");
 
-        address stabilityFund = registry.getContractAddress(STABILITY_FUND_NAME);
+        address stabilityFund = registry.getContractAddress(Constants.STABILITY_FUND_NAME);
 
         // Calculate portion to share (e.g., 20% of fee)
         uint256 portionToShare = (_fee * 2000) / 10000;
@@ -522,7 +522,7 @@ contract PlatformMarketplace is
         require(token.transferFrom(msg.sender, feeRecipient, fee), "PlatformMarketplace: payment failed");
 
         // Share with stability fund
-        if (address(registry) != address(0) && registry.isContractActive(STABILITY_FUND_NAME)) {
+        if (address(registry) != address(0) && registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
             try this.shareFeeWithStabilityFund(fee) {} catch {}
         }
 
@@ -614,7 +614,7 @@ contract PlatformMarketplace is
         }
 
         // Share platform fee with stability fund
-        if (address(registry) != address(0) && registry.isContractActive(STABILITY_FUND_NAME)) {
+        if (address(registry) != address(0) && registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
             try this.shareFeeWithStabilityFund(platformFee) {} catch {}
         }
     }
@@ -652,8 +652,8 @@ contract PlatformMarketplace is
      * @return tokenAmount Amount in platform tokens
      */
     function calculateTokenPrice(uint256 _stableAmount) public view returns (uint256 tokenAmount) {
-        if (address(registry) != address(0) && registry.isContractActive(STABILITY_FUND_NAME)) {
-            try IPlatformStabilityFund(registry.getContractAddress(STABILITY_FUND_NAME)).getVerifiedPrice() returns (uint256 verifiedPrice) {
+        if (address(registry) != address(0) && registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
+            try IPlatformStabilityFund(registry.getContractAddress(Constants.STABILITY_FUND_NAME)).getVerifiedPrice() returns (uint256 verifiedPrice) {
                 if (verifiedPrice > 0) {
                     return (_stableAmount.mul(1e18)).div(verifiedPrice);
                 }
@@ -673,7 +673,7 @@ contract PlatformMarketplace is
      */
     function setResourceResellable(uint256 _resourceId, bool _isResellable) external {
         Resource storage resource = resources[_resourceId];
-        require(resource.creator == msg.sender || hasRole(ADMIN_ROLE, msg.sender), "PlatformMarketplace: not authorized");
+        require(resource.creator == msg.sender || hasRole(Constants.ADMIN_ROLE, msg.sender), "PlatformMarketplace: not authorized");
         require(resource.creator != address(0), "PlatformMarketplace: resource does not exist");
 
         // Update resellable status in new struct field or mapping
@@ -723,8 +723,8 @@ contract PlatformMarketplace is
         emergencyRecoveryApprovals[msg.sender] = true;
 
         uint256 approvalCount = 0;
-        for (uint i = 0; i < getRoleMemberCount(ADMIN_ROLE); i++) {
-            if (emergencyRecoveryApprovals[getRoleMember(ADMIN_ROLE, i)]) {
+        for (uint i = 0; i < getRoleMemberCount(Constants.ADMIN_ROLE); i++) {
+            if (emergencyRecoveryApprovals[getRoleMember(Constants.ADMIN_ROLE, i)]) {
                 approvalCount++;
             }
         }
@@ -739,13 +739,13 @@ contract PlatformMarketplace is
     // Update cache periodically
     function updateAddressCache() public {
         if (address(registry) != address(0)) {
-            try registry.getContractAddress(TOKEN_NAME) returns (address tokenAddress) {
+            try registry.getContractAddress(Constants.TOKEN_NAME) returns (address tokenAddress) {
                 if (tokenAddress != address(0)) {
                     _cachedTokenAddress = tokenAddress;
                 }
             } catch {}
 
-            try registry.getContractAddress(STABILITY_FUND_NAME) returns (address stabilityFund) {
+            try registry.getContractAddress(Constants.STABILITY_FUND_NAME) returns (address stabilityFund) {
                 if (stabilityFund != address(0)) {
                     _cachedStabilityFundAddress = stabilityFund;
                 }
@@ -762,7 +762,7 @@ contract PlatformMarketplace is
     function getTokenAddressWithFallback() internal returns (address) {
         // First attempt: Try registry lookup
         if (address(registry) != address(0) && !registryOfflineMode) {
-            try registry.getContractAddress(TOKEN_NAME) returns (address tokenAddress) {
+            try registry.getContractAddress(Constants.TOKEN_NAME) returns (address tokenAddress) {
                 if (tokenAddress != address(0)) {
                     // Update cache with successful lookup
                     _cachedTokenAddress = tokenAddress;
@@ -788,4 +788,4 @@ contract PlatformMarketplace is
         // Final fallback: Use hardcoded address (if appropriate) or revert
         revert("Token address unavailable through all fallback mechanisms");
     }
-}
+    }

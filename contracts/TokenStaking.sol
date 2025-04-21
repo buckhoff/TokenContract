@@ -7,7 +7,7 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
-import "./Constants.sol";
+import {Constants} from "./Constants.sol"
 
 /**
  * @title TokenStaking
@@ -94,16 +94,16 @@ contract TokenStaking is
    * @dev Modifier to restrict certain functions to the price oracle
      */
     modifier onlyPriceOracle() {
-        require(hasRole(MANAGER_ROLE, msg.sender), "PlatformStabilityFund: not price oracle role");
+        require(hasRole(Constants.MANAGER_ROLE, msg.sender), "PlatformStabilityFund: not price oracle role");
         _;
     }
     modifier onlyAdmin() {
-        require(hasRole(ADMIN_ROLE, msg.sender), "PlatformStabilityFund: caller is not admin role");
+        require(hasRole(Constants.ADMIN_ROLE, msg.sender), "PlatformStabilityFund: caller is not admin role");
         _;
     }
 
     modifier onlyEmergency() {
-        require(hasRole(EMERGENCY_ROLE, msg.sender), "PlatformStabilityFund: caller is not emergency role");
+        require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "PlatformStabilityFund: caller is not emergency role");
         _;
     }
     
@@ -177,9 +177,9 @@ contract TokenStaking is
         emergencyUnstakeFee = 2000; // 20% fee by default
         
         _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
-        _setupRole(ADMIN_ROLE, msg.sender);
-        _setupRole(MANAGER_ROLE, _platformRewardsManager);
-        _setupRole(EMERGENCY_ROLE, msg.sender);
+        _setupRole(Constants.ADMIN_ROLE, msg.sender);
+        _setupRole(Constants.MANAGER_ROLE, _platformRewardsManager);
+        _setupRole(Constants.EMERGENCY_ROLE, msg.sender);
     }
 
     /**
@@ -199,13 +199,13 @@ contract TokenStaking is
         require(address(registry) != address(0), "TokenStaking: registry not set");
 
         // Update TeachToken reference
-        if (registry.isContractActive(TOKEN_NAME)) {
-            address newToken = registry.getContractAddress(TOKEN_NAME);
+        if (registry.isContractActive(Constants.TOKEN_NAME)) {
+            address newToken = registry.getContractAddress(Constants.TOKEN_NAME);
             address oldToken = address(token);
 
             if (newToken != oldToken) {
                 token = IERC20Upgradeable(newToken);
-                emit ContractReferenceUpdated(TOKEN_NAME, oldToken, newToken);
+                emit ContractReferenceUpdated(Constants.TOKEN_NAME, oldToken, newToken);
             }
         }
     }
@@ -217,30 +217,30 @@ contract TokenStaking is
     function pauseStaking() external {
         // Check if caller is StabilityFund, has EMERGENCY_ROLE, or is the governance contract
         if (address(registry) != address(0)) {
-            if (registry.isContractActive(STABILITY_FUND_NAME)) {
-                address stabilityFund = registry.getContractAddress(STABILITY_FUND_NAME);
+            if (registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
+                address stabilityFund = registry.getContractAddress(Constants.STABILITY_FUND_NAME);
 
-                if (registry.isContractActive(GOVERNANCE_NAME)) {
-                    address governance = registry.getContractAddress(GOVERNANCE_NAME);
+                if (registry.isContractActive(Constants.GOVERNANCE_NAME)) {
+                    address governance = registry.getContractAddress(Constants.GOVERNANCE_NAME);
 
                     require(
                         msg.sender == stabilityFund ||
                         msg.sender == governance ||
-                        hasRole(EMERGENCY_ROLE, msg.sender),
+                        hasRole(Constants.EMERGENCY_ROLE, msg.sender),
                         "TokenStaking: not authorized"
                     );
                 } else {
                     require(
                         msg.sender == stabilityFund ||
-                        hasRole(EMERGENCY_ROLE, msg.sender),
+                        hasRole(Constants.EMERGENCY_ROLE, msg.sender),
                         "TokenStaking: not authorized"
                     );
                 }
             } else {
-                require(hasRole(EMERGENCY_ROLE, msg.sender), "TokenStaking: not authorized");
+                require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "TokenStaking: not authorized");
             }
         } else {
-            require(hasRole(EMERGENCY_ROLE, msg.sender), "TokenStaking: not authorized");
+            require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "TokenStaking: not authorized");
         }
 
         paused = true;
@@ -360,7 +360,7 @@ contract TokenStaking is
         emit PlatformRewardsManagerUpdated(platformRewardsManager, _newManager);
         
         platformRewardsManager = _newManager;
-        _setupRole(MANAGER_ROLE, _newManager);
+        _setupRole(Constants.MANAGER_ROLE, _newManager);
     }
     
     /**
@@ -403,8 +403,8 @@ contract TokenStaking is
 
         // Get token from registry if available
         IERC20Upgradeable token = token;
-        if (address(registry) != address(0) && registry.isContractActive(TOKEN_NAME)) {
-            token = IERC20Upgradeable(registry.getContractAddress(TOKEN_NAME));
+        if (address(registry) != address(0) && registry.isContractActive(Constants.TOKEN_NAME)) {
+            token = IERC20Upgradeable(registry.getContractAddress(Constants.TOKEN_NAME));
         }
         
         require(_amount <= token.balanceOf(msg.sender), "TokenStaking: insufficient balance");
@@ -992,8 +992,8 @@ contract TokenStaking is
     function notifyGovernanceOfStakeChange(address _user) external {
         require(msg.sender == address(this), "TokenStaking: unauthorized");
 
-        if (address(registry) != address(0) && registry.isContractActive(GOVERNANCE_NAME)) {
-            address governance = registry.getContractAddress(GOVERNANCE_NAME);
+        if (address(registry) != address(0) && registry.isContractActive(Constants.GOVERNANCE_NAME)) {
+            address governance = registry.getContractAddress(Constants.GOVERNANCE_NAME);
 
             // Call the updateVotingPower function in Governance
             (bool success, ) = governance.call(
@@ -1014,7 +1014,7 @@ contract TokenStaking is
     function getTokenAddressWithFallback() internal returns (address) {
         // First attempt: Try registry lookup
         if (address(registry) != address(0) && !registryOfflineMode) {
-            try registry.getContractAddress(TOKEN_NAME) returns (address tokenAddress) {
+            try registry.getContractAddress(Constants.TOKEN_NAME) returns (address tokenAddress) {
                 if (tokenAddress != address(0)) {
                     // Update cache with successful lookup
                     _cachedTokenAddress = tokenAddress;

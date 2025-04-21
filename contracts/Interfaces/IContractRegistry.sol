@@ -6,6 +6,16 @@ pragma solidity ^0.8.29;
  * @dev Interface for the ContractRegistry to be used by other contracts
  */
 interface IContractRegistry {
+
+    event ContractRegistered(bytes32 indexed contractName, address indexed contractAddress, uint256 version);
+    event ContractUpdated(bytes32 indexed contractName, address indexed oldAddress, address indexed newAddress, uint256 newVersion);
+    event ContractStatusChanged(bytes32 indexed contractName, bool isActive);
+    event SystemPaused(address indexed by);
+    event SystemResumed(address indexed by);
+    event ContractInterfaceRegistered(bytes32 indexed contractName, bytes4 interfaceId);
+    event EmergencyRecoveryInitiated(address indexed recoveryAdmin, uint256 timestamp);
+    event EmergencyRecoveryCompleted(address indexed recoveryAdmin);
+    
     /**
      * @dev Get the address of a registered contract
      * @param _name Name of the contract (as bytes32)
@@ -49,4 +59,24 @@ interface IContractRegistry {
      * @dev Resume the system after emergency
      */
     function resumeSystem() external;
+
+    /**
+     * @dev Initiates emergency recovery mode
+     */
+    function initiateEmergencyRecovery() external;
+
+    /**
+     * @dev Approves emergency recovery
+     */
+    function approveRecovery() external;
+
+    /**
+     * @dev Sets required recovery approvals
+     * @param _required Number of required approvals
+     */
+    function setRequiredRecoveryApprovals(uint256 _required) external;
+    
+
+    function getRoleMemberCount(bytes32 role) external view returns (uint256);
+    function getRoleMember(bytes32 role, uint256 index) external view returns (address);
 }

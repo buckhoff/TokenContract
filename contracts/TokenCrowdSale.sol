@@ -7,7 +7,7 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
-import "./Constants.sol";
+import {Constants} from "./Constants.sol"
 
 /**
  * @title GenericTokenPresale
@@ -170,17 +170,17 @@ contract TokenCrowdSale is
     }
 
     modifier onlyAdmin() {
-        require(hasRole(ADMIN_ROLE, msg.sender), "CrowdSale: caller is not admin role");
+        require(hasRole(Constants.ADMIN_ROLE, msg.sender), "CrowdSale: caller is not admin role");
         _;
     }
 
     modifier onlyRecorder() {
-        require(hasRole(RECORDER_ROLE, msg.sender), "CrowdSale: caller is not recorder role");
+        require(hasRole(Constants.RECORDER_ROLE, msg.sender), "CrowdSale: caller is not recorder role");
         _;
     }
 
     modifier onlyEmergency() {
-        require(hasRole(EMERGENCY_ROLE, msg.sender), "CrowdSale: caller is not emergency role");
+        require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "CrowdSale: caller is not emergency role");
         _;
     }
 
@@ -214,9 +214,9 @@ contract TokenCrowdSale is
         treasury = _treasury;
 
         _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
-        _setupRole(ADMIN_ROLE, msg.sender);
-        _setupRole(EMERGENCY_ROLE, msg.sender);
-        _setupRole(RECORDER_ROLE, msg.sender);
+        _setupRole(Constants.ADMIN_ROLE, msg.sender);
+        _setupRole(Constants.EMERGENCY_ROLE, msg.sender);
+        _setupRole(Constants.RECORDER_ROLE, msg.sender);
 
         _resourceIdCounter = 1;
         
@@ -322,7 +322,7 @@ contract TokenCrowdSale is
     }
 
     function addRecorder(address _recorder) external onlyOwner {
-        _grantRole(RECORDER_ROLE, _recorder);
+        _grantRole(Constants.RECORDER_ROLE, _recorder);
     }
 
     /**
@@ -429,7 +429,7 @@ contract TokenCrowdSale is
         userPurchase.tierAmounts[_tierId] = userPurchase.tierAmounts[_tierId] + _usdAmount;
 
         // Record purchase for tracking using the StabilityFund
-        if (address(registry) != address(0) && registry.isContractActive(STABILITY_FUND_NAME)) {
+        if (address(registry) != address(0) && registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
             try this.recordPurchaseInStabilityFund(msg.sender, tokenAmount, _usdAmount) {} catch {}
         }
         
@@ -648,7 +648,7 @@ contract TokenCrowdSale is
      * @param _registry Address of the registry contract
      */
     function setRegistry(address _registry) external onlyOwner {
-        _setRegistry(_registry, CROWDSALE_NAME);
+        _setRegistry(_registry, Constants.CROWDSALE_NAME);
         emit RegistrySet(_registry);
     }
 
@@ -660,8 +660,8 @@ contract TokenCrowdSale is
         require(address(registry) != address(0), "CrowdSale: registry not set");
 
         // Update Token reference
-        if (registry.isContractActive(TOKEN_NAME)) {
-            address newToken = registry.getContractAddress(TOKEN_NAME);
+        if (registry.isContractActive(Constants.TOKEN_NAME)) {
+            address newToken = registry.getContractAddress(Constants.TOKEN_NAME);
             address oldToken = address(token);
 
             if (newToken != oldToken) {
@@ -671,7 +671,7 @@ contract TokenCrowdSale is
         }
 
         // Update StabilityFund reference for price oracle
-        if (registry.isContractActive(STABILITY_FUND_NAME)) {
+        if (registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
             address stabilityFund = registry.getContractAddress(STABILITY_FUND_NAME);
 
             // Here we might need to update any reference to the stability fund
@@ -694,13 +694,13 @@ contract TokenCrowdSale is
         require(msg.sender == address(this), "CrowdSale: unauthorized");
 
         // Verify registry and stability fund are properly set
-        if (address(registry) == address(0) || !registry.isContractActive(STABILITY_FUND_NAME)) {
+        if (address(registry) == address(0) || !registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
             // Log issue but don't revert
             emit StabilityFundRecordingFailed(_user, "Registry or StabilityFund not available");
             return false;
         }
         
-        address stabilityFund = registry.getContractAddress(STABILITY_FUND_NAME);
+        address stabilityFund = registry.getContractAddress(Constants.STABILITY_FUND_NAME);
 
         // Call the recordTokenPurchase function in StabilityFund
         (bool success, ) = stabilityFund.call(
@@ -719,7 +719,7 @@ contract TokenCrowdSale is
      * @dev Handles emergency pause notification from the StabilityFund
      * Only callable by the StabilityFund contract
      */
-    function handleEmergencyPause() external onlyFromRegistry(STABILITY_FUND_NAME) {
+    function handleEmergencyPause() external onlyFromRegistry(Constants.STABILITY_FUND_NAME) {
         if (!paused) {
             paused = true;
             emergencyPauseTime = block.timestamp;
@@ -735,7 +735,7 @@ contract TokenCrowdSale is
     function emergencyUpdateLimits(
         uint256 _minTimeBetweenPurchases,
         uint256 _maxPurchaseAmount
-    ) external onlyFromRegistry(GOVERNANCE_NAME) {
+    ) external onlyFromRegistry(Constants.GOVERNANCE_NAME) {
         minTimeBetweenPurchases = _minTimeBetweenPurchases;
         maxPurchaseAmount = _maxPurchaseAmount;
     }
@@ -954,24 +954,24 @@ contract TokenCrowdSale is
     }
 
     function _getAdminCount() internal view returns (uint256) {
-        return getRoleMemberCount(ADMIN_ROLE);
+        return getRoleMemberCount(Constants.ADMIN_ROLE);
     }
 
     function getApprover(uint256 index) public view returns (address) {
-        require(index < getRoleMemberCount(ADMIN_ROLE), "Invalid approver index");
-        return getRoleMember(ADMIN_ROLE, index);
+        require(index < getRoleMemberCount(Constants.ADMIN_ROLE), "Invalid approver index");
+        return getRoleMember(Constants.ADMIN_ROLE, index);
     }
 
     // Update cache periodically
     function updateAddressCache() public {
         if (address(registry) != address(0)) {
-            try registry.getContractAddress(TOKEN_NAME) returns (address tokenAddress) {
+            try registry.getContractAddress(Constants.TOKEN_NAME) returns (address tokenAddress) {
                 if (tokenAddress != address(0)) {
                     _cachedTokenAddress = tokenAddress;
                 }
             } catch {}
 
-            try registry.getContractAddress(STABILITY_FUND_NAME) returns (address stabilityFund) {
+            try registry.getContractAddress(Constants.STABILITY_FUND_NAME) returns (address stabilityFund) {
                 if (stabilityFund != address(0)) {
                     _cachedStabilityFundAddress = stabilityFund;
                 }
@@ -988,7 +988,7 @@ contract TokenCrowdSale is
     function getTokenAddressWithFallback() internal returns (address) {
         // First attempt: Try registry lookup
         if (address(registry) != address(0) && !registryOfflineMode) {
-            try registry.getContractAddress(TOKEN_NAME) returns (address tokenAddress) {
+            try registry.getContractAddress(Constants.TOKEN_NAME) returns (address tokenAddress) {
                 if (tokenAddress != address(0)) {
                     // Update cache with successful lookup
                     _cachedTokenAddress = tokenAddress;

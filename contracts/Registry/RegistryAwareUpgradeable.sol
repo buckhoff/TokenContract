@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "./Interfaces/IContractRegistry.sol";
+import {Constants} from "./Constants.sol"
 
 /**
  * @title RegistryAware
@@ -21,8 +22,7 @@ abstract contract RegistryAwareUpgradeable is Initializable, AccessControlUpgrad
     bool public registryOfflineMode;
     
     //fallback address on failures
-    mapping(bytes32 => address) private _fallbackAddresses;
-    
+    mapping(bytes32 => address) internal _fallbackAddresses;
     
     // Events
     event RegistryUpdated(address indexed oldRegistry, address indexed newRegistry);
@@ -39,14 +39,16 @@ abstract contract RegistryAwareUpgradeable is Initializable, AccessControlUpgrad
                 require(!paused, "RegistryAware: system is paused");
             } catch {
                 // If registry call fails, proceed as not paused
-                require(registryOfflineMode, "Registry unavailable");
+                if (!registryOfflineMode) {
+                    revert("Registry unavailable");
+                }
             }
         }
         _;
     }
 
     modifier onlyAdmin() {
-        require(hasRole(keccak256("ADMIN_ROLE"), msg.sender), "RegistryAware: caller is not admin role");
+        require(hasRole(Constants.ADMIN_ROLE), msg.sender), "RegistryAware: caller is not admin role");
         _;
     }
     /**
@@ -84,8 +86,19 @@ abstract contract RegistryAwareUpgradeable is Initializable, AccessControlUpgrad
      * @return Contract address
      */
     function getContractAddress(bytes32 _contractNameBytes32) internal view returns (address) {
-        require(address(registry) != address(0), "RegistryAware: registry not set");
-        return registry.getContractAddress(_contractNameBytes32);
+        if (address(registry) == address(0) || registryOfflineMode) {
+            return _fallbackAddresses[_contractNameBytes32];
+        }
+
+        try registry.getContractAddress(_contractNameBytes32) returns (address contractAddress) {
+            if (contractAddress != address(0)) {
+                return contractAddress;
+            }
+        } catch {
+            // Registry call failed, use fallback
+        }
+
+        return _fallbackAddresses[_contractNameBytes32];
     }
 
     /**

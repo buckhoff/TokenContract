@@ -8,7 +8,7 @@ import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
-import "./Constants.sol";
+import {Constants} from "./Constants.sol"
 
 /**
  * @title TeachToken
@@ -58,22 +58,22 @@ contract TeachToken is
     event EmergencyRecoveryCompleted(address indexed recoveryAdmin);
     
     modifier onlyAdmin() {
-        require(hasRole(ADMIN_ROLE, msg.sender), "TeachCrowdSale: caller is not admin role");
+        require(hasRole(Constants.ADMIN_ROLE, msg.sender), "TeachCrowdSale: caller is not admin role");
         _;
     }
 
     modifier onlyPauser() {
-        require(hasRole(PAUSER_ROLE, msg.sender), "TeachCrowdSale: caller is not pauser role");
+        require(hasRole(Constants.PAUSER_ROLE, msg.sender), "TeachCrowdSale: caller is not pauser role");
         _;
     }
 
     modifier onlyMinter() {
-        require(hasRole(MINTER_ROLE, msg.sender), "TeachCrowdSale: caller is not minter role");
+        require(hasRole(Constants.MINTER_ROLE, msg.sender), "TeachCrowdSale: caller is not minter role");
         _;
     }
 
     modifier onlyBurner() {
-        require(hasRole(BURNER_ROLE, msg.sender), "TeachCrowdSale: caller is not burner role");
+        require(hasRole(Constants.BURNER_ROLE, msg.sender), "TeachCrowdSale: caller is not burner role");
         _;
     }
     
@@ -188,7 +188,7 @@ contract TeachToken is
      * @dev Pauses all token transfers
      * Requirements: Caller must have the PAUSER_ROLE
      */
-    function pause() public onlyRole(PAUSER_ROLE) {
+    function pause() public onlyRole(Constants.PAUSER_ROLE) {
         _pause();
     }
 
@@ -196,7 +196,7 @@ contract TeachToken is
      * @dev Unpauses all token transfers
      * Requirements: Caller must have the PAUSER_ROLE
      */
-    function unpause() public onlyRole(PAUSER_ROLE) {
+    function unpause() public onlyRole(Constants.PAUSER_ROLE) {
         _unpause();
     }
 
@@ -280,7 +280,7 @@ contract TeachToken is
      * Requirements: Caller must have the DEFAULT_ADMIN_ROLE
      */
     function addMinter(address account) public onlyRole(DEFAULT_ADMIN_ROLE) {
-        grantRole(MINTER_ROLE, account);
+        grantRole(Constants.MINTER_ROLE, account);
         emit MinterAdded(account);
     }
 
@@ -289,7 +289,7 @@ contract TeachToken is
      * Requirements: Caller must have the DEFAULT_ADMIN_ROLE
      */
     function removeMinter(address account) public onlyRole(DEFAULT_ADMIN_ROLE) {
-        revokeRole(MINTER_ROLE, account);
+        revokeRole(Constants.MINTER_ROLE, account);
         emit MinterRemoved(account);
     }
 
@@ -299,7 +299,7 @@ contract TeachToken is
      * Requirements: Caller must have the DEFAULT_ADMIN_ROLE
      */
     function addBurner(address account) public onlyRole(DEFAULT_ADMIN_ROLE) {
-        grantRole(BURNER_ROLE, account);
+        grantRole(Constants.BURNER_ROLE, account);
         emit BurnerAdded(account);
     }
 
@@ -309,7 +309,7 @@ contract TeachToken is
      * Requirements: Caller must have the DEFAULT_ADMIN_ROLE
      */
     function removeBurner(address account) public onlyRole(DEFAULT_ADMIN_ROLE) {
-        revokeRole(BURNER_ROLE, account);
+        revokeRole(Constants.BURNER_ROLE, account);
         emit BurnerRemoved(account);
     }
     
@@ -402,9 +402,9 @@ contract TeachToken is
 
     function _countRecoveryApprovals() internal view returns (uint256) {
         uint256 count = 0;
-        uint256 memberCount = getRoleMemberCount(ADMIN_ROLE);
+        uint256 memberCount = getRoleMemberCount(Constants.ADMIN_ROLE);
         for (uint i = 0; i < memberCount; i++) {
-            address admin = getRoleMember(ADMIN_ROLE, i);
+            address admin = getRoleMember(Constants.ADMIN_ROLE, i);
             if (emergencyRecoveryApprovals[admin]) {
                 count++;
             }
@@ -415,13 +415,13 @@ contract TeachToken is
     // Update cache periodically
     function updateAddressCache() public {
         if (address(registry) != address(0)) {
-            try registry.getContractAddress(TOKEN_NAME) returns (address tokenAddress) {
+            try registry.getContractAddress(Constants.TOKEN_NAME) returns (address tokenAddress) {
                 if (tokenAddress != address(0)) {
                     _cachedTokenAddress = tokenAddress;
                 }
             } catch {}
 
-            try registry.getContractAddress(STABILITY_FUND_NAME) returns (address stabilityFund) {
+            try registry.getContractAddress(Constants.STABILITY_FUND_NAME) returns (address stabilityFund) {
                 if (stabilityFund != address(0)) {
                     _cachedStabilityFundAddress = stabilityFund;
                 }
@@ -438,7 +438,7 @@ contract TeachToken is
     function getStabilityAddressWithFallback() internal returns (address) {
         // First attempt: Try registry lookup
         if (address(registry) != address(0) && !registryOfflineMode) {
-            try registry.getContractAddress(PLATFORM_STABILITY_FUND) returns (address tokenAddress) {
+            try registry.getContractAddress(Constants.PLATFORM_STABILITY_FUND) returns (address tokenAddress) {
                 if (tokenAddress != address(0)) {
                     // Update cache with successful lookup
                     _cachedTokenAddress = tokenAddress;
@@ -456,7 +456,7 @@ contract TeachToken is
         }
 
         // Third attempt: Use explicitly set fallback address
-        address fallbackAddress = _fallbackAddresses[TOKEN_NAME];
+        address fallbackAddress = _fallbackAddresses[Constants.TOKEN_NAME];
         if (fallbackAddress != address(0)) {
             return fallbackAddress;
         }
@@ -467,9 +467,9 @@ contract TeachToken is
 
     function _countRecoveryApprovals() internal view returns (uint256) {
         uint256 count = 0;
-        uint256 memberCount = getRoleMemberCount(ADMIN_ROLE);
+        uint256 memberCount = getRoleMemberCount(Constants.ADMIN_ROLE);
         for (uint i = 0; i < memberCount; i++) {
-            address admin = getRoleMember(ADMIN_ROLE, i);
+            address admin = getRoleMember(Constants.ADMIN_ROLE, i);
             if (emergencyRecoveryApprovals[admin]) {
                 count++;
             }

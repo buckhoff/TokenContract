@@ -7,21 +7,7 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
-import "./Constants.sol";
-
-// Add the interface for staking contract
-interface ITokenStaking {
-    function getUserStake(uint256 _poolId, address _user) external view returns (
-        uint256 amount,
-        uint256 startTime,
-        uint256 lastClaimTime,
-        uint256 pendingReward,
-        address secondaryBeneficiary,
-        uint256 userRewardPortion,
-        uint256 secondaryRewardPortion
-    );
-    function getPoolCount() external view returns (uint256);
-}
+import {Constants} from "./Constants.sol"
 
 /**
  * @title PlatformGovernance
@@ -204,12 +190,12 @@ contract PlatformGovernance is
     uint16 public maxStakingPeriod; // in days
 
     modifier onlyAdmin() {
-        require(hasRole(ADMIN_ROLE, msg.sender), "PlatformGovernance: caller is not admin role");
+        require(hasRole(Constants.ADMIN_ROLE, msg.sender), "PlatformGovernance: caller is not admin role");
         _;
     }
 
     modifier onlyEmergency() {
-        require(hasRole(EMERGENCY_ROLE, msg.sender), "PlatformGovernance: caller is not emergency role");
+        require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "PlatformGovernance: caller is not emergency role");
         _;
     }
     
@@ -241,8 +227,8 @@ contract PlatformGovernance is
         __ReentrancyGuard_init();
         __AccessControl_init();
 
-        _setupRole(ADMIN_ROLE, msg.sender);
-        _setupRole(EMERGENCY_ROLE, msg.sender);
+        _setupRole(Constants.ADMIN_ROLE, msg.sender);
+        _setupRole(Constants.EMERGENCY_ROLE, msg.sender);
         _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
         
         require(_token != address(0), "PlatformGovernance: zero token address");
@@ -287,8 +273,8 @@ contract PlatformGovernance is
         
         // Use governance token from registry if available
         IERC20Upgradeable governanceToken = token;
-        if (address(registry) != address(0) && registry.isContractActive(TOKEN_NAME)) {
-            governanceToken =IERC20Upgradeable(registry.getContractAddress(TOKEN_NAME));
+        if (address(registry) != address(0) && registry.isContractActive(Constants.TOKEN_NAME)) {
+            governanceToken =IERC20Upgradeable(registry.getContractAddress(Constants.TOKEN_NAME));
         }
         
         require(governanceToken.balanceOf(msg.sender) >= proposalThreshold, "PlatformGovernance: below proposal threshold");
@@ -305,18 +291,18 @@ contract PlatformGovernance is
             // Check if target is a core contract
             if (address(registry) != address(0)) {
                 bytes32[] memory contractNames = new bytes32[](6);
-                contractNames[0] = TOKEN_NAME;
-                contractNames[1] = STABILITY_FUND_NAME;
-                contractNames[2] = STAKING_NAME;
-                contractNames[3] = MARKETPLACE_NAME;
-                contractNames[4] = CROWDSALE_NAME;
-                contractNames[5] = PLATFORM_REWARD_NAME;
+                contractNames[0] = Constants.TOKEN_NAME;
+                contractNames[1] = Constants.STABILITY_FUND_NAME;
+                contractNames[2] = Constants.STAKING_NAME;
+                contractNames[3] = Constants.MARKETPLACE_NAME;
+                contractNames[4] = Constants.CROWDSALE_NAME;
+                contractNames[5] = Constants.PLATFORM_REWARD_NAME;
 
                 for (uint256 j = 0; j < contractNames.length; j++) {
                     if (registry.isContractActive(contractNames[j])) {
                         if (target == registry.getContractAddress(contractNames[j])) {
                             // Target is a system contract, require additional permissions
-                            require(hasRole(ADMIN_ROLE, msg.sender), "PlatformGovernance: not authorized for system contracts");
+                            require(hasRole(Constants.ADMIN_ROLE, msg.sender), "PlatformGovernance: not authorized for system contracts");
                         }
                     }
                 }
@@ -762,7 +748,7 @@ contract PlatformGovernance is
 
         // Check registry first if it's set
         if (address(registry) != address(0) && registry.isContractActive(STAKING_NAME)) {
-            address stakingAddress = registry.getContractAddress(STAKING_NAME);
+            address stakingAddress = registry.getContractAddress(Constants.STAKING_NAME);
 
             if (stakingAddress != address(0)) {
                 try ITokenStaking(stakingAddress).getPoolCount() returns (uint256 poolCount) {
@@ -1008,7 +994,7 @@ contract PlatformGovernance is
      * @param _registry Address of the registry contract
      */
     function setRegistry(address _registry) external onlyAdmin {
-        _setRegistry(_registry, keccak256("TEACHER_GOVERNANCE"));
+        _setRegistry(_registry, Constants.TEACHER_GOVERNANCE);
         emit RegistrySet(_registry);
     }
 
@@ -1020,25 +1006,25 @@ contract PlatformGovernance is
         require(address(registry) != address(0), "PlatformGovernance: registry not set");
 
         // Update token reference
-        if (registry.isContractActive(TOKEN_NAME)) {
-            address newTeachToken = registry.getContractAddress(TOKEN_NAME);
+        if (registry.isContractActive(Constants.TOKEN_NAME)) {
+            address newTeachToken = registry.getContractAddress(Constants.TOKEN_NAME);
             address oldTeachToken = address(token);
 
             if (newTeachToken != oldTeachToken) {
                 token = IERC20Upgradeable(newTeachToken);
-                emit ContractReferenceUpdated(TOKEN_NAME, oldTeachToken, newTeachToken);
+                emit ContractReferenceUpdated(Constants.TOKEN_NAME, oldTeachToken, newTeachToken);
             }
         }
 
         // Update Staking reference
-        if (registry.isContractActive(STAKING_NAME)) {
-            address newStaking = registry.getContractAddress(STAKING_NAME);
+        if (registry.isContractActive(Constants.STAKING_NAME)) {
+            address newStaking = registry.getContractAddress(Constants.STAKING_NAME);
             address oldStaking = address(stakingContract);
 
             if (newStaking != oldStaking) {
                 stakingContract = ITokenStaking(newStaking);
                 stakingWeightEnabled = true; // Enable staking weight when staking contract is available
-                emit ContractReferenceUpdated(STAKING_NAME, oldStaking, newStaking);
+                emit ContractReferenceUpdated(Constants.STAKING_NAME, oldStaking, newStaking);
             }
         }
     }
@@ -1058,8 +1044,8 @@ contract PlatformGovernance is
         }
 
         // Notify stability fund
-        if (registry.isContractActive(STABILITY_FUND_NAME)) {
-            address stabilityFund = registry.getContractAddress(STABILITY_FUND_NAME);
+        if (registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
+            address stabilityFund = registry.getContractAddress(Constants.STABILITY_FUND_NAME);
             (bool success, ) = stabilityFund.call(
                 abi.encodeWithSignature("emergencyPause()")
             );
@@ -1067,8 +1053,8 @@ contract PlatformGovernance is
         }
 
         // Notify marketplace
-        if (registry.isContractActive(MARKETPLACE_NAME)) {
-            address marketplace = registry.getContractAddress(MARKETPLACE_NAME);
+        if (registry.isContractActive(Constants.MARKETPLACE_NAME)) {
+            address marketplace = registry.getContractAddress(Constants.MARKETPLACE_NAME);
             (bool success, ) = marketplace.call(
                 abi.encodeWithSignature("pauseMarketplace()")
             );
@@ -1076,8 +1062,8 @@ contract PlatformGovernance is
         }
 
         // Notify crowdsale
-        if (registry.isContractActive(CROWDSALE_NAME)) {
-            address crowdsale = registry.getContractAddress(CROWDSALE_NAME);
+        if (registry.isContractActive(Constants.CROWDSALE_NAME)) {
+            address crowdsale = registry.getContractAddress(Constants.CROWDSALE_NAME);
             (bool success, ) = crowdsale.call(
                 abi.encodeWithSignature("pausePresale()")
             );
@@ -1085,8 +1071,8 @@ contract PlatformGovernance is
         }
 
         // Notify staking
-        if (registry.isContractActive(STAKING_NAME)) {
-            address staking = registry.getContractAddress(STAKING_NAME);
+        if (registry.isContractActive(Constants.STAKING_NAME)) {
+            address staking = registry.getContractAddress(Constants.STAKING_NAME);
             (bool success, ) = staking.call(
                 abi.encodeWithSignature("pauseStaking()")
             );
@@ -1094,8 +1080,8 @@ contract PlatformGovernance is
         }
 
         // Notify rewards
-        if (registry.isContractActive(PLATFORM_REWARD_NAME)) {
-            address rewards = registry.getContractAddress(PLATFORM_REWARD_NAME);
+        if (registry.isContractActive(Constants.PLATFORM_REWARD_NAME)) {
+            address rewards = registry.getContractAddress(Constants.PLATFORM_REWARD_NAME);
             (bool success, ) = rewards.call(
                 abi.encodeWithSignature("pauseRewards()")
             );
@@ -1139,13 +1125,13 @@ contract PlatformGovernance is
     // Update cache periodically
     function updateAddressCache() public {
         if (address(registry) != address(0)) {
-            try registry.getContractAddress(TOKEN_NAME) returns (address tokenAddress) {
+            try registry.getContractAddress(Constants.TOKEN_NAME) returns (address tokenAddress) {
                 if (tokenAddress != address(0)) {
                     _cachedTokenAddress = tokenAddress;
                 }
             } catch {}
 
-            try registry.getContractAddress(STABILITY_FUND_NAME) returns (address stabilityFund) {
+            try registry.getContractAddress(Constants.STABILITY_FUND_NAME) returns (address stabilityFund) {
                 if (stabilityFund != address(0)) {
                     _cachedStabilityFundAddress = stabilityFund;
                 }
@@ -1162,7 +1148,7 @@ contract PlatformGovernance is
     function getTokenAddressWithFallback() internal returns (address) {
         // First attempt: Try registry lookup
         if (address(registry) != address(0) && !registryOfflineMode) {
-            try registry.getContractAddress(TOKEN_NAME) returns (address tokenAddress) {
+            try registry.getContractAddress(Constants.TOKEN_NAME) returns (address tokenAddress) {
                 if (tokenAddress != address(0)) {
                     // Update cache with successful lookup
                     _cachedTokenAddress = tokenAddress;
@@ -1180,7 +1166,7 @@ contract PlatformGovernance is
         }
 
         // Third attempt: Use explicitly set fallback address
-        address fallbackAddress = _fallbackAddresses[TOKEN_NAME];
+        address fallbackAddress = _fallbackAddresses[Constants.TOKEN_NAME];
         if (fallbackAddress != address(0)) {
             return fallbackAddress;
         }

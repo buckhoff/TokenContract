@@ -8,7 +8,7 @@ import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
-import "./Constants.sol";
+import {Constants} from "./Constants.sol"
 
 /**
  * @title TeacherReward
@@ -111,7 +111,7 @@ contract TeacherReward is
     event PeerReviewSubmitted(address indexed teacher, address indexed reviewer, uint256 score);
 
     modifier onlyAdmin() {
-        require(hasRole(ADMIN_ROLE, msg.sender), "TeacherReward: caller is not admin role");
+        require(hasRole(Constants.ADMIN_ROLE, msg.sender), "TeacherReward: caller is not admin role");
         _;
     }
     
@@ -177,9 +177,9 @@ contract TeacherReward is
 
         // Make deployer the first verifier
         _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
-        _setupRole(ADMIN_ROLE, msg.sender);
-        _setupRole(VERIFIER_ROLE, msg.sender);
-        _setupRole(EMERGENCY_ROLE, msg.sender);
+        _setupRole(Constants.ADMIN_ROLE, msg.sender);
+        _setupRole(Constants.VERIFIER_ROLE, msg.sender);
+        _setupRole(Constants.EMERGENCY_ROLE, msg.sender);
         
         // Make deployer the first verifier
         verifiers[msg.sender] = true;
@@ -191,7 +191,7 @@ contract TeacherReward is
      * @param _registry Address of the registry contract
      */
     function setRegistry(address _registry) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _setRegistry(_registry, keccak256("TEACHER_REWARD"));
+        _setRegistry(_registry, Constants.TEACHER_REWARD);
         emit RegistrySet(_registry);
     }
 
@@ -203,13 +203,13 @@ contract TeacherReward is
         require(address(registry) != address(0), "TeacherReward: registry not set");
 
         // Update TeachToken reference
-        if (registry.isContractActive(TOKEN_NAME)) {
-            address newToken = registry.getContractAddress(TOKEN_NAME);
+        if (registry.isContractActive(Constants.TOKEN_NAME)) {
+            address newToken = registry.getContractAddress(Constants.TOKEN_NAME);
             address oldToken = address(token);
 
             if (newToken != oldToken) {
                 token = IERC20Upgradeable(newToken);
-                emit ContractReferenceUpdated(TOKEN_NAME, oldToken, newToken);
+                emit ContractReferenceUpdated(Constants.TOKEN_NAME, oldToken, newToken);
             }
         }
     }
@@ -374,7 +374,7 @@ contract TeacherReward is
         require(!verifiers[_verifier], "TeacherReward: already a verifier");
         
         verifiers[_verifier] = true;
-        _setupRole(VERIFIER_ROLE, _verifier);
+        _setupRole(Constants.VERIFIER_ROLE, _verifier);
         
         emit VerifierAdded(_verifier);
     }
@@ -387,7 +387,7 @@ contract TeacherReward is
         require(verifiers[_verifier], "TeacherReward: not a verifier");
         
         verifiers[_verifier] = false;
-        revokeRole(VERIFIER_ROLE, _verifier);
+        revokeRole(Constants.VERIFIER_ROLE, _verifier);
         
         emit VerifierRemoved(_verifier);
     }
@@ -432,30 +432,30 @@ contract TeacherReward is
     // Add pause and unpause functions
     function pauseRewards() external {
         if (address(registry) != address(0)) {
-            if (registry.isContractActive(STABILITY_FUND_NAME)) {
-                address stabilityFund = registry.getContractAddress(STABILITY_FUND_NAME);
+            if (registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
+                address stabilityFund = registry.getContractAddress(Constants.STABILITY_FUND_NAME);
 
-                if (registry.isContractActive(GOVERNANCE_NAME)) {
-                    address governance = registry.getContractAddress(GOVERNANCE_NAME);
+                if (registry.isContractActive(Constants.GOVERNANCE_NAME)) {
+                    address governance = registry.getContractAddress(Constants.GOVERNANCE_NAME);
 
                     require(
                         msg.sender == stabilityFund ||
                         msg.sender == governance ||
-                        hasRole(EMERGENCY_ROLE, msg.sender),
+                        hasRole(Constants.EMERGENCY_ROLE, msg.sender),
                         "TeacherReward: not authorized"
                     );
                 } else {
                     require(
                         msg.sender == stabilityFund ||
-                        hasRole(EMERGENCY_ROLE, msg.sender),
+                        hasRole(Constants.EMERGENCY_ROLE, msg.sender),
                         "TeacherReward: not authorized"
                     );
                 }
             } else {
-                require(hasRole(EMERGENCY_ROLE, msg.sender), "TeacherReward: not authorized");
+                require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "TeacherReward: not authorized");
             }
         } else {
-            require(hasRole(EMERGENCY_ROLE, msg.sender), "TeacherReward: not authorized");
+            require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "TeacherReward: not authorized");
         }
         _pause();
     }
@@ -653,11 +653,11 @@ contract TeacherReward is
         uint256 _saleCount
     ) external whenNotPaused {
         // Check if caller is the marketplace contract
-        if (address(registry) != address(0) && registry.isContractActive(MARKETPLACE_NAME)) {
-            address marketplace = registry.getContractAddress(MARKETPLACE_NAME);
+        if (address(registry) != address(0) && registry.isContractActive(Constants.MARKETPLACE_NAME)) {
+            address marketplace = registry.getContractAddress(Constants.MARKETPLACE_NAME);
             require(msg.sender == marketplace, "TeacherReward: not marketplace");
         } else {
-            require(hasRole(ADMIN_ROLE, msg.sender), "TeacherReward: not authorized");
+            require(hasRole(Constants.ADMIN_ROLE, msg.sender), "TeacherReward: not authorized");
         }
 
         require(teachers[_teacher].isRegistered, "TeacherReward: teacher not registered");
@@ -682,7 +682,7 @@ contract TeacherReward is
     function getTokenAddressWithFallback() internal returns (address) {
         // First attempt: Try registry lookup
         if (address(registry) != address(0) && !registryOfflineMode) {
-            try registry.getContractAddress(TOKEN_NAME) returns (address tokenAddress) {
+            try registry.getContractAddress(Constants.TOKEN_NAME) returns (address tokenAddress) {
                 if (tokenAddress != address(0)) {
                     // Update cache with successful lookup
                     _cachedTokenAddress = tokenAddress;

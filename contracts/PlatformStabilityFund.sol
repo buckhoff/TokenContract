@@ -7,7 +7,7 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
-import "./Constants.sol";
+import {Constants} from "./Constants.sol"
 
 /**
  * @title PlatformStabilityFund
@@ -259,10 +259,10 @@ contract PlatformStabilityFund is
         platformFeeToReservePercent = 2000; // 20% by default
         authorizedBurners[msg.sender] = true;
         _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
-        _setupRole(ADMIN_ROLE, msg.sender);
-        _setupRole(ORACLE_ROLE, _priceOracle);
-        _setupRole(EMERGENCY_ROLE, emergencyAdmin);
-        _setupRole(BURNER_ROLE, msg.sender);
+        _setupRole(Constants.ADMIN_ROLE, msg.sender);
+        _setupRole(Constants.ORACLE_ROLE, _priceOracle);
+        _setupRole(Constants.EMERGENCY_ROLE, emergencyAdmin);
+        _setupRole(Constants.BURNER_ROLE, msg.sender);
         maxDailyUserVolume = 1_000_000 * 10**18; // 1M tokens per day per user
         maxSingleConversionAmount = 100_000 * 10**18; // 100K tokens per conversion
         minTimeBetweenActions = 15 minutes; // 15 minutes between actions
@@ -274,7 +274,7 @@ contract PlatformStabilityFund is
     * @param _registry Address of the registry contract
     */
     function setRegistry(address _registry) external onlyAdmin {
-        _setRegistry(_registry, keccak256("PLATFORM_STABILITY_FUND"));
+        _setRegistry(_registry, Constants.PLATFORM_STABILITY_FUND);
         emit RegistrySet(_registry);
     }
     
@@ -725,15 +725,15 @@ contract PlatformStabilityFund is
 
         // If the registry is set, verify the caller is either a registered burner or the token contract
         if (address(registry) != address(0)) {
-            if (registry.isContractActive(TOKEN_NAME)) {
-                address tokenAddress = registry.getContractAddress(TOKEN_NAME);
+            if (registry.isContractActive(Constants.TOKEN_NAME)) {
+                address tokenAddress = registry.getContractAddress(Constants.TOKEN_NAME);
                 require(
-                    msg.sender == tokenAddress || hasRole(BURNER_ROLE, msg.sender),
+                    msg.sender == tokenAddress || hasRole(Constants.BURNER_ROLE, msg.sender),
                     "PlatformStabilityFund: not authorized"
                 );
             }
         } else {
-            require(hasRole(BURNER_ROLE, msg.sender), "PlatformStabilityFund: not authorized");
+            require(hasRole(Constants.BURNER_ROLE, msg.sender), "PlatformStabilityFund: not authorized");
         }
         
         uint256 verifiedPrice = getVerifiedPrice();
@@ -797,9 +797,9 @@ contract PlatformStabilityFund is
         require(_burner != address(0), "PlatformStabilityFund: zero burner address");
         
         if (_authorized) {
-            grantRole(BURNER_ROLE, _burner);
+            grantRole(Constants.BURNER_ROLE, _burner);
         } else {
-            revokeRole(BURNER_ROLE, _burner);
+            revokeRole(Constants.BURNER_ROLE, _burner);
         }
         
         emit BurnerAuthorization(_burner, _authorized);
@@ -1052,64 +1052,64 @@ contract PlatformStabilityFund is
         require(address(registry) != address(0), "PlatformStabilityFund: registry not set");
 
         // Try to notify the marketplace to pause
-        try registry.isContractActive(MARKETPLACE_NAME) returns (bool isActive) {
+        try registry.isContractActive(Constants.MARKETPLACE_NAME) returns (bool isActive) {
             if (isActive) {
-                address marketplace = registry.getContractAddress(MARKETPLACE_NAME);
+                address marketplace = registry.getContractAddress(Constants.MARKETPLACE_NAME);
                 (bool success, ) = marketplace.call(
                     abi.encodeWithSignature("pauseMarketplace()")
                 );
                 // Log but don't revert if call fails
                 if (!success) {
-                    emit EmergencyNotificationFailed(MARKETPLACE_NAME);
+                    emit EmergencyNotificationFailed(Constants.MARKETPLACE_NAME);
                 }
             }
         } catch {
-            emit EmergencyNotificationFailed(MARKETPLACE_NAME);
+            emit EmergencyNotificationFailed(Constants.MARKETPLACE_NAME);
         }
 
         // Try to notify the crowdsale to pause
-        try registry.isContractActive(CROWDSALE_NAME) returns (bool isActive) {
+        try registry.isContractActive(Constants.CROWDSALE_NAME) returns (bool isActive) {
             if (isActive) {
-                address crowdsale = registry.getContractAddress(CROWDSALE_NAME);
+                address crowdsale = registry.getContractAddress(Constants.CROWDSALE_NAME);
                 (bool success, ) = crowdsale.call(
                     abi.encodeWithSignature("pausePresale()")
                 );
                 if (!success) {
-                    emit EmergencyNotificationFailed(CROWDSALE_NAME);
+                    emit EmergencyNotificationFailed(Constants.CROWDSALE_NAME);
                 }
             }
         } catch {
-            emit EmergencyNotificationFailed(CROWDSALE_NAME);
+            emit EmergencyNotificationFailed(Constants.CROWDSALE_NAME);
         }
 
         // Try to notify staking contract
-        try registry.isContractActive(STAKING_NAME) returns (bool isActive) {
+        try registry.isContractActive(Constants.STAKING_NAME) returns (bool isActive) {
             if (isActive) {
-                address staking = registry.getContractAddress(STAKING_NAME);
+                address staking = registry.getContractAddress(Constants.STAKING_NAME);
                 (bool success, ) = staking.call(
                     abi.encodeWithSignature("pauseStaking()")
                 );
                 if (!success) {
-                    emit EmergencyNotificationFailed(STAKING_NAME);
+                    emit EmergencyNotificationFailed(Constants.STAKING_NAME);
                 }
             }
         } catch {
-            emit EmergencyNotificationFailed(STAKING_NAME);
+            emit EmergencyNotificationFailed(Constants.STAKING_NAME);
         }
 
         // Try to notify platform rewards
-        try registry.isContractActive(PLATFORM_REWARD_NAME) returns (bool isActive) {
+        try registry.isContractActive(Constants.PLATFORM_REWARD_NAME) returns (bool isActive) {
             if (isActive) {
-                address rewards = registry.getContractAddress(PLATFORM_REWARD_NAME);
+                address rewards = registry.getContractAddress(Constants.PLATFORM_REWARD_NAME);
                 (bool success, ) = rewards.call(
                     abi.encodeWithSignature("pauseRewards()")
                 );
                 if (!success) {
-                    emit EmergencyNotificationFailed(PLATFORM_REWARD_NAME);
+                    emit EmergencyNotificationFailed(Constants.PLATFORM_REWARD_NAME);
                 }
             }
         } catch {
-            emit EmergencyNotificationFailed(PLATFORM_REWARD_NAME);
+            emit EmergencyNotificationFailed(Constants.PLATFORM_REWARD_NAME);
         }
 
         // Trigger the emergency pause in this contract as well
@@ -1123,9 +1123,9 @@ contract PlatformStabilityFund is
      */
     function getPlatformTokenFromRegistry() public view returns (address) {
         require(address(registry) != address(0), "PlatformStabilityFund: registry not set");
-        require(registry.isContractActive(TOKEN_NAME), "PlatformStabilityFund: token not active");
+        require(registry.isContractActive(Constants.TOKEN_NAME), "PlatformStabilityFund: token not active");
 
-        return registry.getContractAddress(TOKEN_NAME);
+        return registry.getContractAddress(Constants.TOKEN_NAME);
     }
 
     /**
@@ -1136,13 +1136,13 @@ contract PlatformStabilityFund is
         require(address(registry) != address(0), "PlatformStabilityFund: registry not set");
 
         // Update Token reference
-        if (registry.isContractActive(TOKEN_NAME)) {
-            address newToken = registry.getContractAddress(TOKEN_NAME);
+        if (registry.isContractActive(Constants.TOKEN_NAME)) {
+            address newToken = registry.getContractAddress(Constants.TOKEN_NAME);
             address oldToken = address(token);
 
             if (newToken != oldToken) {
                 token = IERC20(newToken);
-                emit ContractReferenceUpdated(TOKEN_NAME, oldToken, newToken);
+                emit ContractReferenceUpdated(Constants.TOKEN_NAME, oldToken, newToken);
             }
         }
     }
@@ -1193,13 +1193,13 @@ contract PlatformStabilityFund is
     // Update cache periodically
     function updateAddressCache() public {
         if (address(registry) != address(0)) {
-            try registry.getContractAddress(TOKEN_NAME) returns (address tokenAddress) {
+            try registry.getContractAddress(Constants.TOKEN_NAME) returns (address tokenAddress) {
                 if (tokenAddress != address(0)) {
                     _cachedTokenAddress = tokenAddress;
                 }
             } catch {}
 
-            try registry.getContractAddress(STABILITY_FUND_NAME) returns (address stabilityFund) {
+            try registry.getContractAddress(Constants.STABILITY_FUND_NAME) returns (address stabilityFund) {
                 if (stabilityFund != address(0)) {
                     _cachedStabilityFundAddress = stabilityFund;
                 }
@@ -1216,7 +1216,7 @@ contract PlatformStabilityFund is
     function getTokenAddressWithFallback() internal returns (address) {
         // First attempt: Try registry lookup
         if (address(registry) != address(0) && !registryOfflineMode) {
-            try registry.getContractAddress(TOKEN_NAME) returns (address tokenAddress) {
+            try registry.getContractAddress(Constants.TOKEN_NAME) returns (address tokenAddress) {
                 if (tokenAddress != address(0)) {
                     // Update cache with successful lookup
                     _cachedTokenAddress = tokenAddress;
@@ -1243,4 +1243,12 @@ contract PlatformStabilityFund is
         revert("Token address unavailable through all fallback mechanisms");
     }
 
+    function getRoleMemberCount(bytes32 role) internal view returns (uint256) {
+        return _roles[role].members.length();
+    }
+
+    function getRoleMember(bytes32 role, uint256 index) internal view returns (address) {
+        return _roles[role].members.at(index);
+    }
+    
 }
