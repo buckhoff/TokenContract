@@ -45,7 +45,7 @@ contract TokenCrowdSale is
         uint256 amount;
         uint256 timestamp;
     }
-
+    
     // Emergency state tracking
     enum EmergencyState { NORMAL, MINOR_EMERGENCY, CRITICAL_EMERGENCY }
     EmergencyState public emergencyState;
@@ -116,10 +116,15 @@ contract TokenCrowdSale is
     uint256 public emergencyPauseTime;
     mapping(address => bool) public emergencyWithdrawalsProcessed;
 
+    uint256 private _resourceIdCounter;
     address private _cachedTokenAddress;
     address private _cachedStabilityFundAddress;
     uint256 private _lastCacheUpdate;
 
+    uint256 public platformFeePercent;
+    uint256 public lowValueFeePercent;
+    uint256 public valueThreshold;
+    
     // Events
     event TierPurchase(address indexed buyer, uint256 tierId, uint256 tokenAmount, uint256 usdAmount);
     event TierStatusChanged(uint256 tierId, bool isActive);
@@ -140,7 +145,7 @@ contract TokenCrowdSale is
     
     modifier purchaseRateLimit(uint256 _usdAmount) {
         require(
-            block.timestamp >= lastPurchaseTime[msg.sender].add(minTimeBetweenPurchases),
+            block.timestamp >= lastPurchaseTime[msg.sender] + minTimeBetweenPurchases,
             "CrowdSale: purchase too soon after previous"
         );
 
@@ -150,6 +155,17 @@ contract TokenCrowdSale is
         );
 
         lastPurchaseTime[msg.sender] = block.timestamp;
+        _;
+    }
+
+    modifier whenSystemNotPaused() {
+        if (address(registry) != address(0)) {
+            try registry.isSystemPaused() returns (bool paused) {
+                require(!paused, "CrowdSale: system is paused");
+            } catch {
+                // If registry call fails, continue execution
+            }
+        }
         _;
     }
 
@@ -390,15 +406,15 @@ contract TokenCrowdSale is
         require(addressTokensPurchased[msg.sender] + uint96(tokenAmount) <= maxTokensPerAddress, "Exceeds max tokens per address");
 
         // Check if there's enough allocation left
-        require(tier.sold.add(tokenAmount) <= tier.allocation, "Insufficient tier allocation");
+        require(tier.sold + tokenAmount <= tier.allocation, "Insufficient tier allocation");
 
         // Update tier data
-        tier.sold = uint96(tier.sold.add(tokenAmount));
+        tier.sold = uint96(tier.sold + tokenAmount);
 
         // Update user purchase data
         Purchase storage userPurchase = purchases[msg.sender];
-        userPurchase.tokens = uint96(userPurchase.tokens.add(tokenAmount));
-        userPurchase.usdAmount = uint96(userPurchase.usdAmount.add(_usdAmount));
+        userPurchase.tokens = uint96(userPurchase.tokens + tokenAmount);
+        userPurchase.usdAmount = uint96(userPurchase.usdAmount + _usdAmount);
 
         // Transfer payment tokens from user to treasury
         require(paymentToken.transferFrom(msg.sender, treasury, _usdAmount), "Payment failed");
@@ -410,7 +426,7 @@ contract TokenCrowdSale is
         while (userPurchase.tierAmounts.length <= _tierId) {
             userPurchase.tierAmounts.push(0);
         }
-        userPurchase.tierAmounts[_tierId] = userPurchase.tierAmounts[_tierId].add(_usdAmount);
+        userPurchase.tierAmounts[_tierId] = userPurchase.tierAmounts[_tierId] + _usdAmount;
 
         // Record purchase for tracking using the StabilityFund
         if (address(registry) != address(0) && registry.isContractActive(STABILITY_FUND_NAME)) {
@@ -466,7 +482,7 @@ contract TokenCrowdSale is
                 block.timestamp
             );
             
-            totalClaimable = totalClaimable.add(tierClaimable);
+            totalClaimable = totalClaimable + tierClaimable;
 
             // Add auto-compound bonus if enabled
             if (autoCompoundEnabled[_user] && totalClaimable > 0) {
@@ -494,7 +510,7 @@ contract TokenCrowdSale is
         require(claimable > 0, "No tokens available to claim");
 
         // Update user's token balance
-        purchases[msg.sender].tokens = purchases[msg.sender].tokens.sub(claimable);
+        purchases[msg.sender].tokens = purchases[msg.sender].tokens - claimable;
 
         // Record this claim event
         claimHistory[msg.sender].push(ClaimEvent({
@@ -546,7 +562,7 @@ contract TokenCrowdSale is
         // First check if any tier deadlines have passed
         for (uint256 i = currentTier; i < tierCount - 1; i++) {
             if (tierDeadlines[i] > 0 && block.timestamp >= tierDeadlines[i]) {
-                return i.add(1); // Move to next tier if deadline passed
+                return i + 1; // Move to next tier if deadline passed
             }
         }
         
@@ -906,8 +922,7 @@ contract TokenCrowdSale is
 
         return tgeAmount + vestedVestingAmount;
     }
-
-    // Improve executeRecovery function (currently missing)
+    
     function executeRecovery() internal {
         require(inRecoveryMode, "CrowdSale: not in recovery mode");
         require(countRecoveryApprovals() >= requiredRecoveryApprovals, "CrowdSale: insufficient approvals");
@@ -918,8 +933,8 @@ contract TokenCrowdSale is
         emergencyState = EmergencyState.NORMAL;
 
         // Clear approvals
-        for (uint i = 0; i < requiredRecoveryApprovals; i++) {
-            address admin = getApprover(i); // Implement this function to get admin addresses
+        for (uint i = 0; i < _getAdminCount(); i++) {
+            address admin = getApprover(i); 
             emergencyRecoveryApprovals[admin] = false;
         }
 

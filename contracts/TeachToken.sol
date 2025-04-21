@@ -100,6 +100,7 @@ contract TeachToken is
         _setupRole(MINTER_ROLE, msg.sender);
         _setupRole(BURNER_ROLE, msg.sender);
         initialDistributionDone = false;
+        requiredRecoveryApprovals = 3;
     }
 
     /**
@@ -205,7 +206,7 @@ contract TeachToken is
      * Total supply must not exceed MAX_SUPPLY
      */
     function mint(address to, uint256 amount) public onlyMinter {
-        require(totalSupply().add(amount) <= MAX_SUPPLY, "TeachToken: Max supply exceeded");
+        require(totalSupply() + amount <= MAX_SUPPLY, "TeachToken: Max supply exceeded");
         _mint(to, amount);
     }
 
@@ -368,7 +369,7 @@ contract TeachToken is
     function recoverERC20(address tokenAddress, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant {
         require(tokenAddress != address(this), "TeachToken: Cannot recover TEACH tokens");
         require(amount > 0, "TeachToken: Zero amount");
-        require(recoveryAllowedTokens[_tokenAddress], "TeachToken: Token recovery not allowed");
+        require(recoveryAllowedTokens[tokenAddress], "TeachToken: Token recovery not allowed");
 
         IERC20Upgradeable token = IERC20Upgradeable(tokenAddress);
         require(token.balanceOf(address(this)) >= amount, "TeachToken: Insufficient balance");
@@ -377,12 +378,6 @@ contract TeachToken is
         require(success, "TeachToken: Transfer failed");
 
         emit ERC20TokensRecovered(tokenAddress, msg.sender, amount);
-    }
-
-    // Add to initialize method
-    function initialize() initializer public {
-        // existing code
-        requiredRecoveryApprovals = 3; // Default value
     }
 
     // Add emergency recovery functions
@@ -469,4 +464,25 @@ contract TeachToken is
         // Final fallback: Use hardcoded address (if appropriate) or revert
         revert("Token address unavailable through all fallback mechanisms");
     }
+
+    function _countRecoveryApprovals() internal view returns (uint256) {
+        uint256 count = 0;
+        uint256 memberCount = getRoleMemberCount(ADMIN_ROLE);
+        for (uint i = 0; i < memberCount; i++) {
+            address admin = getRoleMember(ADMIN_ROLE, i);
+            if (emergencyRecoveryApprovals[admin]) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    function getRoleMemberCount(bytes32 role) internal view returns (uint256) {
+        return _roles[role].members.length();
+    }
+
+    function getRoleMember(bytes32 role, uint256 index) internal view returns (address) {
+        return _roles[role].members.at(index);
+    }
+    
 }
