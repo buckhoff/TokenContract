@@ -8,7 +8,7 @@ import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
-import {Constants} from "./Constants.sol"
+import {Constants} from "./Constants.sol";
 
 /**
  * @title TeachToken
@@ -21,9 +21,10 @@ contract TeachToken is
     PausableUpgradeable,
     AccessControlUpgradeable,
     ReentrancyGuardUpgradeable,
-    RegistryAwareUpgradeable,
-    Constants
+    RegistryAwareUpgradeable
 {
+
+    ERC20Upgradeable internal token;
     
     // Maximum supply cap
     uint256 public constant MAX_SUPPLY = 5_000_000_000 * 10**18; // 5 billion tokens
@@ -95,10 +96,10 @@ contract TeachToken is
         __ReentrancyGuard_init();
         
         _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
-        _setupRole(ADMIN_ROLE, msg.sender);
-        _setupRole(PAUSER_ROLE, msg.sender);
-        _setupRole(MINTER_ROLE, msg.sender);
-        _setupRole(BURNER_ROLE, msg.sender);
+        _setupRole(Constants.ADMIN_ROLE, msg.sender);
+        _setupRole(Constants.PAUSER_ROLE, msg.sender);
+        _setupRole(Constants.MINTER_ROLE, msg.sender);
+        _setupRole(Constants.BURNER_ROLE, msg.sender);
         initialDistributionDone = false;
         requiredRecoveryApprovals = 3;
     }
@@ -371,7 +372,7 @@ contract TeachToken is
         require(amount > 0, "TeachToken: Zero amount");
         require(recoveryAllowedTokens[tokenAddress], "TeachToken: Token recovery not allowed");
 
-        IERC20Upgradeable token = IERC20Upgradeable(tokenAddress);
+        ERC20Upgradeable token = ERC20Upgradeable(tokenAddress);
         require(token.balanceOf(address(this)) >= amount, "TeachToken: Insufficient balance");
 
         bool success = token.transfer(msg.sender, amount);
@@ -387,7 +388,7 @@ contract TeachToken is
         emit EmergencyRecoveryInitiated(msg.sender, block.timestamp);
     }
 
-    function approveRecovery() external onlyRole(ADMIN_ROLE) {
+    function approveRecovery() external onlyAdmin {
         require(inEmergencyRecovery, "Token: not in recovery mode");
         require(!emergencyRecoveryApprovals[msg.sender], "Token: already approved");
 

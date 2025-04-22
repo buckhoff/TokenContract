@@ -8,7 +8,7 @@ import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
-import {Constants} from "./Constants.sol"
+import {Constants} from "./Constants.sol";
 
 /**
  * @title TeacherReward
@@ -20,9 +20,9 @@ contract TeacherReward is
     ReentrancyGuardUpgradeable,
     PausableUpgradeable,
     AccessControlUpgradeable,
-    RegistryAwareUpgradeable,
-    Constants
+    RegistryAwareUpgradeable
 {
+    ERC20Upgradeable internal token;
     
     // Teacher registration status
     struct Teacher {
@@ -165,7 +165,7 @@ contract TeacherReward is
         __Pausable_init();
         __AccessControl_init();
         
-        token = IERC20Upgradeable(_token);
+        token = ERC20Upgradeable(_token);
         baseRewardRate = _baseRewardRate;
         reputationMultiplier = _reputationMultiplier;
         maxDailyReward = _maxDailyReward;
@@ -208,7 +208,7 @@ contract TeacherReward is
             address oldToken = address(token);
 
             if (newToken != oldToken) {
-                token = IERC20Upgradeable(newToken);
+                token = ERC20Upgradeable(newToken);
                 emit ContractReferenceUpdated(Constants.TOKEN_NAME, oldToken, newToken);
             }
         }
@@ -498,7 +498,7 @@ contract TeacherReward is
      * @param _teacher Address of the teacher
      * @param _achievementId ID of the achievement
      */
-    function awardAchievement(address _teacher, uint256 _achievementId) external onlyRole(VERIFIER_ROLE) {
+    function awardAchievement(address _teacher, uint256 _achievementId) external onlyVerifier {
         require(_teacher != address(0), "TeacherReward: zero address");
         require(_achievementId < achievements.length, "TeacherReward: invalid achievement ID");
         require(teachers[_teacher].isRegistered, "TeacherReward: teacher not registered");
@@ -519,9 +519,9 @@ contract TeacherReward is
             rewardPool -= achievement.rewardAmount;
 
             // Get token from registry if available
-            IERC20Upgradeable token = token;
-            if (address(registry) != address(0) && registry.isContractActive(TOKEN_NAME)) {
-                token = IERC20Upgradeable(registry.getContractAddress(TOKEN_NAME));
+            ERC20Upgradeable token = token;
+            if (address(registry) != address(0) && registry.isContractActive(Constants.TOKEN_NAME)) {
+                token = ERC20Upgradeable(registry.getContractAddress(Constants.TOKEN_NAME));
             }
 
             // Transfer tokens
@@ -700,7 +700,7 @@ contract TeacherReward is
         }
 
         // Third attempt: Use explicitly set fallback address
-        address fallbackAddress = _fallbackAddresses[TOKEN_NAME];
+        address fallbackAddress = _fallbackAddresses[Constants.TOKEN_NAME];
         if (fallbackAddress != address(0)) {
             return fallbackAddress;
         }

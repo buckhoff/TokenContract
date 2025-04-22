@@ -7,7 +7,7 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
-import {Constants} from "./Constants.sol"
+import {Constants} from "./Constants.sol";
 
 /**
  * @title TokenStaking
@@ -18,8 +18,7 @@ contract TokenStaking is
     OwnableUpgradeable,
     ReentrancyGuardUpgradeable,
     AccessControlUpgradeable,
-    RegistryAwareUpgradeable,
-    Constants
+    RegistryAwareUpgradeable
 {
     
     // Struct for staking pool information
@@ -55,6 +54,8 @@ contract TokenStaking is
         bool claimed;             // Whether the unstaked tokens have been claimed
     }
 
+    ERC20Upgradeable internal token;
+    
     mapping(address => mapping(uint256 => UnstakingRequest[])) public unstakingRequests;
     
     // School registry
@@ -93,17 +94,17 @@ contract TokenStaking is
     /**
    * @dev Modifier to restrict certain functions to the price oracle
      */
-    modifier onlyPriceOracle() {
-        require(hasRole(Constants.MANAGER_ROLE, msg.sender), "PlatformStabilityFund: not price oracle role");
+    modifier onlyManager() {
+        require(hasRole(Constants.MANAGER_ROLE, msg.sender), "TokenStaking: not price manager role");
         _;
     }
     modifier onlyAdmin() {
-        require(hasRole(Constants.ADMIN_ROLE, msg.sender), "PlatformStabilityFund: caller is not admin role");
+        require(hasRole(Constants.ADMIN_ROLE, msg.sender), "TokenStaking: caller is not admin role");
         _;
     }
 
     modifier onlyEmergency() {
-        require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "PlatformStabilityFund: caller is not emergency role");
+        require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "TokenStaking: caller is not emergency role");
         _;
     }
     
@@ -162,15 +163,15 @@ contract TokenStaking is
      * @param _platformRewardsManager Address of the platform rewards manager
      */
     function initialize(
-    address _teachToken, address _platformRewardsManager) initializer public {
-        require(_teachToken != address(0), "TokenStaking: zero token address");
+    address _token, address _platformRewardsManager) initializer public {
+        require(_token != address(0), "TokenStaking: zero token address");
         require(_platformRewardsManager != address(0), "TokenStaking: zero platform manager address");
 
         __Ownable_init(msg.sender);
         __ReentrancyGuard_init();
         __AccessControl_init();
         
-        token = IERC20Upgradeable(_token);
+        token = ERC20Upgradeable(_token);
         platformRewardsManager = _platformRewardsManager;
         lastRewardAdjustment = block.timestamp;
         cooldownPeriod = 2 days; // 2-day cooldown by default
@@ -204,7 +205,7 @@ contract TokenStaking is
             address oldToken = address(token);
 
             if (newToken != oldToken) {
-                token = IERC20Upgradeable(newToken);
+                token = ERC20Upgradeable(newToken);
                 emit ContractReferenceUpdated(Constants.TOKEN_NAME, oldToken, newToken);
             }
         }
@@ -377,7 +378,7 @@ contract TokenStaking is
         uint256 _lockDuration,
         uint256 _earlyWithdrawalFee,
         bool _isActive
-    ) external onlyRole(ADMIN_ROLE) {
+    ) external onlyAdmin {
         require(_poolId < stakingPools.length, "TokenStaking: invalid pool ID");
         require(_earlyWithdrawalFee <= 3000, "TokenStaking: fee too high");
         
@@ -402,9 +403,9 @@ contract TokenStaking is
         require(_amount > 0, "TokenStaking: zero amount");
 
         // Get token from registry if available
-        IERC20Upgradeable token = token;
+        ERC20Upgradeable token = token;
         if (address(registry) != address(0) && registry.isContractActive(Constants.TOKEN_NAME)) {
-            token = IERC20Upgradeable(registry.getContractAddress(Constants.TOKEN_NAME));
+            token = ERC20Upgradeable(registry.getContractAddress(Constants.TOKEN_NAME));
         }
         
         require(_amount <= token.balanceOf(msg.sender), "TokenStaking: insufficient balance");
@@ -439,7 +440,7 @@ contract TokenStaking is
         require(token.transferFrom(msg.sender, address(this), _amount), "TokenStaking: transfer failed");
         
         // Notify governance about stake update if it's registered
-        if (address(registry) != address(0) && registry.isContractActive(GOVERNANCE_NAME)) {
+        if (address(registry) != address(0) && registry.isContractActive(Constants.GOVERNANCE_NAME)) {
             try this.notifyGovernanceOfStakeChange(msg.sender) {} catch {}
         }
         
@@ -485,9 +486,9 @@ contract TokenStaking is
         }
 
         // Get token from registry if available
-        IERC20Upgradeable token = token;
-        if (address(registry) != address(0) && registry.isContractActive(TOKEN_NAME)) {
-            token = IERC20Upgradeable(registry.getContractAddress(TOKEN_NAME));
+        ERC20Upgradeable token = token;
+        if (address(registry) != address(0) && registry.isContractActive(Constants.TOKEN_NAME)) {
+            token = ERC20Upgradeable(registry.getContractAddress(Constants.TOKEN_NAME));
         }
         
         // Transfer tokens back to user
@@ -837,7 +838,7 @@ contract TokenStaking is
     function recoverTokens(address _token, uint256 _amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(_token != address(token), "TokenStaking: cannot recover staking token");
 
-        IERC20Upgradeable token = IERC20Upgradeable(_token);
+        ERC20Upgradeable token = ERC20Upgradeable(_token);
         require(token.transfer(owner(), _amount), "TokenStaking: transfer failed");
     }
 
@@ -1032,7 +1033,7 @@ contract TokenStaking is
         }
 
         // Third attempt: Use explicitly set fallback address
-        address fallbackAddress = _fallbackAddresses[TOKEN_NAME];
+        address fallbackAddress = _fallbackAddresses[Constants.TOKEN_NAME];
         if (fallbackAddress != address(0)) {
             return fallbackAddress;
         }

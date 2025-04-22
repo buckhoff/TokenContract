@@ -8,7 +8,7 @@ import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
-import {Constants} from "./Constants.sol"
+import {Constants} from "./Constants.sol";
 
 interface IPlatformStabilityFund {
     function getVerifiedPrice() external view returns (uint256);
@@ -25,8 +25,7 @@ contract PlatformMarketplace is
     ReentrancyGuardUpgradeable, 
     PausableUpgradeable, 
     AccessControlUpgradeable,
-    RegistryAwareUpgradeable,
-    Constants
+    RegistryAwareUpgradeable
 {
     
     // Struct to store resource information
@@ -39,6 +38,8 @@ contract PlatformMarketplace is
         uint256 rating;
         uint256 ratingCount;
     }
+
+    ERC20Upgradeable internal token;
     
     // Resource ID counter
     uint256 private _resourceIdCounter;
@@ -152,7 +153,7 @@ contract PlatformMarketplace is
         require(_feePercent <= 3000, "PlatformMarketplace: fee too high");
         require(_feeRecipient != address(0), "PlatformMarketplace: zero fee recipient");
         
-        token = IERC20Upgradeable(_token);
+        token = ERC20Upgradeable(_token);
         platformFeePercent = _feePercent;
         feeRecipient = _feeRecipient;
         _resourceIdCounter = 1;
@@ -194,7 +195,7 @@ contract PlatformMarketplace is
             address oldToken = address(token);
 
             if (newToken != oldToken) {
-                token = IERC20(newToken);
+                token = ERC20Upgradeable(newToken);
                 emit ContractReferenceUpdated(Constants.TOKEN_NAME, oldToken, newToken);
             }
         }
@@ -780,12 +781,19 @@ contract PlatformMarketplace is
         }
 
         // Third attempt: Use explicitly set fallback address
-        address fallbackAddress = _fallbackAddresses[TOKEN_NAME];
+        address fallbackAddress = _fallbackAddresses[Constants.TOKEN_NAME];
         if (fallbackAddress != address(0)) {
             return fallbackAddress;
         }
 
         // Final fallback: Use hardcoded address (if appropriate) or revert
         revert("Token address unavailable through all fallback mechanisms");
+    }
+    function getRoleMemberCount(bytes32 role) internal view returns (uint256) {
+        return _roles[role].members.length();
+    }
+
+    function getRoleMember(bytes32 role, uint256 index) internal view returns (address) {
+        return _roles[role].members.at(index);
     }
     }

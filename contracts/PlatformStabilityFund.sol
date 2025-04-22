@@ -4,10 +4,11 @@ pragma solidity ^0.8.29;
 import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
-import {Constants} from "./Constants.sol"
+import {Constants} from "./Constants.sol";
 
 /**
  * @title PlatformStabilityFund
@@ -20,7 +21,7 @@ contract PlatformStabilityFund is
     ReentrancyGuardUpgradeable,
     AccessControlUpgradeable,
     RegistryAwareUpgradeable,
-    Constants
+    PausableUpgradeable
 {
 
     struct PriceObservation {
@@ -28,8 +29,10 @@ contract PlatformStabilityFund is
         uint256 price;
     }
 
+    ERC20Upgradeable internal token;
+    
     // Stable coin used for funding payouts (e.g., USDC)
-    IERC20Upgradeable public stableCoin;
+    ERC20Upgradeable public stableCoin;
 
     // Fund parameters
     uint256 public reserveRatio;               // Target reserve ratio (10000 = 100%)
@@ -89,6 +92,10 @@ contract PlatformStabilityFund is
     address private _cachedStabilityFundAddress;
     uint256 private _lastCacheUpdate;
 
+    uint256 public platformFeePercent;
+    uint256 public lowValueFeePercent;
+    uint256 public valueThreshold;
+
     // Events
     event ReservesAdded(address indexed contributor, uint256 amount);
     event ReservesWithdrawn(address indexed recipient, uint256 amount);
@@ -129,21 +136,21 @@ contract PlatformStabilityFund is
      * @dev Modifier to restrict certain functions to the price oracle
      */
     modifier onlyPriceOracle() {
-        require(hasRole(ORACLE_ROLE, msg.sender), "PlatformStabilityFund: not price oracle role");
+        require(hasRole(Constants.ORACLE_ROLE, msg.sender), "PlatformStabilityFund: not price oracle role");
         _;
     }
     modifier onlyAdmin() {
-        require(hasRole(ADMIN_ROLE, msg.sender), "PlatformStabilityFund: caller is not admin role");
+        require(hasRole(Constants.ADMIN_ROLE, msg.sender), "PlatformStabilityFund: caller is not admin role");
         _;
     }
 
     modifier onlyBurner() {
-        require(hasRole(BURNER_ROLE, msg.sender), "PlatformStabilityFund: caller is not burner role");
+        require(hasRole(Constants.BURNER_ROLE, msg.sender), "PlatformStabilityFund: caller is not burner role");
         _;
     }
 
     modifier onlyEmergency() {
-        require(hasRole(EMERGENCY_ROLE, msg.sender), "PlatformStabilityFund: caller is not emergency role");
+        require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "PlatformStabilityFund: caller is not emergency role");
         _;
     }
     
@@ -238,8 +245,8 @@ contract PlatformStabilityFund is
         require(_platformFeePercent >= _lowValueFeePercent, "PlatformStabilityFund: regular fee must be >= low value fee");
         require(_valueThreshold > 0, "PlatformStabilityFund: zero threshold");
 
-        token = IERC20(_token);
-        stableCoin = IERC20(_stableCoin);
+        token = ERC20Upgradeable(_token);
+        stableCoin = ERC20Upgradeable(_stableCoin);
         priceOracle = _priceOracle;
         tokenPrice = _initialPrice;
         baselinePrice = _initialPrice;
@@ -1141,7 +1148,7 @@ contract PlatformStabilityFund is
             address oldToken = address(token);
 
             if (newToken != oldToken) {
-                token = IERC20(newToken);
+                token = ERC20Upgradeable(newToken);
                 emit ContractReferenceUpdated(Constants.TOKEN_NAME, oldToken, newToken);
             }
         }
@@ -1152,7 +1159,7 @@ contract PlatformStabilityFund is
         requiredRecoveryApprovals = _requiredApprovals;
     }
 
-// Add recovery function
+    // Add recovery function
     function initiateEmergencyRecovery() external onlyEmergency {
         require(paused, "StabilityFund: not paused");
         inEmergencyRecovery = true;
@@ -1173,7 +1180,7 @@ contract PlatformStabilityFund is
     function _countRecoveryApprovals() internal view returns (uint256) {
         uint256 count = 0;
         // Iterate through all admin role holders
-        bytes32 role = ADMIN_ROLE;
+        bytes32 role = Constants.ADMIN_ROLE;
         for (uint i = 0; i < getRoleMemberCount(role); i++) {
             address admin = getRoleMember(role, i);
             if (emergencyRecoveryApprovals[admin]) {
@@ -1234,7 +1241,7 @@ contract PlatformStabilityFund is
         }
 
         // Third attempt: Use explicitly set fallback address
-        address fallbackAddress = _fallbackAddresses[TOKEN_NAME];
+        address fallbackAddress = _fallbackAddresses[Constants.TOKEN_NAME];
         if (fallbackAddress != address(0)) {
             return fallbackAddress;
         }

@@ -7,7 +7,7 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
-import {Constants} from "./Constants.sol"
+import {Constants} from "./Constants.sol";
 
 /**
  * @title GenericTokenPresale
@@ -18,8 +18,7 @@ contract TokenCrowdSale is
     OwnableUpgradeable,
     ReentrancyGuardUpgradeable,
     AccessControlUpgradeable,
-    RegistryAwareUpgradeable,
-    Constants
+    RegistryAwareUpgradeable
 {
     
     // Presale tiers structure
@@ -46,6 +45,8 @@ contract TokenCrowdSale is
         uint256 timestamp;
     }
     
+    ERC20Upgradeable internal token;
+    
     // Emergency state tracking
     enum EmergencyState { NORMAL, MINOR_EMERGENCY, CRITICAL_EMERGENCY }
     EmergencyState public emergencyState;
@@ -64,7 +65,7 @@ contract TokenCrowdSale is
     mapping(uint256 => uint256) public maxTokensForTier;
 
     // Payment token (USDC)
-    IERC20Upgradeable public paymentToken;
+    ERC20Upgradeable public paymentToken;
 
     // Presale tiers
     PresaleTier[] public tiers;
@@ -345,7 +346,7 @@ contract TokenCrowdSale is
      * @dev Set the token address after deployment
      * @param _Token Address of the ERC20 token contract
      */
-    function setSaleToken(IERC20Upgradeable _token) external onlyOwner {
+    function setSaleToken(ERC20Upgradeable _token) external onlyOwner {
         require(address(token) == address(0), "Token already set");
         token = _token;
     }
@@ -528,7 +529,7 @@ contract TokenCrowdSale is
      * @dev Emergency function to recover tokens sent to this contract by mistake
      * @param _token Token address to recover
      */
-    function recoverTokens(IERC20Upgradeable _token) external onlyOwner {
+    function recoverTokens(ERC20Upgradeable _token) external onlyOwner {
         require(address(_token) != address(token), "Cannot recover tokens");
         uint256 balance = _token.balanceOf(address(this));
         require(balance > 0, "No tokens to recover");
@@ -665,14 +666,14 @@ contract TokenCrowdSale is
             address oldToken = address(token);
 
             if (newToken != oldToken) {
-                token = IERC20Upgradeable(newToken);
-                emit ContractReferenceUpdated(TOKEN_NAME, oldToken, newToken);
+                token = ERC20Upgradeable(newToken);
+                emit ContractReferenceUpdated(Constants.TOKEN_NAME, oldToken, newToken);
             }
         }
 
         // Update StabilityFund reference for price oracle
         if (registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
-            address stabilityFund = registry.getContractAddress(STABILITY_FUND_NAME);
+            address stabilityFund = registry.getContractAddress(Constants.STABILITY_FUND_NAME);
 
             // Here we might need to update any reference to the stability fund
             // For example, if the crowdsale uses the stability fund for pricing
@@ -711,7 +712,7 @@ contract TokenCrowdSale is
                 _usdAmount
             )
         );
-
+        return success;
         // We don't revert on failure since this is a non-critical operation
     }
 
@@ -1006,12 +1007,20 @@ contract TokenCrowdSale is
         }
 
         // Third attempt: Use explicitly set fallback address
-        address fallbackAddress = _fallbackAddresses[TOKEN_NAME];
+        address fallbackAddress = _fallbackAddresses[Constants.TOKEN_NAME];
         if (fallbackAddress != address(0)) {
             return fallbackAddress;
         }
 
         // Final fallback: Use hardcoded address (if appropriate) or revert
         revert("Token address unavailable through all fallback mechanisms");
+    }
+
+    function getRoleMemberCount(bytes32 role) internal view returns (uint256) {
+        return _roles[role].members.length();
+    }
+
+    function getRoleMember(bytes32 role, uint256 index) internal view returns (address) {
+        return _roles[role].members.at(index);
     }
 }

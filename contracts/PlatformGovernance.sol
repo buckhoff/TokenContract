@@ -7,7 +7,8 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
-import {Constants} from "./Constants.sol"
+import "./Interfaces/IPlatformStaking.sol";
+import {Constants} from "./Constants.sol";
 
 /**
  * @title PlatformGovernance
@@ -18,12 +19,13 @@ contract PlatformGovernance is
     OwnableUpgradeable,
     ReentrancyGuardUpgradeable,
     AccessControlUpgradeable,
-    RegistryAwareUpgradeable,
-    Constants
+    RegistryAwareUpgradeable
 {
 
+    ERC20Upgradeable internal token;
+    
     // Staking contract reference
-    ITokenStaking public stakingContract;
+    IPlatformStaking public stakingContract;
     
     // Proposal counter
     uint256 private _proposalIdCounter;
@@ -184,7 +186,6 @@ contract PlatformGovernance is
     event RecoveryRequirementsUpdated(uint16 requiredGuardians, uint16 emergencyPeriod);
     event ProposalCanceledByGovernance(uint256 indexed proposalId, address indexed governor, string reason);
     
-    ITokenStaking public stakingContract;
     bool public stakingWeightEnabled;
     uint16 public maxStakingMultiplier; // multiplier scaled by 100 (e.g., 200 = 2x)
     uint16 public maxStakingPeriod; // in days
@@ -235,7 +236,7 @@ contract PlatformGovernance is
         require(_quorumThreshold <= 5000, "PlatformGovernance: quorum too high");
         require(_minVotingPeriod <= _maxVotingPeriod, "PlatformGovernance: invalid voting periods");
         
-        token =IERC20Upgradeable(_token);
+        token = ERC20Upgradeable(_token);
         proposalThreshold = _proposalThreshold;
         minVotingPeriod = _minVotingPeriod;
         maxVotingPeriod = _maxVotingPeriod;
@@ -272,9 +273,9 @@ contract PlatformGovernance is
         }
         
         // Use governance token from registry if available
-        IERC20Upgradeable governanceToken = token;
+        ERC20Upgradeable governanceToken = token;
         if (address(registry) != address(0) && registry.isContractActive(Constants.TOKEN_NAME)) {
-            governanceToken =IERC20Upgradeable(registry.getContractAddress(Constants.TOKEN_NAME));
+            governanceToken =ERC20Upgradeable(registry.getContractAddress(Constants.TOKEN_NAME));
         }
         
         require(governanceToken.balanceOf(msg.sender) >= proposalThreshold, "PlatformGovernance: below proposal threshold");
@@ -725,7 +726,7 @@ contract PlatformGovernance is
         require(_maxStakingMultiplier >= 100, "PlatformGovernance: multiplier must be >= 100");
         require(_maxStakingPeriod > 0, "PlatformGovernance: period must be > 0");
 
-        stakingContract = ITokenStaking(_stakingContract);
+        stakingContract = IPlatformStaking(_stakingContract);
         maxStakingMultiplier = _maxStakingMultiplier;
         maxStakingPeriod = _maxStakingPeriod;
         stakingWeightEnabled = true;
@@ -747,14 +748,14 @@ contract PlatformGovernance is
         power = tokenBalance;
 
         // Check registry first if it's set
-        if (address(registry) != address(0) && registry.isContractActive(STAKING_NAME)) {
+        if (address(registry) != address(0) && registry.isContractActive(Constants.STAKING_NAME)) {
             address stakingAddress = registry.getContractAddress(Constants.STAKING_NAME);
 
             if (stakingAddress != address(0)) {
-                try ITokenStaking(stakingAddress).getPoolCount() returns (uint256 poolCount) {
+                try IPlatformStaking(stakingAddress).getPoolCount() returns (uint256 poolCount) {
                     // Add weighted staking power
                     for (uint256 poolId = 0; poolId < poolCount; poolId++) {
-                        try ITokenStaking(stakingAddress).getUserStake(poolId, _voter) returns (
+                        try IPlatformStaking(stakingAddress).getUserStake(poolId, _voter) returns (
                             uint256 stakedAmount,
                             uint256 startTime,
                             uint256 lastClaimTime,
@@ -859,7 +860,7 @@ contract PlatformGovernance is
 		require(_amount > 0, "PlatformGovernance: zero amount");
 		require(allowedTokens[_token], "PlatformGovernance: token not allowed");
 		
-		IERC20 token = IERC20Upgradeable(_token);
+		IERC20 token = ERC20Upgradeable(_token);
 		require(token.transferFrom(msg.sender, address(this), _amount), "PlatformGovernance: transfer failed");
 		
 		if (_token == address(token)) {
@@ -886,7 +887,7 @@ contract PlatformGovernance is
 		require(_recipient != address(0), "PlatformGovernance: zero recipient");
 		require(allowedTokens[_token], "PlatformGovernance: token not allowed");
 		
-		IERC20 token = IERC20Upgradeable(_token);
+		IERC20 token = ERC20Upgradeable(_token);
 		if (_token == address(token)) {
 			require(_amount <= treasuryBalance, "PlatformGovernance: insufficient treasury");
 			treasuryBalance -= uint96(_amount);
@@ -906,7 +907,7 @@ contract PlatformGovernance is
 		if (_token == address(token)) {
 			return treasuryBalance;
 		} else {
-			return IERC20Upgradeable(_token).balanceOf(address(this));
+			return ERC20Upgradeable(_token).balanceOf(address(this));
 		}
 	}  
 	/**
@@ -1011,7 +1012,7 @@ contract PlatformGovernance is
             address oldTeachToken = address(token);
 
             if (newTeachToken != oldTeachToken) {
-                token = IERC20Upgradeable(newTeachToken);
+                token = ERC20Upgradeable(newTeachToken);
                 emit ContractReferenceUpdated(Constants.TOKEN_NAME, oldTeachToken, newTeachToken);
             }
         }
@@ -1022,7 +1023,7 @@ contract PlatformGovernance is
             address oldStaking = address(stakingContract);
 
             if (newStaking != oldStaking) {
-                stakingContract = ITokenStaking(newStaking);
+                stakingContract = IPlatformStaking(newStaking);
                 stakingWeightEnabled = true; // Enable staking weight when staking contract is available
                 emit ContractReferenceUpdated(Constants.STAKING_NAME, oldStaking, newStaking);
             }
