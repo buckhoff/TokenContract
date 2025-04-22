@@ -157,9 +157,9 @@ contract PlatformMarketplace is
         platformFeePercent = _feePercent;
         feeRecipient = _feeRecipient;
         _resourceIdCounter = 1;
-        _setupRole(Constants.ADMIN_ROLE, msg.sender);
-        _setupRole(Constants.DEFAULT_ADMIN_ROLE, msg.sender);
-        _setupRole(Constants.EMERGENCY_ROLE, msg.sender);
+        _grantRole(Constants.ADMIN_ROLE, msg.sender);
+        _grantRole(Constants.DEFAULT_ADMIN_ROLE, msg.sender);
+        _grantRole(Constants.EMERGENCY_ROLE, msg.sender);
 
         // Set default subscription fee
         monthlySubscriptionFee = 100 * 10**18; // 100 platformtokens per month
@@ -790,10 +790,10 @@ contract PlatformMarketplace is
         revert("Token address unavailable through all fallback mechanisms");
     }
     function getRoleMemberCount(bytes32 role) internal view returns (uint256) {
-        return _roles[role].members.length();
+        return AccessControlUpgradeable.getRoleMemberCount(role);
     }
 
     function getRoleMember(bytes32 role, uint256 index) internal view returns (address) {
-        return _roles[role].members.at(index);
+        return AccessControlUpgradeable.getRoleMember(role, index);
     }
-    }
+}

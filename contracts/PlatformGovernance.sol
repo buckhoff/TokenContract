@@ -228,9 +228,9 @@ contract PlatformGovernance is
         __ReentrancyGuard_init();
         __AccessControl_init();
 
-        _setupRole(Constants.ADMIN_ROLE, msg.sender);
-        _setupRole(Constants.EMERGENCY_ROLE, msg.sender);
-        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _grantRole(Constants.ADMIN_ROLE, msg.sender);
+        _grantRole(Constants.EMERGENCY_ROLE, msg.sender);
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         
         require(_token != address(0), "PlatformGovernance: zero token address");
         require(_quorumThreshold <= 5000, "PlatformGovernance: quorum too high");

@@ -121,6 +121,12 @@ contract PlatformStabilityFund is
         uint16 dropThreshold,
         uint16 maxDropPercent
     );
+    event FlashLoanProtectionConfigured(
+        uint256 maxDailyUserVolume,
+        uint256 maxSingleConversionAmount,
+        uint256 minTimeBetweenActions,
+        bool enabled
+    );
     event CurrentFeeUpdated(uint16 oldFee, uint16 newFee);
     event TokensBurnedToReserves(uint256 burnedAmount, uint256 reservesAdded);
     event PlatformFeesToReserves(uint256 feeAmount, uint256 reservesAdded);
@@ -131,6 +137,8 @@ contract PlatformStabilityFund is
     event TWAPConfigUpdated(uint256 windowSize, uint256 interval, bool enabled);
     event EmergencyRecoveryInitiated(address indexed recoveryAdmin, uint256 timestamp);
     event EmergencyRecoveryCompleted(address indexed recoveryAdmin, uint256 timestamp);
+    event AddressPlacedInCooldown(address indexed suspiciousAddress, uint256 endTime);
+    event AddressRemovedFromCooldown(address indexed cooldownAddress);
     
     /**
      * @dev Modifier to restrict certain functions to the price oracle
@@ -265,11 +273,11 @@ contract PlatformStabilityFund is
         burnToReservePercent = 1000; // 10% by default
         platformFeeToReservePercent = 2000; // 20% by default
         authorizedBurners[msg.sender] = true;
-        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
-        _setupRole(Constants.ADMIN_ROLE, msg.sender);
-        _setupRole(Constants.ORACLE_ROLE, _priceOracle);
-        _setupRole(Constants.EMERGENCY_ROLE, emergencyAdmin);
-        _setupRole(Constants.BURNER_ROLE, msg.sender);
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _grantRole(Constants.ADMIN_ROLE, msg.sender);
+        _grantRole(Constants.ORACLE_ROLE, _priceOracle);
+        _grantRole(Constants.EMERGENCY_ROLE, emergencyAdmin);
+        _grantRole(Constants.BURNER_ROLE, msg.sender);
         maxDailyUserVolume = 1_000_000 * 10**18; // 1M tokens per day per user
         maxSingleConversionAmount = 100_000 * 10**18; // 100K tokens per conversion
         minTimeBetweenActions = 15 minutes; // 15 minutes between actions
@@ -1251,11 +1259,74 @@ contract PlatformStabilityFund is
     }
 
     function getRoleMemberCount(bytes32 role) internal view returns (uint256) {
-        return _roles[role].members.length();
+        return AccessControlUpgradeable.getRoleMemberCount(role);
     }
 
     function getRoleMember(bytes32 role, uint256 index) internal view returns (address) {
-        return _roles[role].members.at(index);
+        return AccessControlUpgradeable.getRoleMember(role, index);
     }
-    
+    /**
+ * @dev Updates the value mode based on current price compared to baseline
+ */
+    function updateValueMode() internal {
+        uint256 verifiedPrice = getVerifiedPrice();
+
+        // Calculate how far below baseline we are (in percentage points)
+        uint256 valueDropPercent = 0;
+        if (verifiedPrice < baselinePrice) {
+            valueDropPercent = ((baselinePrice - verifiedPrice) * 10000) / baselinePrice;
+        }
+
+        // Update current fee based on new value mode
+        updateCurrentFee();
+
+        emit ValueModeChanged(valueDropPercent >= priceDropThreshold);
+    }
+
+    /**
+  * @dev Makes a safe call to another contract through the registry
+ * @param _contractNameBytes32 Name of the contract to call
+ * @param _callData The calldata to send
+ * @return success Whether the call succeeded
+ * @return returnData The data returned by the call
+ */
+    function _safeContractCall(
+        bytes32 _contractNameBytes32,
+        bytes memory _callData
+    ) internal returns (bool success, bytes memory returnData) {
+        require(address(registry) != address(0), "RegistryAware: registry not set");
+
+        try registry.isContractActive(_contractNameBytes32) returns (bool isActive) {
+            if (!isActive) {
+                emit ContractCallFailed(_contractNameBytes32, bytes4(_callData), "Contract not active");
+                return (false, bytes(""));
+            }
+
+            try registry.getContractAddress(_contractNameBytes32) returns (address contractAddress) {
+                if (contractAddress == address(0)) {
+                    emit ContractCallFailed(_contractNameBytes32, bytes4(_callData), "Zero contract address");
+                    return (false, bytes(""));
+                }
+
+                // Make the actual call
+                (success, returnData) = contractAddress.call(_callData);
+
+                if (!success) {
+                    emit ContractCallFailed(
+                        _contractNameBytes32,
+                        bytes4(_callData),
+                        "Call reverted"
+                    );
+                }
+
+                return (success, returnData);
+            } catch {
+                emit ContractCallFailed(_contractNameBytes32, bytes4(_callData), "Failed to get contract address");
+                return (false, bytes(""));
+            }
+        } catch {
+            emit ContractCallFailed(_contractNameBytes32, bytes4(_callData), "Failed to check contract active status");
+            return (false, bytes(""));
+        }
+    }
 }

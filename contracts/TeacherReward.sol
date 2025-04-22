@@ -176,10 +176,10 @@ contract TeacherReward is
         maxPerformanceMultiplier = 300;  // 3.0x maximum multiplier
 
         // Make deployer the first verifier
-        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
-        _setupRole(Constants.ADMIN_ROLE, msg.sender);
-        _setupRole(Constants.VERIFIER_ROLE, msg.sender);
-        _setupRole(Constants.EMERGENCY_ROLE, msg.sender);
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _grantRole(Constants.ADMIN_ROLE, msg.sender);
+        _grantRole(Constants.VERIFIER_ROLE, msg.sender);
+        _grantRole(Constants.EMERGENCY_ROLE, msg.sender);
         
         // Make deployer the first verifier
         verifiers[msg.sender] = true;
@@ -374,7 +374,7 @@ contract TeacherReward is
         require(!verifiers[_verifier], "TeacherReward: already a verifier");
         
         verifiers[_verifier] = true;
-        _setupRole(Constants.VERIFIER_ROLE, _verifier);
+        _grantRole(Constants.VERIFIER_ROLE, _verifier);
         
         emit VerifierAdded(_verifier);
     }

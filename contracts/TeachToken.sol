@@ -95,11 +95,11 @@ contract TeachToken is
         __AccessControl_init();
         __ReentrancyGuard_init();
         
-        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
-        _setupRole(Constants.ADMIN_ROLE, msg.sender);
-        _setupRole(Constants.PAUSER_ROLE, msg.sender);
-        _setupRole(Constants.MINTER_ROLE, msg.sender);
-        _setupRole(Constants.BURNER_ROLE, msg.sender);
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _grantRole(Constants.ADMIN_ROLE, msg.sender);
+        _grantRole(Constants.PAUSER_ROLE, msg.sender);
+        _grantRole(Constants.MINTER_ROLE, msg.sender);
+        _grantRole(Constants.BURNER_ROLE, msg.sender);
         initialDistributionDone = false;
         requiredRecoveryApprovals = 3;
     }
@@ -479,11 +479,11 @@ contract TeachToken is
     }
 
     function getRoleMemberCount(bytes32 role) internal view returns (uint256) {
-        return _roles[role].members.length();
+        return AccessControlUpgradeable.getRoleMemberCount(role);
     }
 
     function getRoleMember(bytes32 role, uint256 index) internal view returns (address) {
-        return _roles[role].members.at(index);
+        return AccessControlUpgradeable.getRoleMember(role, index);
     }
     
 }

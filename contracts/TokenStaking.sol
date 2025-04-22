@@ -177,10 +177,10 @@ contract TokenStaking is
         cooldownPeriod = 2 days; // 2-day cooldown by default
         emergencyUnstakeFee = 2000; // 20% fee by default
         
-        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
-        _setupRole(Constants.ADMIN_ROLE, msg.sender);
-        _setupRole(Constants.MANAGER_ROLE, _platformRewardsManager);
-        _setupRole(Constants.EMERGENCY_ROLE, msg.sender);
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _grantRole(Constants.ADMIN_ROLE, msg.sender);
+        _grantRole(Constants.MANAGER_ROLE, _platformRewardsManager);
+        _grantRole(Constants.EMERGENCY_ROLE, msg.sender);
     }
 
     /**
@@ -361,7 +361,7 @@ contract TokenStaking is
         emit PlatformRewardsManagerUpdated(platformRewardsManager, _newManager);
         
         platformRewardsManager = _newManager;
-        _setupRole(Constants.MANAGER_ROLE, _newManager);
+        _grantRole(Constants.MANAGER_ROLE, _newManager);
     }
     
     /**

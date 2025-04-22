@@ -214,10 +214,10 @@ contract TokenCrowdSale is
         paymentToken = _paymentToken;
         treasury = _treasury;
 
-        _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
-        _setupRole(Constants.ADMIN_ROLE, msg.sender);
-        _setupRole(Constants.EMERGENCY_ROLE, msg.sender);
-        _setupRole(Constants.RECORDER_ROLE, msg.sender);
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _grantRole(Constants.ADMIN_ROLE, msg.sender);
+        _grantRole(Constants.EMERGENCY_ROLE, msg.sender);
+        _grantRole(Constants.RECORDER_ROLE, msg.sender);
 
         _resourceIdCounter = 1;
         
@@ -1017,10 +1017,10 @@ contract TokenCrowdSale is
     }
 
     function getRoleMemberCount(bytes32 role) internal view returns (uint256) {
-        return _roles[role].members.length();
+        return AccessControlUpgradeable.getRoleMemberCount(role);
     }
 
     function getRoleMember(bytes32 role, uint256 index) internal view returns (address) {
-        return _roles[role].members.at(index);
+        return AccessControlUpgradeable.getRoleMember(role, index);
     }
 }

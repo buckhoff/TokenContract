@@ -48,7 +48,7 @@ abstract contract RegistryAwareUpgradeable is Initializable, AccessControlUpgrad
     }
 
     modifier onlyAdmin() {
-        require(hasRole(Constants.ADMIN_ROLE), msg.sender), "RegistryAware: caller is not admin role");
+        require(hasRole(Constants.ADMIN_ROLE, msg.sender), "RegistryAware: caller is not admin role");
         _;
     }
     /**
