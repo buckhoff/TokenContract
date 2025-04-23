@@ -656,7 +656,7 @@ contract PlatformMarketplace is
         if (address(registry) != address(0) && registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
             try IPlatformStabilityFund(registry.getContractAddress(Constants.STABILITY_FUND_NAME)).getVerifiedPrice() returns (uint256 verifiedPrice) {
                 if (verifiedPrice > 0) {
-                    return (_stableAmount.mul(1e18)).div(verifiedPrice);
+                    return (_stableAmount * 1e18) / (verifiedPrice);
                 }
             } catch {
                 // Fall back to a default calculation if stability fund call fails
@@ -664,7 +664,7 @@ contract PlatformMarketplace is
         }
 
         // Fallback calculation or default price if no stability fund
-        return _stableAmount.mul(10); // Example fallback (10 tokens per stable coin)
+        return _stableAmount * 10; // Example fallback (10 tokens per stable coin)
     }
 
     /**

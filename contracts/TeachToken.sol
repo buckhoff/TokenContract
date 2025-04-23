@@ -480,18 +480,6 @@ contract TeachToken is
         // This is safer than reverting when used in critical paths
         return address(this);
     }
-    
-    function _countRecoveryApprovals() internal view returns (uint256) {
-        uint256 count = 0;
-        uint256 memberCount = getRoleMemberCount(Constants.ADMIN_ROLE);
-        for (uint i = 0; i < memberCount; i++) {
-            address admin = getRoleMember(Constants.ADMIN_ROLE, i);
-            if (emergencyRecoveryApprovals[admin]) {
-                count++;
-            }
-        }
-        return count;
-    }
 
     function getRoleMemberCount(bytes32 role) internal view returns (uint256) {
         return AccessControlUpgradeable.getRoleMemberCount(role);

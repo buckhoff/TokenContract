@@ -903,7 +903,7 @@ contract TokenCrowdSale is
         uint256 count = 0;
         bytes32 adminRole = Constants.ADMIN_ROLE;
         
-        for (uint i = 0; i < _getAdminCount(); i++) { // Implement _getAdminCount function
+        for (uint i = 0; i < _getAdminCount(); i++) { 
             address admin = getRoleMember(adminRole, i);
             if (emergencyRecoveryApprovals[admin]) {
                 count++;
