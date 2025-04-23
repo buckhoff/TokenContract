@@ -7,7 +7,8 @@ import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
-import {Constants} from "./Constants.sol";
+import {VestingCalculations} from "./Libraries/VestingCalculations.sol";
+import {Constants} from "./Libraries/Constants.sol";
 
 /**
  * @title GenericTokenPresale
@@ -63,7 +64,7 @@ contract TokenCrowdSale is
     uint256 public currentTier = 0;
     uint256 public tierCount;
     mapping(uint256 => uint256) public maxTokensForTier;
-
+    
     // Payment token (USDC)
     ERC20Upgradeable public paymentToken;
 
@@ -167,26 +168,6 @@ contract TokenCrowdSale is
                 // If registry call fails, continue execution
             }
         }
-        _;
-    }
-
-    modifier onlyAdmin() {
-        require(hasRole(Constants.ADMIN_ROLE, msg.sender), "CrowdSale: caller is not admin role");
-        _;
-    }
-
-    modifier onlyRecorder() {
-        require(hasRole(Constants.RECORDER_ROLE, msg.sender), "CrowdSale: caller is not recorder role");
-        _;
-    }
-
-    modifier onlyEmergency() {
-        require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "CrowdSale: caller is not emergency role");
-        _;
-    }
-
-    modifier onlyRole(bytes32 role) {
-        require(hasRole(role, msg.sender), "CrowdSale: caller doesn't have role");
         _;
     }
     
@@ -322,7 +303,7 @@ contract TokenCrowdSale is
         maxTokensPerAddress = 1_500_000 * 10**18; // 1.5M tokens by default
     }
 
-    function addRecorder(address _recorder) external onlyOwner {
+    function addRecorder(address _recorder) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _grantRole(Constants.RECORDER_ROLE, _recorder);
     }
 
@@ -337,7 +318,7 @@ contract TokenCrowdSale is
         address _user,
         uint256 _tokenAmount,
         uint256 _purchaseValue
-    ) external onlyRecorder whenSystemNotPaused {
+    ) external onlyRole(Constants.RECORDER_ROLE) whenSystemNotPaused {
         userTotalTokens[_user] += _tokenAmount;
         userTotalValue[_user] += _purchaseValue;
     }
@@ -440,7 +421,7 @@ contract TokenCrowdSale is
     /**
      * @dev Complete Token Generation Event, allowing initial token claims
      */
-    function completeTGE() external onlyOwner whenSystemNotPaused {
+    function completeTGE() external onlyRole(DEFAULT_ADMIN_ROLE) whenSystemNotPaused {
         require(!tgeCompleted, "TGE already completed");
         require(block.timestamp > presaleEnd, "Presale still active");
         tgeCompleted = true;
@@ -475,7 +456,7 @@ contract TokenCrowdSale is
             PresaleTier storage tier = tiers[tierId];
             uint256 tierTokens = (tierAmounts[tierId] * 10**18) / tier.price;
 
-            uint256 tierClaimable = calculateVestedAmount(
+            uint256 tierClaimable = VestingCalculations.calculateVestedAmount(
                 tierTokens,
                 tier.vestingTGE,
                 tier.vestingMonths,
@@ -529,7 +510,7 @@ contract TokenCrowdSale is
      * @dev Emergency function to recover tokens sent to this contract by mistake
      * @param _token Token address to recover
      */
-    function recoverTokens(ERC20Upgradeable _token) external onlyOwner {
+    function recoverTokens(ERC20Upgradeable _token) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(address(_token) != address(token), "Cannot recover tokens");
         uint256 balance = _token.balanceOf(address(this));
         require(balance > 0, "No tokens to recover");
@@ -537,7 +518,7 @@ contract TokenCrowdSale is
     }
     
     // New function to set tier deadlines
-    function setTierDeadline(uint256 _tier, uint256 _deadline) external onlyOwner {
+    function setTierDeadline(uint256 _tier, uint256 _deadline) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(_tier < tierCount, "Crowdsale: invalid tier");
         require(_deadline > block.timestamp, "Crowdsale: deadline in past");
         tierDeadlines[_tier] = _deadline;
@@ -545,14 +526,14 @@ contract TokenCrowdSale is
     }
 
     // New function to manually advance tier
-    function advanceTier() external onlyOwner {
+    function advanceTier() external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(currentTier < tierCount - 1, "Crowdsale: already at final tier");
         currentTier++;
         emit TierAdvanced(currentTier);
     }
 
     // New function to extend current tier
-    function extendTier(uint256 _newDeadline) external onlyOwner {
+    function extendTier(uint256 _newDeadline) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(_newDeadline > tierDeadlines[currentTier], "Crowdsale: new deadline must be later");
         tierDeadlines[currentTier] = _newDeadline;
         emit TierExtended(currentTier, _newDeadline);
@@ -609,7 +590,7 @@ contract TokenCrowdSale is
     * @dev Set the maximum tokens that can be purchased by a single address
     * @param _maxTokens The maximum number of tokens
     */
-    function setMaxTokensPerAddress(uint96 _maxTokens) external onlyOwner {
+    function setMaxTokensPerAddress(uint96 _maxTokens) external onlyRole(DEFAULT_ADMIN_ROLE){
         require(_maxTokens > 0, "Max tokens must be positive");
         maxTokensPerAddress = _maxTokens;
     }
@@ -625,15 +606,23 @@ contract TokenCrowdSale is
     /**
     * @dev Pause the presale
     */
-    function pausePresale() external onlyEmergency {
-        paused = true;
+    function pausePresale() external onlyRole(Constants.EMERGENCY_ROLE) {
+        _updateEmergencyState(
+            EmergencyState.MINOR_EMERGENCY,
+            true,  // paused
+            inEmergencyRecovery  // maintain current recovery state
+        );
     }
 
     /**
     * @dev Resume the presale
     */
-    function resumePresale() external onlyOwner {
-        paused = false;
+    function resumePresale() external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _updateEmergencyState(
+            EmergencyState.NORMAL,
+            false,  // not paused
+            false   // exit recovery mode
+        );
     }
 
     function configurePurchaseRateLimits(
@@ -648,7 +637,7 @@ contract TokenCrowdSale is
      * @dev Sets the registry contract address
      * @param _registry Address of the registry contract
      */
-    function setRegistry(address _registry) external onlyOwner {
+    function setRegistry(address _registry) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _setRegistry(_registry, Constants.CROWDSALE_NAME);
         emit RegistrySet(_registry);
     }
@@ -657,7 +646,7 @@ contract TokenCrowdSale is
      * @dev Update contract references from registry
      * This ensures contracts always have the latest addresses
      */
-    function updateContractReferences() external onlyAdmin {
+    function updateContractReferences() external onlyRole(Constants.ADMIN_ROLE) {
         require(address(registry) != address(0), "CrowdSale: registry not set");
 
         // Update Token reference
@@ -782,7 +771,7 @@ contract TokenCrowdSale is
         return (nextMonthTimestamp, nextAmount);
     }
 
-    function batchDistributeTokens(address[] calldata _users) external onlyOwner nonReentrant {
+    function batchDistributeTokens(address[] calldata _users) external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant {
         require(tgeCompleted, "TGE not completed yet");
 
         for (uint256 i = 0; i < _users.length; i++) {
@@ -816,9 +805,13 @@ contract TokenCrowdSale is
     * @dev Initiates emergency recovery mode
     * Only callable by emergency admin
     */
-    function initiateEmergencyRecovery() external onlyEmergency {
+    function initiateEmergencyRecovery() external onlyRole(Constants.EMERGENCY_ROLE) {
         require(paused, "CrowdSale: not paused");
-        inEmergencyRecovery = true;
+        _updateEmergencyState(
+            EmergencyState.CRITICAL_EMERGENCY,
+            true,  // paused
+            true   // in recovery mode
+        );
         emit EmergencyRecoveryInitiated(msg.sender, block.timestamp);
     }
 
@@ -826,10 +819,13 @@ contract TokenCrowdSale is
     * @dev Completes emergency recovery mode and resumes normal operations
     * Only callable by admin role
     */
-    function completeEmergencyRecovery() external onlyAdmin {
+    function completeEmergencyRecovery() external onlyRole(Constants.ADMIN_ROLE) {
         require(inEmergencyRecovery, "CrowdSale: not in recovery mode");
-        inEmergencyRecovery = false;
-        paused = false;
+        _updateEmergencyState(
+            EmergencyState.NORMAL,
+            false,  // not paused
+            false   // not in recovery mode
+        );
         emit EmergencyRecoveryCompleted(msg.sender, block.timestamp);
     }
 
@@ -861,14 +857,11 @@ contract TokenCrowdSale is
     /**
     * @dev Declare different levels of emergency based on severity
     */
-    function declareEmergency(EmergencyState _state) external onlyEmergency {
-        emergencyState = _state;
-        paused = (_state != EmergencyState.NORMAL);
+    function declareEmergency(EmergencyState _state) external onlyRole(Constants.EMERGENCY_ROLE) {
+        bool shouldPause = (_state != EmergencyState.NORMAL);
+        bool shouldEnterRecovery = (_state == EmergencyState.CRITICAL_EMERGENCY);
 
-        if (_state == EmergencyState.CRITICAL_EMERGENCY) {
-            inRecoveryMode = true;
-            // Additional critical actions
-        }
+        _updateEmergencyState(_state, shouldPause, shouldEnterRecovery);
 
         emit EmergencyStateChanged(_state);
     }
@@ -876,7 +869,7 @@ contract TokenCrowdSale is
     /**
     * @dev System for multi-signature approval of recovery actions
     */
-    function approveRecovery() external onlyAdmin {
+    function approveRecovery() external onlyRole(Constants.ADMIN_ROLE) {
         require(inRecoveryMode, "CrowdSale: not in recovery mode");
         require(!emergencyRecoveryApprovals[msg.sender], "CrowdSale: already approved");
 
@@ -885,43 +878,6 @@ contract TokenCrowdSale is
         if (countRecoveryApprovals() >= requiredRecoveryApprovals) {
             executeRecovery();
         }
-    }
-
-    // Improved implementation to handle edge cases
-    function calculateVestedAmount(
-        uint256 totalAmount,
-        uint16 tgePercentage,
-        uint16 vestingMonths,
-        uint256 startTime,
-        uint256 currentTime
-    ) internal pure returns (uint256) {
-        // Handle immediate vesting case
-        if (vestingMonths == 0) {
-            return totalAmount;
-        }
-
-        // Calculate TGE amount
-        uint256 tgeAmount = (totalAmount * tgePercentage) / 100;
-
-        // Calculate remaining amount to vest
-        uint256 vestingAmount = totalAmount - tgeAmount;
-
-        // Calculate elapsed time in precise units (seconds)
-        uint256 elapsed = currentTime - startTime;
-        uint256 vestingPeriod = uint256(vestingMonths) * 30 days;
-
-        // If past vesting period, return full amount
-        if (elapsed >= vestingPeriod) {
-            return totalAmount;
-        }
-
-        // Calculate vested portion with higher precision
-        // Use fixed point math with 10^18 precision
-        uint256 precision = 10**18;
-        uint256 vestedPortion = (elapsed * precision) / vestingPeriod;
-        uint256 vestedVestingAmount = (vestingAmount * vestedPortion) / precision;
-
-        return tgeAmount + vestedVestingAmount;
     }
     
     function executeRecovery() internal {
@@ -943,10 +899,12 @@ contract TokenCrowdSale is
     }
 
     // Add helper function to count approvals
-    function countRecoveryApprovals() public view returns (uint256) {
+    function countRecoveryApprovals(AccessControlUpgradeable _accessControl) public view returns (uint256) {
         uint256 count = 0;
+        bytes32 adminRole = Constants.ADMIN_ROLE;
+        
         for (uint i = 0; i < _getAdminCount(); i++) { // Implement _getAdminCount function
-            address admin = getApprover(i);
+            address admin = getRoleMember(adminRole, i);
             if (emergencyRecoveryApprovals[admin]) {
                 count++;
             }
@@ -1022,5 +980,35 @@ contract TokenCrowdSale is
 
     function getRoleMember(bytes32 role, uint256 index) internal view returns (address) {
         return AccessControlUpgradeable.getRoleMember(role, index);
+    }
+
+    /**
+     * @dev Centralizes emergency state management to keep all state variables in sync
+     * @param _state The new emergency state
+     * @param _pauseState Whether to pause the contract
+     * @param _recoveryMode Whether to enter recovery mode
+     */
+    function _updateEmergencyState(
+        EmergencyState _state,
+        bool _pauseState,
+        bool _recoveryMode
+    ) internal {
+        emergencyState = _state;
+
+        // Only change pause state if it differs from current
+        if (paused != _pauseState) {
+            paused = _pauseState;
+            if (_pauseState) {
+                emit EmergencyPaused(msg.sender, block.timestamp);
+            }
+        }
+
+        // Only change recovery mode if it differs from current
+        if (inEmergencyRecovery != _recoveryMode) {
+            inEmergencyRecovery = _recoveryMode;
+            if (_recoveryMode) {
+                emit EmergencyRecoveryInitiated(msg.sender, block.timestamp);
+            }
+        }
     }
 }

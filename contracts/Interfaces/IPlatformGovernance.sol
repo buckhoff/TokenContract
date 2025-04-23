@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.29;
-import {Constants} from "../Constants.sol";
+import {Constants} from "./Libraries/Constants.sol";
 /**
  * @title IPlatformGovernance
  * @dev Interface for the PlatformGovernance contract
@@ -27,6 +27,15 @@ interface IPlatformGovernance {
     );
     event ProposalExecuted(uint256 indexed proposalId);
     event ProposalCanceled(uint256 indexed proposalId);
+    event GovernanceParametersUpdated(
+        uint256 proposalThreshold,
+        uint256 minVotingPeriod,
+        uint256 maxVotingPeriod,
+        uint256 quorumThreshold,
+        uint256 executionDelay,
+        uint256 executionPeriod
+    );
+    event SystemEmergencyTriggered(address indexed triggeredBy, string reason);
     
     /**
      * @dev Update voting power for an address

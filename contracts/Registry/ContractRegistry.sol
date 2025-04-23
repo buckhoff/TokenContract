@@ -4,7 +4,7 @@ pragma solidity ^0.8.29;
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import {Constants} from "../Constants.sol";
+import {Constants} from "./Libraries/Constants.sol";
 
 /**
  * @title ContractRegistry
@@ -37,6 +37,9 @@ contract ContractRegistry is Initializable, AccessControlUpgradeable, Reentrancy
     
     // Registry contract interfaces map (contract name => interface ID)
     mapping(bytes32 => bytes4) private contractInterfaces;
+
+    uint256 public recoveryInitiatedTimestamp;
+    uint256 public recoveryTimeout = 24 hours;
     
     // Events
     event ContractRegistered(bytes32 indexed contractName, address indexed contractAddress, uint256 version);
@@ -94,6 +97,33 @@ contract ContractRegistry is Initializable, AccessControlUpgradeable, Reentrancy
         require(_address != address(0), "ContractRegistry: zero address");
         require(contracts[_name] == address(0), "ContractRegistry: already registered");
 
+        require(_address.code.length > 0, "ContractRegistry: not a contract");
+
+        if (_interfaceId != bytes4(0)) {
+            // Create a minimal ERC165 check
+            bytes4 ERC165_ID = 0x01ffc9a7; // ERC165 interface ID
+
+            // Check if contract supports ERC165 first
+            (bool success, bytes memory result) = _address.staticcall(
+                abi.encodeWithSelector(ERC165_ID, ERC165_ID)
+            );
+
+            bool supportsERC165 = success && result.length >= 32 &&
+                                abi.decode(result, (bool));
+
+            // If contract supports ERC165, check for the specific interface
+            if (supportsERC165) {
+                (success, result) = _address.staticcall(
+                    abi.encodeWithSelector(ERC165_ID, _interfaceId)
+                );
+
+                require(
+                    success && result.length >= 32 && abi.decode(result, (bool)),
+                    "ContractRegistry: interface not supported"
+                );
+            }
+        }
+        
         contracts[_name] = _address;
         contractVersions[_name] = 1;
         contractActive[_name] = true;
@@ -122,7 +152,38 @@ contract ContractRegistry is Initializable, AccessControlUpgradeable, Reentrancy
         require(contracts[_name] != address(0), "ContractRegistry: not registered");
         require(contracts[_name] != _newAddress, "ContractRegistry: same address");
 
+        require(_newAddress.code.length > 0, "ContractRegistry: not a contract");
+        
         address oldAddress = contracts[_name];
+        bytes4 oldInterfaceId = contractInterfaces[_name];
+
+        bytes4 newInterfaceId = (_interfaceId != bytes4(0)) ? _interfaceId : oldInterfaceId;
+
+        if (newInterfaceId != bytes4(0)) {
+            // Create a minimal ERC165 check
+            bytes4 ERC165_ID = 0x01ffc9a7; // ERC165 interface ID
+
+            // Check if contract supports ERC165 first
+            (bool success, bytes memory result) = _newAddress.staticcall(
+                abi.encodeWithSelector(ERC165_ID, ERC165_ID)
+            );
+
+            bool supportsERC165 = success && result.length >= 32 &&
+                                abi.decode(result, (bool));
+
+            // If contract supports ERC165, check for the specific interface
+            if (supportsERC165) {
+                (success, result) = _newAddress.staticcall(
+                    abi.encodeWithSelector(ERC165_ID, newInterfaceId)
+                );
+
+                require(
+                    success && result.length >= 32 && abi.decode(result, (bool)),
+                    "ContractRegistry: interface not supported"
+                );
+            }
+        }
+        
         contracts[_name] = _newAddress;
 
         // Update interface ID if provided
@@ -251,6 +312,13 @@ contract ContractRegistry is Initializable, AccessControlUpgradeable, Reentrancy
     function initiateEmergencyRecovery() external onlyEmergency {
         require(systemPaused, "ContractRegistry: system not paused");
         inEmergencyRecovery = true;
+        recoveryInitiatedTimestamp = block.timestamp;
+
+        // Reset any existing approvals to start fresh
+        for (uint i = 0; i < getRoleMemberCount(Constants.ADMIN_ROLE); i++) {
+            emergencyRecoveryApprovals[getRoleMember(Constants.ADMIN_ROLE, i)] = false;
+        }
+        
         emit EmergencyRecoveryInitiated(msg.sender, block.timestamp);
     }
 
@@ -269,8 +337,15 @@ contract ContractRegistry is Initializable, AccessControlUpgradeable, Reentrancy
 
     function _countRecoveryApprovals() internal view returns (uint256) {
         uint256 count = 0;
-        for (uint i = 0; i < getRoleMemberCount(Constants.ADMIN_ROLE); i++) {
-            if (emergencyRecoveryApprovals[getRoleMember(Constants.ADMIN_ROLE, i)]) {
+        uint256 memberCount = getRoleMemberCount(Constants.ADMIN_ROLE);
+
+        if (block.timestamp > recoveryInitiatedTimestamp + recoveryTimeout) {
+            return 0; // Return 0 if recovery has timed out
+        }
+        
+        for (uint i = 0; i < memberCount; i++) {
+            address admin = getRoleMember(Constants.ADMIN_ROLE, i);
+            if (emergencyRecoveryApprovals[admin]) {
                 count++;
             }
         }
@@ -284,10 +359,16 @@ contract ContractRegistry is Initializable, AccessControlUpgradeable, Reentrancy
     }
 
     function getRoleMemberCount(bytes32 role) internal view returns (uint256) {
-        return _roles[role].members.length();
+        return AccessControlUpgradeable.getRoleMemberCount(role);
     }
 
     function getRoleMember(bytes32 role, uint256 index) internal view returns (address) {
-        return _roles[role].members.at(index);
+        return AccessControlUpgradeable.getRoleMember(role, index);
+    }
+
+    function setRecoveryTimeout(uint256 _timeout) external onlyAdmin {
+        require(_timeout >= 1 hours, "ContractRegistry: timeout too short");
+        require(_timeout <= 7 days, "ContractRegistry: timeout too long");
+        recoveryTimeout = _timeout;
     }
 }

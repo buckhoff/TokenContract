@@ -8,7 +8,7 @@ import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
-import {Constants} from "./Constants.sol";
+import {Constants} from "./Libraries/Constants.sol";
 
 interface IPlatformStabilityFund {
     function getVerifiedPrice() external view returns (uint256);

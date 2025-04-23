@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.29;
-import {Constants} from "../Constants.sol";
+import {Constants} from "./Libraries/Constants.sol";
 /**
  * @title IStabilityFund
  * @dev Interface for the Platform Stability Fund

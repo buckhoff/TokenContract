@@ -8,7 +8,7 @@ import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
-import {Constants} from "./Constants.sol";
+import {Constants} from "./Libraries/Constants.sol";
 
 /**
  * @title TeachToken
@@ -58,26 +58,6 @@ contract TeachToken is
     event EmergencyRecoveryInitiated(address indexed recoveryAdmin, uint256 timestamp);
     event EmergencyRecoveryCompleted(address indexed recoveryAdmin);
     
-    modifier onlyAdmin() {
-        require(hasRole(Constants.ADMIN_ROLE, msg.sender), "TeachCrowdSale: caller is not admin role");
-        _;
-    }
-
-    modifier onlyPauser() {
-        require(hasRole(Constants.PAUSER_ROLE, msg.sender), "TeachCrowdSale: caller is not pauser role");
-        _;
-    }
-
-    modifier onlyMinter() {
-        require(hasRole(Constants.MINTER_ROLE, msg.sender), "TeachCrowdSale: caller is not minter role");
-        _;
-    }
-
-    modifier onlyBurner() {
-        require(hasRole(Constants.BURNER_ROLE, msg.sender), "TeachCrowdSale: caller is not burner role");
-        _;
-    }
-    
     /**
      * @dev Constructor that initializes the token with name, symbol, and roles
      */
@@ -109,7 +89,7 @@ contract TeachToken is
      * @param _registry Address of the registry contract
      */
     function setRegistry(address _registry) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _setRegistry(_registry, keccak256("TEACH_TOKEN"));
+        _setRegistry(_registry, Constants.TOKEN_NAME);
         emit RegistrySet(_registry);
     }
     
@@ -206,7 +186,7 @@ contract TeachToken is
      * Requirements: Caller must have the MINTER_ROLE
      * Total supply must not exceed MAX_SUPPLY
      */
-    function mint(address to, uint256 amount) public onlyMinter {
+    function mint(address to, uint256 amount) public onlyRole(Constants.MINTER_ROLE) {
         require(totalSupply() + amount <= MAX_SUPPLY, "TeachToken: Max supply exceeded");
         _mint(to, amount);
     }
@@ -230,7 +210,7 @@ contract TeachToken is
      * @param from The address to burn tokens from
      * @param amount The amount of tokens to burn
      */
-    function burnFrom(address from, uint256 amount) public override onlyBurner nonReentrant whenSystemNotPaused {
+    function burnFrom(address from, uint256 amount) public override onlyRole(Constants.BURNER_ROLE) nonReentrant whenSystemNotPaused {
         _spendAllowance(from, _msgSender(), amount);
         _burn(from, amount);
 
@@ -388,7 +368,7 @@ contract TeachToken is
         emit EmergencyRecoveryInitiated(msg.sender, block.timestamp);
     }
 
-    function approveRecovery() external onlyAdmin {
+    function approveRecovery() external onlyRole(Constants.ADMIN_ROLE) {
         require(inEmergencyRecovery, "Token: not in recovery mode");
         require(!emergencyRecoveryApprovals[msg.sender], "Token: already approved");
 
@@ -433,13 +413,47 @@ contract TeachToken is
     }
 
     /**
-     * @dev Retrieves the address of the STAKING contract, with fallback mechanisms
+     * @dev Retrieves the address of the PLATFORM STABILITY FUND contract, with fallback mechanisms
      * @return The address of the token contract
      */
     function getStabilityAddressWithFallback() internal returns (address) {
         // First attempt: Try registry lookup
         if (address(registry) != address(0) && !registryOfflineMode) {
-            try registry.getContractAddress(Constants.PLATFORM_STABILITY_FUND) returns (address tokenAddress) {
+            try registry.getContractAddress(Constants.PLATFORM_STABILITY_FUND) returns (address stabilityFundAddress) {
+                if (stabilityFundAddress != address(0)) {
+                    // Update cache with successful lookup
+                    _cachedStabilityFundAddress = stabilityFundAddress;
+                    _lastCacheUpdate = block.timestamp;
+                    return stabilityFundAddress;
+                }
+            } catch {
+                // Registry lookup failed, continue to fallbacks
+            }
+        }
+
+        // Second attempt: Use cached address if available and not too old
+        if (_cachedStabilityFundAddress != address(0) && block.timestamp - _lastCacheUpdate < 1 days) {
+            return _cachedStabilityFundAddress;
+        }
+
+        // Third attempt: Use explicitly set fallback address
+        address fallbackAddress = _fallbackAddresses[Constants.PLATFORM_STABILITY_FUND];
+        if (fallbackAddress != address(0)) {
+            return fallbackAddress;
+        }
+
+        // Final fallback: Use hardcoded address (if appropriate) or revert
+        revert("Stability Fund address unavailable through all fallback mechanisms");
+    }
+
+    /**
+     * @dev Retrieves the address of the Token contract, with fallback mechanisms
+     * @return The address of the token contract
+     */
+    function getTokenAddressWithFallback() internal returns (address) {
+        // First attempt: Try registry lookup
+        if (address(registry) != address(0) && !registryOfflineMode) {
+            try registry.getContractAddress(Constants.TOKEN_NAME) returns (address tokenAddress) {
                 if (tokenAddress != address(0)) {
                     // Update cache with successful lookup
                     _cachedTokenAddress = tokenAddress;
@@ -462,10 +476,11 @@ contract TeachToken is
             return fallbackAddress;
         }
 
-        // Final fallback: Use hardcoded address (if appropriate) or revert
-        revert("Token address unavailable through all fallback mechanisms");
+        // Final fallback: Use this contract's address as last resort
+        // This is safer than reverting when used in critical paths
+        return address(this);
     }
-
+    
     function _countRecoveryApprovals() internal view returns (uint256) {
         uint256 count = 0;
         uint256 memberCount = getRoleMemberCount(Constants.ADMIN_ROLE);
@@ -484,6 +499,49 @@ contract TeachToken is
 
     function getRoleMember(bytes32 role, uint256 index) internal view returns (address) {
         return AccessControlUpgradeable.getRoleMember(role, index);
+    }
+
+    /**
+ * @dev Makes a safe call to another contract through the registry
+ * @param _contractNameBytes32 Name of the contract to call
+ * @param _callData The calldata to send
+ * @return success Whether the call succeeded
+ * @return returnData The data returned by the call
+ */
+    function _safeContractCall(
+        bytes32 _contractNameBytes32,
+        bytes memory _callData
+    ) internal returns (bool success, bytes memory returnData) {
+        require(address(registry) != address(0), "TeachToken: registry not set");
+
+        try registry.isContractActive(_contractNameBytes32) returns (bool isActive) {
+            if (!isActive) {
+                emit BurnNotificationFailed(0, "Contract not active");
+                return (false, bytes(""));
+            }
+
+            try registry.getContractAddress(_contractNameBytes32) returns (address contractAddress) {
+                if (contractAddress == address(0)) {
+                    emit BurnNotificationFailed(0, "Zero contract address");
+                    return (false, bytes(""));
+                }
+
+                // Make the actual call
+                (success, returnData) = contractAddress.call(_callData);
+
+                if (!success) {
+                    emit BurnNotificationFailed(0, "Call reverted");
+                }
+
+                return (success, returnData);
+            } catch {
+                emit BurnNotificationFailed(0, "Failed to get contract address");
+                return (false, bytes(""));
+            }
+        } catch {
+            emit BurnNotificationFailed(0, "Failed to check contract active status");
+            return (false, bytes(""));
+        }
     }
     
 }
