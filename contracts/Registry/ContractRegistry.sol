@@ -5,13 +5,14 @@ import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol"
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {Constants} from "./Libraries/Constants.sol";
+import {IContractRegistry} from "../Interfaces/IContractRegistry.sol";
 
 /**
  * @title ContractRegistry
  * @dev Central registry to manage contract addresses and versions for the TeacherSupport ecosystem
  * This facilitates cross-contract communication and upgradability
  */
-contract ContractRegistry is Initializable, AccessControlUpgradeable, ReentrancyGuardUpgradeable {
+contract ContractRegistry is Initializable, AccessControlUpgradeable, ReentrancyGuardUpgradeable, IContractRegistry {
     
     // Contract names mapped to their addresses
     mapping(bytes32 => address) private contracts;
@@ -40,17 +41,6 @@ contract ContractRegistry is Initializable, AccessControlUpgradeable, Reentrancy
 
     uint256 public recoveryInitiatedTimestamp;
     uint256 public recoveryTimeout = 24 hours;
-    
-    // Events
-    event ContractRegistered(bytes32 indexed contractName, address indexed contractAddress, uint256 version);
-    event ContractUpdated(bytes32 indexed contractName, address indexed oldAddress, address indexed newAddress, uint256 newVersion);
-    event ContractStatusChanged(bytes32 indexed contractName, bool isActive);
-    event SystemPaused(address indexed by);
-    event SystemResumed(address indexed by);
-    event ContractInterfaceRegistered(bytes32 indexed contractName, bytes4 interfaceId);
-    event EmergencyRecoveryInitiated(address indexed recoveryAdmin, uint256 timestamp);
-    event EmergencyRecoveryCompleted(address indexed recoveryAdmin);
-    event RecoveryApprovalsUpdated(uint256 requiredApprovals);
     
     modifier onlyAdmin() {
         require(hasRole(Constants.ADMIN_ROLE, msg.sender), "ContractRegistry: caller is not admin role");

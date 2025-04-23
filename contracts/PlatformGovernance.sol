@@ -9,6 +9,7 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
 import "./Interfaces/IPlatformStaking.sol";
 import {Constants} from "./Libraries/Constants.sol";
+import {IPlatformGovernance} from "./Interfaces/IPlatformGovernance.sol";
 
 /**
  * @title PlatformGovernance
@@ -19,7 +20,8 @@ contract PlatformGovernance is
     OwnableUpgradeable,
     ReentrancyGuardUpgradeable,
     AccessControlUpgradeable,
-    RegistryAwareUpgradeable
+    RegistryAwareUpgradeable,
+    IPlatformGovernance
 {
 
     ERC20Upgradeable internal token;
@@ -63,23 +65,9 @@ contract PlatformGovernance is
     mapping(uint256 => mapping(address => bool)) public guardianCancellations; // Track guardian votes
     mapping(uint256 => uint16) public cancellationVotes; // Count cancellation votes
     
-    // Enum for proposal state
-    enum ProposalState {
-        Pending,    // Proposed but voting not started
-        Active,     // Voting is active
-        Defeated,   // Failed to reach quorum or majority
-        Succeeded,  // Passed but not yet executed
-        Queued,     // Waiting for execution delay
-        Executed,   // Successfully executed
-        Expired     // Execution time passed
-    }
+
     
-    // Enum for vote type
-    enum VoteType {
-        Against,
-        For,
-        Abstain
-    }
+
     
     // Struct to store proposal information
     struct Proposal {
@@ -129,35 +117,6 @@ contract PlatformGovernance is
     address private _cachedTokenAddress;
     address private _cachedStabilityFundAddress;
     uint256 private _lastCacheUpdate;
-    
-    // Events
-    event ProposalCreated(
-        uint256 indexed proposalId,
-        address indexed proposer,
-        address[] targets,
-        string[] signatures,
-        bytes[] calldatas,
-        string description,
-        uint256 startTime,
-        uint256 endTime
-    );
-    event VoteCast(
-        address indexed voter,
-        uint256 indexed proposalId,
-        uint8 voteType,
-        uint256 votes,
-        string reason
-    );
-    event ProposalExecuted(uint256 indexed proposalId);
-    event ProposalCanceled(uint256 indexed proposalId);
-    event GovernanceParametersUpdated(
-        uint256 proposalThreshold,
-        uint256 minVotingPeriod,
-        uint256 maxVotingPeriod,
-        uint256 quorumThreshold,
-        uint256 executionDelay,
-        uint256 executionPeriod
-    );
 
     // Events
     event ParameterChangeScheduled(
@@ -181,8 +140,6 @@ contract PlatformGovernance is
     event ProposalEmergencyCancelled(uint256 indexed proposalId, string reason);
     event RegistrySet(address indexed registry);
     event ContractReferenceUpdated(bytes32 indexed contractName, address indexed oldAddress, address indexed newAddress);
-    event SystemEmergencyTriggered(address indexed triggeredBy, string reason);
-
     event RecoveryRequirementsUpdated(uint16 requiredGuardians, uint16 emergencyPeriod);
     event ProposalCanceledByGovernance(uint256 indexed proposalId, address indexed governor, string reason);
     
@@ -257,13 +214,8 @@ contract PlatformGovernance is
      * @param _votingPeriod Voting period duration in seconds
      * @return uint256 ID of the newly created proposal
      */
-    function createProposal(
-        address[] memory _targets,
-        string[] memory _signatures,
-        bytes[] memory _calldatas,
-        string memory _description,
-        uint256 _votingPeriod
-    ) external whenSystemNotPaused returns (uint256) {
+    function createProposal(address[] memory _targets, string[] memory _signatures, bytes[] memory _calldatas, 
+        string memory _description, uint256 _votingPeriod) external whenSystemNotPaused returns (uint256){
         if (address(registry) != address(0)) {
             try registry.isSystemPaused() returns (bool paused) {
                 require(!paused, "PlatformGovernance: system is paused");
@@ -344,11 +296,7 @@ contract PlatformGovernance is
      * @param _voteType Vote type (0=Against, 1=For, 2=Abstain)
      * @param _reason Reason for the vote
      */
-    function castVote(
-        uint256 _proposalId,
-        uint8 _voteType,
-        string memory _reason
-    ) external nonReentrant {
+    function castVote(uint256 _proposalId, uint8 _voteType, string memory _reason) external nonReentrant {
         require(_voteType <= uint8(VoteType.Abstain), "PlatformGovernance: invalid vote type");
         require(_proposalId < _proposalIdCounter.current(), "PlatformGovernance: proposal doesn't exist");
         require(bytes(_reason).length <= 200, "PlatformGovernance: reason too long");
@@ -537,14 +485,8 @@ contract PlatformGovernance is
      * @param _executionDelay New execution delay
      * @param _executionPeriod New execution period
      */
-    function updateGovernanceParameters(
-        uint256 _proposalThreshold,
-        uint256 _minVotingPeriod,
-        uint256 _maxVotingPeriod,
-        uint256 _quorumThreshold,
-        uint256 _executionDelay,
-        uint256 _executionPeriod
-    ) external onlyAdmin {
+    function updateGovernanceParameters(uint256 _proposalThreshold, uint256 _minVotingPeriod, uint256 _maxVotingPeriod,
+        uint256 _quorumThreshold, uint256 _executionDelay, uint256 _executionPeriod) external onlyAdmin {
         require(_minVotingPeriod <= _maxVotingPeriod, "PlatformGovernance: invalid voting periods");
         require(_quorumThreshold <= 5000, "PlatformGovernance: quorum too high");
         
@@ -608,14 +550,8 @@ contract PlatformGovernance is
     * @param _executionDelay New execution delay
     * @param _executionPeriod New execution period
     */
-    function scheduleParameterChange(
-        uint256 _proposalThreshold,
-        uint256 _minVotingPeriod,
-        uint256 _maxVotingPeriod,
-        uint256 _quorumThreshold,
-        uint256 _executionDelay,
-        uint256 _executionPeriod
-    ) external onlyAdmin {
+    function scheduleParameterChange(uint256 _proposalThreshold, uint256 _minVotingPeriod, uint256 _maxVotingPeriod,
+        uint256 _quorumThreshold, uint256 _executionDelay, uint256 _executionPeriod) external onlyAdmin {
         require(_minVotingPeriod <= _maxVotingPeriod, "PlatformGovernance: invalid voting periods");
         require(_quorumThreshold <= 5000, "PlatformGovernance: quorum too high");
         require(!pendingChange.isPending, "PlatformGovernance: change already pending");
@@ -833,14 +769,7 @@ contract PlatformGovernance is
     
         return power;
     }
-   
-
-	
-	// Add these events
-	event TokenDepositedToTreasury(address token, address depositor, uint256 amount);
-	event TreasuryWithdrawal(address token, address recipient, uint256 amount);
-	event TokenAllowanceChanged(address token, bool allowed);
-	
+    
 	/**
 	* @dev Allow or disallow a token for treasury operations
 	* @param _token Address of the token
@@ -876,11 +805,7 @@ contract PlatformGovernance is
 	* @param _recipient Recipient address
 	* @param _amount Amount to withdraw
 	*/
-	function withdrawFromTreasury(
-		address _token,
-		address _recipient,
-		uint256 _amount
-	) external nonReentrant {
+	function withdrawFromTreasury(address _token, address _recipient, uint256 _amount) external nonReentrant {
 		// Only executable through a proposal
 		require(msg.sender == address(this), "PlatformGovernance: only via proposal");
 		require(_amount > 0, "PlatformGovernance: zero amount");

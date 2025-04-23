@@ -9,6 +9,7 @@ import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol"
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
 import {Constants} from "./Libraries/Constants.sol";
+import {IStabilityFund} from "./Interfaces/IStabilityFund.sol";
 
 /**
  * @title PlatformStabilityFund
@@ -21,7 +22,8 @@ contract PlatformStabilityFund is
     ReentrancyGuardUpgradeable,
     AccessControlUpgradeable,
     RegistryAwareUpgradeable,
-    PausableUpgradeable
+    PausableUpgradeable,
+    IStabilityFund
 {
 
     struct PriceObservation {
@@ -698,14 +700,14 @@ contract PlatformStabilityFund is
     }
 
     /**
- * @dev Updates fee adjustment parameters
- * @param _baseFee Base fee percentage
- * @param _maxFee Maximum fee percentage
- * @param _minFee Minimum fee percentage
- * @param _adjustmentFactor Fee adjustment curve factor
- * @param _dropThreshold Price drop threshold to begin fee adjustment
- * @param _maxDropPercent Price drop percentage for maximum fee reduction
- */
+     * @dev Updates fee adjustment parameters
+     * @param _baseFee Base fee percentage
+     * @param _maxFee Maximum fee percentage
+     * @param _minFee Minimum fee percentage
+     * @param _adjustmentFactor Fee adjustment curve factor
+     * @param _dropThreshold Price drop threshold to begin fee adjustment
+     * @param _maxDropPercent Price drop percentage for maximum fee reduction
+     */
     function updateFeeParameters(
         uint16 _baseFee,
         uint16 _maxFee,
@@ -1265,9 +1267,10 @@ contract PlatformStabilityFund is
     function getRoleMember(bytes32 role, uint256 index) internal view returns (address) {
         return AccessControlUpgradeable.getRoleMember(role, index);
     }
+    
     /**
- * @dev Updates the value mode based on current price compared to baseline
- */
+     * @dev Updates the value mode based on current price compared to baseline
+     */
     function updateValueMode() internal {
         uint256 verifiedPrice = getVerifiedPrice();
 
@@ -1284,12 +1287,12 @@ contract PlatformStabilityFund is
     }
 
     /**
-  * @dev Makes a safe call to another contract through the registry
- * @param _contractNameBytes32 Name of the contract to call
- * @param _callData The calldata to send
- * @return success Whether the call succeeded
- * @return returnData The data returned by the call
- */
+      * @dev Makes a safe call to another contract through the registry
+     * @param _contractNameBytes32 Name of the contract to call
+     * @param _callData The calldata to send
+     * @return success Whether the call succeeded
+     * @return returnData The data returned by the call
+     */
     function _safeContractCall(
         bytes32 _contractNameBytes32,
         bytes memory _callData

@@ -8,6 +8,7 @@ import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol"
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
 import {Constants} from "./Libraries/Constants.sol";
+import {IPlatformStaking} from "./Interfaces/IPlatformStaking.sol";
 
 /**
  * @title TokenStaking
@@ -18,7 +19,8 @@ contract TokenStaking is
     OwnableUpgradeable,
     ReentrancyGuardUpgradeable,
     AccessControlUpgradeable,
-    RegistryAwareUpgradeable
+    RegistryAwareUpgradeable,
+    IPlatformStaking
 {
     
     // Struct for staking pool information
@@ -48,11 +50,7 @@ contract TokenStaking is
         bool isActive;                // Whether school is active
     }
 
-    struct UnstakingRequest {
-        uint96 amount;            // Amount requested to unstake
-        uint96 requestTime;       // Timestamp when unstaking was requested
-        bool claimed;             // Whether the unstaked tokens have been claimed
-    }
+   
 
     ERC20Upgradeable internal token;
     
@@ -263,23 +261,7 @@ contract TokenStaking is
         paused = false;
     }
     
-    /**
-    * @dev Modifier to ensure the contract and system are not paused
-     */
-    modifier whenNotPaused() {
-        // Check local pause state
-        require(!paused, "TokenStaking: paused");
-
-        // Check system pause state if registry is set
-        if (address(registry) != address(0)) {
-            try registry.isSystemPaused() returns (bool systemPaused) {
-                require(!systemPaused, "TokenStaking: system is paused");
-            } catch {
-                // If registry call fails, continue using local pause state
-            }
-        }
-        _;
-    }
+    
     
     /**
      * @dev Creates a new staking pool
@@ -1009,9 +991,9 @@ contract TokenStaking is
     }
 
     /**
- * @dev Retrieves the address of the token contract, with fallback mechanisms
- * @return The address of the token contract
- */
+     * @dev Retrieves the address of the token contract, with fallback mechanisms
+     * @return The address of the token contract
+     */
     function getTokenAddressWithFallback() internal returns (address) {
         // First attempt: Try registry lookup
         if (address(registry) != address(0) && !registryOfflineMode) {

@@ -76,6 +76,8 @@ interface IContractRegistry {
      */
     function getImplementationHistory(bytes32 _name) external view returns (address[] memory);
 
+    function getAllContractNames() external;
+    
     /**
      * @dev Pause the entire system in case of emergency
      */
@@ -129,4 +131,6 @@ interface IContractRegistry {
      * @return Member address
      */
     function getRoleMember(bytes32 role, uint256 index) external view returns (address);
+
+    function setRecoveryTimeout(uint256 _timeout) external;
 }
