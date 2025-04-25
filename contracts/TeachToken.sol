@@ -4,7 +4,6 @@ pragma solidity ^0.8.29;
 import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20BurnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
@@ -18,7 +17,6 @@ contract TeachToken is
     Initializable,
     ERC20Upgradeable,
     ERC20BurnableUpgradeable,
-    PausableUpgradeable,
     AccessControlUpgradeable,
     ReentrancyGuardUpgradeable,
     RegistryAwareUpgradeable
@@ -35,6 +33,7 @@ contract TeachToken is
     // Recovery mechanism for accidentally sent tokens
     mapping(address => bool) public recoveryAllowedTokens;
 
+    bool internal paused;
     bool public inEmergencyRecovery;
     mapping(address => bool) public emergencyRecoveryApprovals;
     uint256 public requiredRecoveryApprovals;
@@ -57,6 +56,21 @@ contract TeachToken is
     event BurnNotificationFailed(uint256 amount, string reason);
     event EmergencyRecoveryInitiated(address indexed recoveryAdmin, uint256 timestamp);
     event EmergencyRecoveryCompleted(address indexed recoveryAdmin);
+
+    modifier whenContractNotPaused() {
+        if (address(registry) != address(0)) {
+            try registry.isSystemPaused() returns (bool systemPaused) {
+                require(!systemPaused, "TeachToken: system is paused");
+            } catch {
+                // If registry call fails, fall back to local pause state
+                require(!paused, "TeachToken: contract is paused");
+            }
+            require(registry.isRegistryOffline() = false, "TeachToken: registry Offline");
+        } else {
+            require(!paused, "TeachToken: contract is paused");
+        }
+        _;
+    }    
     
     /**
      * @dev Constructor that initializes the token with name, symbol, and roles
@@ -71,13 +85,11 @@ contract TeachToken is
     function initialize() initializer public {
         __ERC20_init("TeacherSupport Token", "TEACH");
         __ERC20Burnable_init();
-        __Pausable_init();
         __AccessControl_init();
         __ReentrancyGuard_init();
         
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(Constants.ADMIN_ROLE, msg.sender);
-        _grantRole(Constants.PAUSER_ROLE, msg.sender);
         _grantRole(Constants.MINTER_ROLE, msg.sender);
         _grantRole(Constants.BURNER_ROLE, msg.sender);
         initialDistributionDone = false;
@@ -167,18 +179,37 @@ contract TeachToken is
     
     /**
      * @dev Pauses all token transfers
-     * Requirements: Caller must have the PAUSER_ROLE
+     * Requirements: Caller must have the ADMIN_ROLE
      */
-    function pause() public onlyRole(Constants.PAUSER_ROLE) {
-        _pause();
+    function pause() public {
+        
+        if (address(registry) != address(0) && registry.isContractActive(Constants.TOKEN_NAME)){
+            require(
+                hasRole(Constants.ADMIN_ROLE, msg.sender),
+                "TeachToken: not authorized"
+            );
+            paused=true;
+        }
+        else {
+            require(hasRole(Constants.ADMIN_ROLE, msg.sender), "TeachToken: not authorized");
+        }
     }
 
     /**
      * @dev Unpauses all token transfers
-     * Requirements: Caller must have the PAUSER_ROLE
+     * Requirements: Caller must have the ADMIN_ROLE
      */
-    function unpause() public onlyRole(Constants.PAUSER_ROLE) {
-        _unpause();
+    function unpause() public onlyRole(Constants.EMERGENCY_ROLE) {
+        // Check if system is still paused before unpausing locally
+        if (address(registry) != address(0)) {
+            try registry.isSystemPaused() returns (bool systemPaused) {
+                require(!systemPaused, "TokenStaking: system still paused");
+            } catch {
+                // If registry call fails, proceed with unpause
+            }
+        }
+
+        paused = false;
     }
 
     /**
@@ -195,7 +226,7 @@ contract TeachToken is
     * @dev Override burn function to add stability fund notification
      * @param amount The amount of tokens to burn
      */
-    function burn(uint256 amount) public override nonReentrant whenSystemNotPaused {
+    function burn(uint256 amount) public override nonReentrant whenContractNotPaused {
         super.burn(amount);
 
         // Notify stability fund about the burn if registry is set
@@ -210,7 +241,7 @@ contract TeachToken is
      * @param from The address to burn tokens from
      * @param amount The amount of tokens to burn
      */
-    function burnFrom(address from, uint256 amount) public override onlyRole(Constants.BURNER_ROLE) nonReentrant whenSystemNotPaused {
+    function burnFrom(address from, uint256 amount) public override onlyRole(Constants.BURNER_ROLE) nonReentrant whenContractNotPaused {
         _spendAllowance(from, _msgSender(), amount);
         _burn(from, amount);
 
@@ -298,7 +329,7 @@ contract TeachToken is
      * @dev Hook that is called before any transfer of tokens.
      * Prevents transfers when the contract is paused.
      */
-    function _beforeTokenTransfer(address from, address to, uint256 amount) internal override whenSystemNotPaused
+    function _beforeTokenTransfer(address from, address to, uint256 amount) internal override whenContractNotPaused
     {
         // Also check if system is paused via registry
         if (address(registry) != address(0)) {

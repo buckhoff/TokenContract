@@ -114,6 +114,8 @@ contract PlatformGovernance is
     address private _cachedStabilityFundAddress;
     uint256 private _lastCacheUpdate;
 
+    bool internal paused;
+    
     // Events
     event ParameterChangeScheduled(
         uint256 proposalThreshold,
@@ -138,11 +140,27 @@ contract PlatformGovernance is
     event ContractReferenceUpdated(bytes32 indexed contractName, address indexed oldAddress, address indexed newAddress);
     event RecoveryRequirementsUpdated(uint16 requiredGuardians, uint16 emergencyPeriod);
     event ProposalCanceledByGovernance(uint256 indexed proposalId, address indexed governor, string reason);
+
     
     bool public stakingWeightEnabled;
     uint16 public maxStakingMultiplier; // multiplier scaled by 100 (e.g., 200 = 2x)
     uint16 public maxStakingPeriod; // in days
 
+    modifier whenContractNotPaused() {
+        if (address(registry) != address(0)) {
+            try registry.isSystemPaused() returns (bool systemPaused) {
+                require(!systemPaused, "PlatformGovernance: system is paused");
+            } catch {
+                // If registry call fails, fall back to local pause state
+                require(!paused, "PlatformGovernance: contract is paused");
+            }
+            require(registry.isRegistryOffline() = false, "PlatformGovernance: registry Offline");
+        } else {
+            require(!paused, "PlatformGovernance: contract is paused");
+        }
+        require(!paused, "PlatformGovernance: contract is paused");
+    }
+    
     modifier onlyAdmin() {
         require(hasRole(Constants.ADMIN_ROLE, msg.sender), "PlatformGovernance: caller is not admin role");
         _;
@@ -179,7 +197,6 @@ contract PlatformGovernance is
         uint256 _executionDelay,
         uint256 _executionPeriod
     ) initializer public {
-        
         __Ownable_init(msg.sender);
         __ReentrancyGuard_init();
         __AccessControl_init();
@@ -214,14 +231,7 @@ contract PlatformGovernance is
      * @return uint256 ID of the newly created proposal
      */
     function createProposal(address[] memory _targets, string[] memory _signatures, bytes[] memory _calldatas, 
-        string memory _description, uint256 _votingPeriod) external whenSystemNotPaused returns (uint256){
-        if (address(registry) != address(0)) {
-            try registry.isSystemPaused() returns (bool paused) {
-                require(!paused, "PlatformGovernance: system is paused");
-            } catch {
-                // If registry call fails, continue with the proposal creation
-            }
-        }
+        string memory _description, uint256 _votingPeriod) external whenContractNotPaused returns (uint256){
         
         // Use governance token from registry if available
         ERC20Upgradeable governanceToken = token;
@@ -261,8 +271,8 @@ contract PlatformGovernance is
             }
         }
         
-        uint256 proposalId = _proposalIdCounter.current();
-        _proposalIdCounter.increment();
+        uint256 proposalId = _proposalIdCounter;
+        _proposalIdCounter++;
         
         Proposal storage newProposal = proposals[proposalId];
         newProposal.proposer = msg.sender;
@@ -297,7 +307,7 @@ contract PlatformGovernance is
      */
     function castVote(uint256 _proposalId, uint8 _voteType, string memory _reason) external nonReentrant {
         require(_voteType <= uint8(VoteType.Abstain), "PlatformGovernance: invalid vote type");
-        require(_proposalId < _proposalIdCounter.current(), "PlatformGovernance: proposal doesn't exist");
+        require(_proposalId < _proposalIdCounter, "PlatformGovernance: proposal doesn't exist");
         require(bytes(_reason).length <= 200, "PlatformGovernance: reason too long");
         
         Proposal storage proposal = proposals[_proposalId];
@@ -899,68 +909,6 @@ contract PlatformGovernance is
                 emit ContractReferenceUpdated(Constants.STAKING_NAME, oldStaking, newStaking);
             }
         }
-    }
-
-    /**
-     * @dev Triggers system-wide emergency mode
-     * @param _reason Reason for the emergency
-     */
-    function triggerSystemEmergency(string memory _reason) external onlyEmergency {
-        require(address(registry) != address(0), "PlatformGovernance: registry not set");
-
-        // Pause the registry
-        try registry.pauseSystem() {
-            // Success
-        } catch {
-            // If registry call fails, we still try to notify individual contracts
-        }
-
-        // Notify stability fund
-        if (registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
-            address stabilityFund = registry.getContractAddress(Constants.STABILITY_FUND_NAME);
-            (bool success, ) = stabilityFund.call(
-                abi.encodeWithSignature("emergencyPause()")
-            );
-            // We continue even if the call fails
-        }
-
-        // Notify marketplace
-        if (registry.isContractActive(Constants.MARKETPLACE_NAME)) {
-            address marketplace = registry.getContractAddress(Constants.MARKETPLACE_NAME);
-            (bool success, ) = marketplace.call(
-                abi.encodeWithSignature("pauseMarketplace()")
-            );
-            // We continue even if the call fails
-        }
-
-        // Notify crowdsale
-        if (registry.isContractActive(Constants.CROWDSALE_NAME)) {
-            address crowdsale = registry.getContractAddress(Constants.CROWDSALE_NAME);
-            (bool success, ) = crowdsale.call(
-                abi.encodeWithSignature("pausePresale()")
-            );
-            // We continue even if the call fails
-        }
-
-        // Notify staking
-        if (registry.isContractActive(Constants.STAKING_NAME)) {
-            address staking = registry.getContractAddress(Constants.STAKING_NAME);
-            (bool success, ) = staking.call(
-                abi.encodeWithSignature("pauseStaking()")
-            );
-            // We continue even if the call fails
-        }
-
-        // Notify rewards
-        if (registry.isContractActive(Constants.PLATFORM_REWARD_NAME)) {
-            address rewards = registry.getContractAddress(Constants.PLATFORM_REWARD_NAME);
-            (bool success, ) = rewards.call(
-                abi.encodeWithSignature("pauseRewards()")
-            );
-            // We continue even if the call fails
-        }
-
-        emit SystemEmergencyTriggered(msg.sender, _reason);
     }
 
     // Add emergency recovery for governance operations

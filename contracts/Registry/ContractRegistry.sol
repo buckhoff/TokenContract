@@ -42,6 +42,9 @@ contract ContractRegistry is Initializable, AccessControlUpgradeable, Reentrancy
     uint256 public recoveryInitiatedTimestamp;
     uint256 public recoveryTimeout = 24 hours;
     
+    event SystemHasBeenPaused(byte32 indexed contractName);
+    event SystemEmergencyTriggered(address indexed triggeredBy, string reason);
+    
     modifier onlyAdmin() {
         require(hasRole(Constants.ADMIN_ROLE, msg.sender), "ContractRegistry: caller is not admin role");
         _;
@@ -379,5 +382,63 @@ contract ContractRegistry is Initializable, AccessControlUpgradeable, Reentrancy
         require(_timeout >= 1 hours, "ContractRegistry: timeout too short");
         require(_timeout <= 7 days, "ContractRegistry: timeout too long");
         recoveryTimeout = _timeout;
+    }
+
+    /**
+   * @dev Triggers system-wide emergency mode
+     * @param _reason Reason for the emergency
+     */
+    function triggerSystemEmergency(string memory _reason) external onlyEmergency {
+        
+        // Pause the registry
+        try pauseSystem() {
+            emit SystemHasBeenPaused("Contract Registry");
+        } catch {
+           
+        }
+
+        // Notify stability fund
+        if (isContractActive(Constants.STABILITY_FUND_NAME)) {
+            address stabilityFund = getContractAddress(Constants.STABILITY_FUND_NAME);
+            (bool success, ) = stabilityFund.call(
+                abi.encodeWithSignature("emergencyPause()")
+            );
+            
+        }
+
+        // Notify marketplace
+        if (isContractActive(Constants.MARKETPLACE_NAME)) {
+            address marketplace = getContractAddress(Constants.MARKETPLACE_NAME);
+            (bool success, ) = marketplace.call(
+                abi.encodeWithSignature("pauseMarketplace()")
+            );
+        }
+
+        // Notify crowdsale
+        if (isContractActive(Constants.CROWDSALE_NAME)) {
+            address crowdsale = getContractAddress(Constants.CROWDSALE_NAME);
+            (bool success, ) = crowdsale.call(
+                abi.encodeWithSignature("pausePresale()")
+            );
+        }
+
+        // Notify staking
+        if (isContractActive(Constants.STAKING_NAME)) {
+            address staking = getContractAddress(Constants.STAKING_NAME);
+            (bool success, ) = staking.call(
+                abi.encodeWithSignature("pauseStaking()")
+            );
+            
+        }
+
+        // Notify rewards
+        if (isContractActive(Constants.PLATFORM_REWARD_NAME)) {
+            address rewards = getContractAddress(Constants.PLATFORM_REWARD_NAME);
+            (bool success, ) = rewards.call(
+                abi.encodeWithSignature("pauseRewards()")
+            );
+        }
+
+        emit SystemEmergencyTriggered(msg.sender, _reason);
     }
 }

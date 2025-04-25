@@ -4,7 +4,6 @@ pragma solidity ^0.8.29;
 import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
@@ -22,8 +21,7 @@ interface IPlatformStabilityFund {
 contract PlatformMarketplace is 
     Initializable,
     OwnableUpgradeable, 
-    ReentrancyGuardUpgradeable, 
-    PausableUpgradeable, 
+    ReentrancyGuardUpgradeable,
     AccessControlUpgradeable,
     RegistryAwareUpgradeable
 {
@@ -40,6 +38,8 @@ contract PlatformMarketplace is
     }
 
     ERC20Upgradeable internal token;
+    
+    bool internal paused;
     
     // Resource ID counter
     uint256 private _resourceIdCounter;
@@ -124,8 +124,23 @@ contract PlatformMarketplace is
     modifier onlyEmergency() {
         require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "PlatformMarketplace: caller is not emergency role");
         _;
-    } 
+    }
 
+    modifier whenContractNotPaused() {
+        if (address(registry) != address(0)) {
+            try registry.isSystemPaused() returns (bool systemPaused) {
+                require(!systemPaused, "PlatformMarketplace: system is paused");
+            } catch {
+                // If registry call fails, fall back to local pause state
+                require(!paused, "PlatformMarketplace: contract is paused");
+            }
+            require(registry.isRegistryOffline() = false, "PlatformMarketplace: registry Offline");
+        } else {
+            require(!paused, "PlatformMarketplace: contract is paused");
+        }
+        require(!paused, "PlatformMarketplace: contract is paused");
+    }
+    
     /**
      * @dev Constructor
      */
@@ -144,7 +159,6 @@ contract PlatformMarketplace is
         uint256 _feePercent, 
         address _feeRecipient
     ) initializer public {
-        __Pausable_init();
         __AccessControl_init();
         __ReentrancyGuard_init();
         __Ownable_init(msg.sender); 
@@ -215,7 +229,7 @@ contract PlatformMarketplace is
      * @param _price New price in platform tokens
      * @param _isActive Whether the resource is active and available for purchase
      */
-    function updateResource(uint256 _resourceId, string memory _metadataURI, uint256 _price, bool _isActive) external whenSystemNotPaused nonReentrant {
+    function updateResource(uint256 _resourceId, string memory _metadataURI, uint256 _price, bool _isActive) external whenContractNotPaused nonReentrant {
         Resource storage resource = resources[_resourceId];
         
         require(resource.creator != address(0), "PlatformMarketplace: resource does not exist");
@@ -234,7 +248,7 @@ contract PlatformMarketplace is
      * @dev Purchases a resource using platform tokens
      * @param _resourceId Resource ID to purchase
      */
-    function purchaseResource(uint256 _resourceId) external whenSystemNotPaused nonReentrant {
+    function purchaseResource(uint256 _resourceId) external whenContractNotPaused nonReentrant {
         Resource storage resource = resources[_resourceId];
         
         require(resource.creator != address(0), "PlatformMarketplace: resource does not exist");
@@ -353,7 +367,7 @@ contract PlatformMarketplace is
         return userPurchases[_user][_resourceId];
     }
 
-    // Add pause and unpause functions
+    
     function pauseMarketplace() external {
         // Check if caller is StabilityFund or has EMERGENCY_ROLE
         if (address(registry) != address(0) && registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
@@ -362,14 +376,19 @@ contract PlatformMarketplace is
                 msg.sender == stabilityFund || hasRole(Constants.EMERGENCY_ROLE, msg.sender),
                 "PlatformMarketplace: not authorized"
             );
+            paused =true;
         } else {
             require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "PlatformMarketplace: not authorized");
         }
-        _pause();
+        _;
     }
 
-    function unpauseMarketplace() external onlyAdmin {
-        _unpause();
+    function unpauseMarketplace() external {
+        require(
+            msg.sender == stabilityFund || hasRole(Constants.EMERGENCY_ROLE, msg.sender),
+            "PlatformMarketplace: not authorized"
+        );
+        paused = false;
     }
 
     function setStabilityFund(address _stabilityFund) external onlyAdmin {
@@ -466,7 +485,7 @@ contract PlatformMarketplace is
      * @dev Purchases a subscription for marketplace access
      * @param _isYearly Whether the subscription is yearly or monthly
      */
-    function purchaseSubscription(bool _isYearly) external nonReentrant whenSystemNotPaused {
+    function purchaseSubscription(bool _isYearly) external nonReentrant whenContractNotPaused {
         uint256 duration;
         uint256 fee;
 
@@ -512,7 +531,7 @@ contract PlatformMarketplace is
      * @dev Bulk purchase multiple resources with discount
      * @param _resourceIds Array of resource IDs to purchase
      */
-    function bulkPurchaseResources(uint256[] memory _resourceIds) external nonReentrant whenSystemNotPaused {
+    function bulkPurchaseResources(uint256[] memory _resourceIds) external nonReentrant whenContractNotPaused {
         require(_resourceIds.length > 0, "PlatformMarketplace: empty purchase");
 
         // Calculate total cost and validate resources
@@ -654,7 +673,7 @@ contract PlatformMarketplace is
      * @param _price Price in platform tokens
      * @return resourceId The ID of the newly created resource
      */
-    function createResource(string memory _metadataURI, uint256 _price) external nonReentrant whenSystemNotPaused returns (uint256)
+    function createResource(string memory _metadataURI, uint256 _price) external nonReentrant whenContractNotPaused returns (uint256)
     {
         require(bytes(_metadataURI).length > 0, "PlatformMarketplace: empty metadata URI");
         require(_price > 0, "PlatformMarketplace: zero price");
@@ -679,7 +698,7 @@ contract PlatformMarketplace is
     
     // Add emergency recovery functions
     function initiateEmergencyRecovery() external onlyEmergency {
-        require(paused(), "Marketplace: not paused");
+        require(paused, "Marketplace: not paused");
         inEmergencyRecovery = true;
         emit EmergencyRecoveryInitiated(msg.sender, block.timestamp);
     }
@@ -699,7 +718,7 @@ contract PlatformMarketplace is
 
         if (approvalCount >= requiredRecoveryApprovals) {
             inEmergencyRecovery = false;
-            _unpause();
+            unpauseMarketplace();
             emit EmergencyRecoveryCompleted(msg.sender, block.timestamp);
         }
     }

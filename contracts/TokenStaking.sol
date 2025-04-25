@@ -105,6 +105,21 @@ contract TokenStaking is
         require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "TokenStaking: caller is not emergency role");
         _;
     }
+
+    modifier whenContractNotPaused() {
+        if (address(registry) != address(0)) {
+            try registry.isSystemPaused() returns (bool systemPaused) {
+                require(!systemPaused, "TokenStaking: system is paused");
+            } catch {
+                // If registry call fails, fall back to local pause state
+                require(!paused, "TokenStaking: contract is paused");
+            }
+            require(registry.isRegistryOffline() = false, "TokenStaking: registry Offline");
+        } else {
+            require(!paused, "TokenStaking: contract is paused");
+        }
+        _;
+    }
     
     // Events
     event StakingPoolCreated(uint256 indexed poolId, string name, uint256 rewardRate, uint256 lockDuration);
@@ -134,24 +149,6 @@ contract TokenStaking is
      */
     modifier onlyPlatformManager() {
         require(msg.sender == platformRewardsManager, "TokenStaking: not platform manager");
-        _;
-    }
-
-    /**
-    * @dev Modifier to ensure the contract and system are not paused
-     */
-    modifier whenSystemNotPaused() {
-        // Check local pause state
-        require(!paused, "TokenStaking: system is paused");
-
-        // Check system pause state if registry is set
-        if (address(registry) != address(0)) {
-            try registry.isSystemPaused() returns (bool systemPaused) {
-                require(!systemPaused, "TokenStaking: system is paused");
-            } catch {
-                require(!systemPaused, "TokenStaking: system is paused");
-            }
-        }
         _;
     }
 
@@ -214,7 +211,6 @@ contract TokenStaking is
      * Can be called by emergency role or automatically by StabilityFund
      */
     function pauseStaking() external {
-        // Check if caller is StabilityFund, has EMERGENCY_ROLE, or is the governance contract
         if (address(registry) != address(0)) {
             if (registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
                 address stabilityFund = registry.getContractAddress(Constants.STABILITY_FUND_NAME);
@@ -248,8 +244,7 @@ contract TokenStaking is
     /**
      * @dev Resume staking operations after emergency
      */
-    function unpauseStaking() external onlyAdmin {
-        // Check if system is still paused before unpausing locally
+    function unpauseStaking() external onlyRole(Constants.EMERGENCY_ROLE) {
         if (address(registry) != address(0)) {
             try registry.isSystemPaused() returns (bool systemPaused) {
                 require(!systemPaused, "TokenStaking: system still paused");
@@ -380,7 +375,7 @@ contract TokenStaking is
      * @param _amount Amount of tokens to stake
      * @param _schoolBeneficiary Address of the school to receive 50% of rewards
      */
-    function stake(uint256 _poolId, uint256 _amount, address _schoolBeneficiary) external nonReentrant whenSystemNotPaused {
+    function stake(uint256 _poolId, uint256 _amount, address _schoolBeneficiary) external nonReentrant whenContractNotPaused {
         require(_poolId < stakingPools.length, "TokenStaking: invalid pool ID");
         require(_amount > 0, "TokenStaking: zero amount");
 
@@ -435,7 +430,7 @@ contract TokenStaking is
      * @param _poolId ID of the pool to unstake from
      * @param _amount Amount of tokens to unstake
      */
-    function unstake(uint256 _poolId, uint256 _amount) external nonReentrant whenSystemNotPaused {
+    function unstake(uint256 _poolId, uint256 _amount) external nonReentrant whenContractNotPaused {
         require(_poolId < stakingPools.length, "TokenStaking: invalid pool ID");
         require(_amount > 0, "TokenStaking: zero amount");
         

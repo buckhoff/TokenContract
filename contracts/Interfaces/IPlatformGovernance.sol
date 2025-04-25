@@ -53,7 +53,7 @@ interface IPlatformGovernance {
         uint256 executionDelay,
         uint256 executionPeriod
     );
-    event SystemEmergencyTriggered(address indexed triggeredBy, string reason);
+    
     
     /**
      * @dev Update voting power for an address

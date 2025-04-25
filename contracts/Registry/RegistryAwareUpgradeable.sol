@@ -32,9 +32,9 @@ abstract contract RegistryAwareUpgradeable is Initializable, AccessControlUpgrad
     event RegistryOfflineModeDisabled();
     event RegistryCallFailed(string action, string reason);
     
-    /**
+   /* *//**
      * @dev Modifier to check if the system is not paused
-     */
+     *//*
     modifier whenSystemNotPaused() {
         if (address(registry) != address(0) && !registryOfflineMode) {
             try registry.isSystemPaused() returns (bool paused) {
@@ -48,7 +48,7 @@ abstract contract RegistryAwareUpgradeable is Initializable, AccessControlUpgrad
             }
         }
         _;
-    }
+    }*/
     
     /**
      * @dev Modifier to check if the caller is a specific contract from registry
@@ -205,6 +205,11 @@ abstract contract RegistryAwareUpgradeable is Initializable, AccessControlUpgrad
     function enableRegistryOfflineMode() external onlyRole(Constants.ADMIN_ROLE) {
         registryOfflineMode = true;
         emit RegistryOfflineModeEnabled();
+    }
+
+    function isRegistryOffline() external onlyRole(Constants.ADMIN_ROLE) view returns (bool _isOffline)  {
+        _isOffline = registryOfflineMode;
+        return _isOffline;
     }
 
     function disableRegistryOfflineMode() external onlyRole(Constants.ADMIN_ROLE) {

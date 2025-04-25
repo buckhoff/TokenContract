@@ -4,7 +4,6 @@ pragma solidity ^0.8.19;
 import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
@@ -18,7 +17,6 @@ contract TeacherReward is
     Initializable,
     OwnableUpgradeable,
     ReentrancyGuardUpgradeable,
-    PausableUpgradeable,
     AccessControlUpgradeable,
     RegistryAwareUpgradeable
 {
@@ -57,6 +55,8 @@ contract TeacherReward is
         uint256 rewardAmount;
         bool repeatable;
     }
+    
+    bool internal paused;
     
     // Mapping from teacher address to Teacher struct
     mapping(address => Teacher) public teachers;
@@ -110,6 +110,21 @@ contract TeacherReward is
     event AchievementAwarded(address indexed teacher, uint256 indexed achievementId, uint256 count);
     event PeerReviewSubmitted(address indexed teacher, address indexed reviewer, uint256 score);
 
+    modifier whenContractNotPaused() {
+        if (address(registry) != address(0)) {
+            try registry.isSystemPaused() returns (bool systemPaused) {
+                require(!systemPaused, "TeacherReward: system is paused");
+            } catch {
+                // If registry call fails, fall back to local pause state
+                require(!paused, "TeacherReward: contract is paused");
+            }
+            require(registry.isRegistryOffline() = false, "TeacherReward: registry Offline");
+        } else {
+            require(!paused, "TeacherReward: contract is paused");
+        }
+        require(!paused, "TeacherReward: contract is paused");
+    }
+    
     modifier onlyAdmin() {
         require(hasRole(Constants.ADMIN_ROLE, msg.sender), "TeacherReward: caller is not admin role");
         _;
@@ -157,7 +172,6 @@ contract TeacherReward is
 
         __Ownable_init(msg.sender);
         __ReentrancyGuard_init();
-        __Pausable_init();
         __AccessControl_init();
         
         token = ERC20Upgradeable(_token);
@@ -212,7 +226,7 @@ contract TeacherReward is
     /**
      * @dev Allows teachers to register in the reward system
      */
-    function registerAsTeacher() external whenSystemNotPaused {
+    function registerAsTeacher() external whenContractNotPaused {
         require(!teachers[msg.sender].isRegistered, "TeacherReward: already registered");
         
         teachers[msg.sender] = Teacher({
@@ -246,7 +260,7 @@ contract TeacherReward is
      * @param _teacher Address of the teacher
      * @param _newReputation New reputation score (1-200)
      */
-    function updateReputation(address _teacher, uint256 _newReputation) external whenSystemNotPaused onlyVerifier {
+    function updateReputation(address _teacher, uint256 _newReputation) external whenContractNotPaused onlyVerifier {
         require(teachers[_teacher].isRegistered, "TeacherReward: teacher not registered");
         require(_newReputation >= 1 && _newReputation <= 200, "TeacherReward: invalid reputation range");
         
@@ -306,7 +320,7 @@ contract TeacherReward is
     /**
      * @dev Teachers claim their pending rewards
      */
-    function claimReward() external onlyTeacher nonReentrant whenSystemNotPaused {
+    function claimReward() external onlyTeacher nonReentrant whenContractNotPaused{
         uint256 pendingReward = calculatePendingReward(msg.sender);
         require(pendingReward > 0, "TeacherReward: no rewards to claim");
         
@@ -327,7 +341,7 @@ contract TeacherReward is
      * @dev Adds funds to the reward pool
      * @param _amount Amount of tokens to add to the reward pool
      */
-    function increaseRewardPool(uint256 _amount) external whenSystemNotPaused {
+    function increaseRewardPool(uint256 _amount) external whenContractNotPaused {
         require(_amount > 0, "TeacherReward: zero amount");
         
         // Transfer tokens from caller to contract
@@ -439,24 +453,63 @@ contract TeacherReward is
                         hasRole(Constants.EMERGENCY_ROLE, msg.sender),
                         "TeacherReward: not authorized"
                     );
+                    paused = true;
                 } else {
                     require(
                         msg.sender == stabilityFund ||
                         hasRole(Constants.EMERGENCY_ROLE, msg.sender),
                         "TeacherReward: not authorized"
                     );
+                    paused = true;
                 }
             } else {
                 require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "TeacherReward: not authorized");
+                _;
             }
         } else {
             require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "TeacherReward: not authorized");
+            _;
         }
-        _pause();
+        _;
     }
 
-    function unpauseRewards() external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _unpause();
+    function unpauseRewards() external onlyRole(Constants.EMERGENCY_ROLE) {
+        if (address(registry) != address(0)) {
+            try registry.isSystemPaused() returns (bool systemPaused) {
+                require(!systemPaused, "TokenStaking: system still paused");
+            } catch {
+                // If registry call fails, proceed with unpause
+            }
+            
+        if (registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
+            address stabilityFund = registry.getContractAddress(Constants.STABILITY_FUND_NAME);
+
+            if (registry.isContractActive(Constants.GOVERNANCE_NAME)) {
+                address governance = registry.getContractAddress(Constants.GOVERNANCE_NAME);
+
+                require(
+                    msg.sender == stabilityFund ||
+                    msg.sender == governance ||
+                    hasRole(Constants.EMERGENCY_ROLE, msg.sender),
+                    "TeacherReward: not authorized"
+                );
+                paused = false;
+            } else {
+                require(
+                    msg.sender == stabilityFund ||
+                    hasRole(Constants.EMERGENCY_ROLE, msg.sender),
+                    "TeacherReward: not authorized"
+                );
+                paused = false;
+            }
+            } else {
+                require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "TeacherReward: not authorized");
+                _;
+            }
+        } else {
+            require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "TeacherReward: not authorized");
+            _;
+        }
     }
 
     /**
@@ -534,7 +587,7 @@ contract TeacherReward is
      * @param _score Review score (1-5)
      * @param _comment Review comment
      */
-    function submitPeerReview(address _teacher, uint256 _score, string memory _comment) external whenSystemNotPaused {
+    function submitPeerReview(address _teacher, uint256 _score, string memory _comment) external whenContractNotPaused{
         require(_teacher != address(0), "TeacherReward: zero address");
         require(_teacher != msg.sender, "TeacherReward: cannot review self");
         require(teachers[_teacher].isRegistered, "TeacherReward: teacher not registered");
@@ -645,7 +698,7 @@ contract TeacherReward is
         address _teacher,
         bool _resourceCreated,
         uint256 _saleCount
-    ) external whenSystemNotPaused {
+    ) external whenContractNotPaused{
         // Check if caller is the marketplace contract
         if (address(registry) != address(0) && registry.isContractActive(Constants.MARKETPLACE_NAME)) {
             address marketplace = registry.getContractAddress(Constants.MARKETPLACE_NAME);

@@ -57,7 +57,7 @@ contract PlatformStabilityFund is
     uint256 public totalStabilized;            // Total value stabilized (in stable coins)
 
     // Platform state
-    bool public paused;
+    bool internal paused;
     uint16 public criticalReserveThreshold;    // percentage of min reserve ratio (e.g. 120 = 120% of min)
     address public emergencyAdmin;             // additional address that can trigger circuit breaker
 
@@ -162,18 +162,19 @@ contract PlatformStabilityFund is
         _;
     }
     
-    modifier whenSystemNotPaused() {
+    modifier whenContractNotPaused() {
         if (address(registry) != address(0)) {
             try registry.isSystemPaused() returns (bool systemPaused) {
                 require(!systemPaused, "PlatformStabilityFund: system is paused");
             } catch {
                 // If registry call fails, fall back to local pause state
-                require(!systemPaused, "PlatformStabilityFund: system is paused");
+                require(!paused, "PlatformStabilityFund: contract is paused");
             }
+                require(registry.isRegistryOffline() = false, "PlatformStabilityFund: registry Offline");
         } else {
-            require(!paused, "PlatformStabilityFund: system is paused");
+            require(!paused, "PlatformStabilityFund: contract is paused");
         }
-        _;
+        require(!paused, "PlatformStabilityFund: contract is paused");
     }
 
     modifier flashLoanGuard(uint256 _amount) {
@@ -240,7 +241,6 @@ contract PlatformStabilityFund is
         uint256 _lowValueFeePercent,
         uint256 _valueThreshold
     ) initializer public {
-        __Pausable_init();
         __AccessControl_init();
         __ReentrancyGuard_init();
         __Ownable_init(msg.sender);
@@ -412,7 +412,7 @@ contract PlatformStabilityFund is
         address _project,
         uint256 _tokenAmount,
         uint256 _minReturn
-    ) external onlyAdmin nonReentrant whenSystemNotPaused flashLoanGuard(_tokenAmount) returns (uint256 stableAmount) {
+    ) external onlyAdmin nonReentrant whenContractNotPaused flashLoanGuard(_tokenAmount) returns (uint256 stableAmount) {
         require(_project != address(0), "PlatformStabilityFund: zero project address");
         require(_tokenAmount > 0, "PlatformStabilityFund: zero amount");
 

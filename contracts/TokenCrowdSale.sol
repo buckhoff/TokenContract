@@ -160,22 +160,21 @@ contract TokenCrowdSale is
         _;
     }
 
-/*    modifier whenSystemNotPaused() {
+    modifier whenContractNotPaused() {
         if (address(registry) != address(0)) {
-            try registry.isSystemPaused() returns (bool _paused) {
-                require(!_paused, "CrowdSale: system is paused");
+            try registry.isSystemPaused() returns (bool systemPaused) {
+                require(!systemPaused, "TokenCrowdSale: system is paused");
             } catch {
-                require(!_paused, "CrowdSale: system is paused");
+                // If registry call fails, fall back to local pause state
+                require(!paused, "TokenCrowdSale: contract is paused");
             }
-        }else {
-            require(!paused, "CrowdSale: system is paused");
+            require(registry.isRegistryOffline() = false, "TokenCrowdSale: registry Offline");
+        } else {
+            require(!paused, "TokenCrowdSale: contract is paused");
         }
         _;
-    }*/
+    }
     
-    /**
-     * @dev Constructor
-     */
     constructor(){
         _disableInitializers();
     }
@@ -318,7 +317,7 @@ contract TokenCrowdSale is
         address _user,
         uint256 _tokenAmount,
         uint256 _purchaseValue
-    ) external onlyRole(Constants.RECORDER_ROLE) whenSystemNotPaused {
+    ) external onlyRole(Constants.RECORDER_ROLE) whenContractNotPaused {
         userTotalTokens[_user] += _tokenAmount;
         userTotalValue[_user] += _purchaseValue;
     }
@@ -360,7 +359,7 @@ contract TokenCrowdSale is
      * @param _tierId Tier to purchase from
      * @param _usdAmount USD amount to spend (scaled by 1e6)
      */
-    function purchase(uint256 _tierId, uint256 _usdAmount) external nonReentrant whenSystemNotPaused purchaseRateLimit(_usdAmount) {
+    function purchase(uint256 _tierId, uint256 _usdAmount) external nonReentrant whenContractNotPaused purchaseRateLimit(_usdAmount) {
         require(block.timestamp >= presaleStart && block.timestamp <= presaleEnd, "Presale not active");
         require(_tierId < tiers.length, "Invalid tier ID");
         PresaleTier storage tier = tiers[_tierId];
@@ -421,7 +420,7 @@ contract TokenCrowdSale is
     /**
      * @dev Complete Token Generation Event, allowing initial token claims
      */
-    function completeTGE() external onlyRole(DEFAULT_ADMIN_ROLE) whenSystemNotPaused {
+    function completeTGE() external onlyRole(DEFAULT_ADMIN_ROLE) whenContractNotPaused {
         require(!tgeCompleted, "TGE already completed");
         require(block.timestamp > presaleEnd, "Presale still active");
         tgeCompleted = true;
@@ -485,7 +484,7 @@ contract TokenCrowdSale is
     /**
      * @dev Withdraw available tokens based on vesting schedule
      */
-    function withdrawTokens() external nonReentrant whenSystemNotPaused{
+    function withdrawTokens() external nonReentrant whenContractNotPaused{
         require(tgeCompleted, "TGE not completed yet");
 
         uint256 claimable = claimableTokens(msg.sender);
