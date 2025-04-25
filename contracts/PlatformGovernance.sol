@@ -158,7 +158,14 @@ contract PlatformGovernance is
     }
     
     /**
-     * @dev Constructor sets the token address and governance parameters
+     * @dev Constructor
+     */
+    constructor(){
+        _disableInitializers();
+    }
+    
+    /**
+     * @dev Initializer sets the token address and governance parameters
      * @param _token Address of the platform token contract
      * @param _proposalThreshold Voting power needed to create a proposal
      * @param _minVotingPeriod Minimum voting period in seconds
@@ -167,10 +174,6 @@ contract PlatformGovernance is
      * @param _executionDelay Time delay before execution in seconds
      * @param _executionPeriod Execution time window in seconds
      */
-    constructor(){
-        _disableInitializers();
-    }
-
     function initialize(
         address _token,
         uint256 _proposalThreshold,
@@ -624,7 +627,7 @@ contract PlatformGovernance is
         emit ParameterChangeCancelled();
     }
 
-    // Replace your existing updateGovernanceParameters function with this:
+   
     /**
     * @dev Schedules a governance parameter update (replaces immediate update)
     */
@@ -636,7 +639,6 @@ contract PlatformGovernance is
         uint256 _executionDelay,
         uint256 _executionPeriod
     ) external onlyAdmin {
-        // Simply call the schedule function
         scheduleParameterChange(
             _proposalThreshold,
             _minVotingPeriod,
@@ -789,7 +791,7 @@ contract PlatformGovernance is
 		require(_amount > 0, "PlatformGovernance: zero amount");
 		require(allowedTokens[_token], "PlatformGovernance: token not allowed");
 		
-		IERC20 token = ERC20Upgradeable(_token);
+		token = ERC20Upgradeable(_token);
 		require(token.transferFrom(msg.sender, address(this), _amount), "PlatformGovernance: transfer failed");
 		
 		if (_token == address(token)) {
@@ -812,7 +814,7 @@ contract PlatformGovernance is
 		require(_recipient != address(0), "PlatformGovernance: zero recipient");
 		require(allowedTokens[_token], "PlatformGovernance: token not allowed");
 		
-		IERC20 token = ERC20Upgradeable(_token);
+		token = ERC20Upgradeable(_token);
 		if (_token == address(token)) {
 			require(_amount <= treasuryBalance, "PlatformGovernance: insufficient treasury");
 			treasuryBalance -= uint96(_amount);

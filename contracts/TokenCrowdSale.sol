@@ -162,8 +162,8 @@ contract TokenCrowdSale is
 
     modifier whenSystemNotPaused() {
         if (address(registry) != address(0)) {
-            try registry.isSystemPaused() returns (bool paused) {
-                require(!paused, "CrowdSale: system is paused");
+            try registry.isSystemPaused() returns (bool _paused) {
+                require(!_paused, "CrowdSale: system is paused");
             } catch {
                 // If registry call fails, continue execution
             }
@@ -172,9 +172,7 @@ contract TokenCrowdSale is
     }
     
     /**
-     * @dev Constructor to initialize the presale contract
-     * @param _paymentToken Address of the payment token (USDC)
-     * @param _treasury Address to receive presale funds
+     * @dev Constructor
      */
     constructor(){
         _disableInitializers();
@@ -325,7 +323,7 @@ contract TokenCrowdSale is
     
     /**
      * @dev Set the token address after deployment
-     * @param _Token Address of the ERC20 token contract
+     * @param _token Address of the ERC20 token contract
      */
     function setSaleToken(ERC20Upgradeable _token) external onlyOwner {
         require(address(token) == address(0), "Token already set");
@@ -693,7 +691,7 @@ contract TokenCrowdSale is
         address stabilityFund = registry.getContractAddress(Constants.STABILITY_FUND_NAME);
 
         // Call the recordTokenPurchase function in StabilityFund
-        (bool success, ) = stabilityFund.call(
+        success = stabilityFund.call(
             abi.encodeWithSignature(
                 "recordTokenPurchase(address,uint256,uint256)",
                 _user,

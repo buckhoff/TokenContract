@@ -385,7 +385,6 @@ contract TokenStaking is
         require(_amount > 0, "TokenStaking: zero amount");
 
         // Get token from registry if available
-        ERC20Upgradeable token = token;
         if (address(registry) != address(0) && registry.isContractActive(Constants.TOKEN_NAME)) {
             token = ERC20Upgradeable(registry.getContractAddress(Constants.TOKEN_NAME));
         }
@@ -468,7 +467,6 @@ contract TokenStaking is
         }
 
         // Get token from registry if available
-        ERC20Upgradeable token = token;
         if (address(registry) != address(0) && registry.isContractActive(Constants.TOKEN_NAME)) {
             token = ERC20Upgradeable(registry.getContractAddress(Constants.TOKEN_NAME));
         }
@@ -820,7 +818,7 @@ contract TokenStaking is
     function recoverTokens(address _token, uint256 _amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(_token != address(token), "TokenStaking: cannot recover staking token");
 
-        ERC20Upgradeable token = ERC20Upgradeable(_token);
+        token = ERC20Upgradeable(_token);
         require(token.transfer(owner(), _amount), "TokenStaking: transfer failed");
     }
 

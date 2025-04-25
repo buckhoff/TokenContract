@@ -127,17 +127,17 @@ contract PlatformMarketplace is
     } 
 
     /**
-     * @dev Constructor sets the token address, fee percentage, and fee recipient
-     * @param _token Address of the platform token contract
-     * @param _feePercent Platform fee percentage (e.g., 5% = 500)
-     * @param _feeRecipient Address to receive platform fees
+     * @dev Constructor
      */
     constructor(){
        _disableInitializers();
     }
 
     /**
-    * @dev Initializes the contract replacing the constructor
+     * @dev Initializes the contract replacing the constructor
+     * @param _token Address of the platform token contract
+     * @param _feePercent Platform fee percentage (e.g., 5% = 500)
+     * @param _feeRecipient Address to receive platform fees
      */
     function initialize(
         address _token, 
@@ -202,7 +202,7 @@ contract PlatformMarketplace is
 
         // Update StabilityFund reference for price oracle
         if (registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
-            address stabilityFund = registry.getContractAddress(Constants.STABILITY_FUND_NAME);
+            stabilityFund = registry.getContractAddress(Constants.STABILITY_FUND_NAME);
             // No need to store this reference as we'll fetch it when needed
             emit ContractReferenceUpdated(Constants.STABILITY_FUND_NAME, address(0), stabilityFund);
         }
@@ -385,7 +385,7 @@ contract PlatformMarketplace is
     function pauseMarketplace() external {
         // Check if caller is StabilityFund or has EMERGENCY_ROLE
         if (address(registry) != address(0) && registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
-            address stabilityFund = registry.getContractAddress(Constants.STABILITY_FUND_NAME);
+            stabilityFund = registry.getContractAddress(Constants.STABILITY_FUND_NAME);
             require(
                 msg.sender == stabilityFund || hasRole(Constants.EMERGENCY_ROLE, msg.sender),
                 "PlatformMarketplace: not authorized"
@@ -418,7 +418,7 @@ contract PlatformMarketplace is
     function shareFeeWithStabilityFund(uint256 _fee) external {
         require(msg.sender == address(this), "PlatformMarketplace: unauthorized");
 
-        address stabilityFund = registry.getContractAddress(Constants.STABILITY_FUND_NAME);
+        stabilityFund = registry.getContractAddress(Constants.STABILITY_FUND_NAME);
 
         // Calculate portion to share (e.g., 20% of fee)
         uint256 portionToShare = (_fee * 2000) / 10000;
@@ -746,9 +746,9 @@ contract PlatformMarketplace is
                 }
             } catch {}
 
-            try registry.getContractAddress(Constants.STABILITY_FUND_NAME) returns (address stabilityFund) {
-                if (stabilityFund != address(0)) {
-                    _cachedStabilityFundAddress = stabilityFund;
+            try registry.getContractAddress(Constants.STABILITY_FUND_NAME) returns (address _stabilityFund) {
+                if (_stabilityFund != address(0)) {
+                    _cachedStabilityFundAddress = _stabilityFund;
                 }
             } catch {}
 

@@ -4,7 +4,7 @@ pragma solidity ^0.8.29;
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
-import {Constants} from "./Libraries/Constants.sol";
+import {Constants} from "../Libraries/Constants.sol";
 import {IContractRegistry} from "../Interfaces/IContractRegistry.sol";
 
 /**

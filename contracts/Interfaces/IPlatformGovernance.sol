@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.29;
-import {Constants} from "./Libraries/Constants.sol";
+import {Constants} from "../Libraries/Constants.sol";
 /**
  * @title IPlatformGovernance
  * @dev Interface for the PlatformGovernance contract

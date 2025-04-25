@@ -213,7 +213,14 @@ contract PlatformStabilityFund is
     }
     
     /**
-     * @dev Constructor sets initial parameters and token addresses
+     * @dev Constructor
+     */
+    constructor(){
+        _disableInitializers();
+    }
+
+    /**
+     * @dev Initializes the contract replacing the constructor
      * @param _token Address of the ERC20 token
      * @param _stableCoin Address of the stable coin for reserves
      * @param _priceOracle Address authorized to update price
@@ -223,13 +230,6 @@ contract PlatformStabilityFund is
      * @param _platformFeePercent Regular platform fee percentage
      * @param _lowValueFeePercent Reduced fee during low token value
      * @param _valueThreshold Threshold for low value detection
-     */
-    constructor(){
-        _disableInitializers();
-    }
-
-    /**
-    * @dev Initializes the contract replacing the constructor
      */
     function initialize(  
         address _token,

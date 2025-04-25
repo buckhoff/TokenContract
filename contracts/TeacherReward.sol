@@ -116,12 +116,7 @@ contract TeacherReward is
     }
     
     /**
-     * @dev Constructor sets the token address and initial reward parameters
-     * @param _teachToken Address of the TEACH token contract
-     * @param _baseRewardRate Base tokens per day for verified teachers
-     * @param _reputationMultiplier Reputation impact on rewards (100 = 1x)
-     * @param _maxDailyReward Maximum rewards claimable per day
-     * @param _minimumClaimPeriod Minimum time between claims in seconds
+     * @dev Constructor
      */
     constructor(){
         _disableInitializers();
@@ -145,7 +140,7 @@ contract TeacherReward is
 
     /**
      * @dev Initializes the contract with initial parameters
-     * @param _teachToken Address of the TEACH token contract
+     * @param _token Address of the platform token contract
      * @param _baseRewardRate Base tokens per day for verified teachers
      * @param _reputationMultiplier Reputation impact on rewards (100 = 1x)
      * @param _maxDailyReward Maximum rewards claimable per day
@@ -519,7 +514,6 @@ contract TeacherReward is
             rewardPool -= achievement.rewardAmount;
 
             // Get token from registry if available
-            ERC20Upgradeable token = token;
             if (address(registry) != address(0) && registry.isContractActive(Constants.TOKEN_NAME)) {
                 token = ERC20Upgradeable(registry.getContractAddress(Constants.TOKEN_NAME));
             }

@@ -352,7 +352,7 @@ contract TeachToken is
         require(amount > 0, "TeachToken: Zero amount");
         require(recoveryAllowedTokens[tokenAddress], "TeachToken: Token recovery not allowed");
 
-        ERC20Upgradeable token = ERC20Upgradeable(tokenAddress);
+        token = ERC20Upgradeable(tokenAddress);
         require(token.balanceOf(address(this)) >= amount, "TeachToken: Insufficient balance");
 
         bool success = token.transfer(msg.sender, amount);
