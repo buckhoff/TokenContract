@@ -200,8 +200,7 @@ interface IPlatformGovernance {
     * @dev Cancels a scheduled parameter change
     */
     function cancelParameterChange() external;
-
-    // Replace your existing updateGovernanceParameters function with this:
+    
     /**
     * @dev Schedules a governance parameter update (replaces immediate update)
     */

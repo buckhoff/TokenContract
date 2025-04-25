@@ -510,44 +510,6 @@ contract PlatformGovernance is
     }
 
     /**
-    * @dev Schedules a governance parameter change with timelock
-    * @param _proposalThreshold New proposal threshold
-    * @param _minVotingPeriod New minimum voting period
-    * @param _maxVotingPeriod New maximum voting period
-    * @param _quorumThreshold New quorum threshold
-    * @param _executionDelay New execution delay
-    * @param _executionPeriod New execution period
-    */
-    function scheduleParameterChange(uint256 _proposalThreshold, uint256 _minVotingPeriod, uint256 _maxVotingPeriod,
-        uint256 _quorumThreshold, uint256 _executionDelay, uint256 _executionPeriod) external onlyAdmin {
-        require(_minVotingPeriod <= _maxVotingPeriod, "PlatformGovernance: invalid voting periods");
-        require(_quorumThreshold <= 5000, "PlatformGovernance: quorum too high");
-        require(!pendingChange.isPending, "PlatformGovernance: change already pending");
-
-        // Schedule the change
-        pendingChange = PendingParameterChange({
-            proposalThreshold: _proposalThreshold,
-            minVotingPeriod: _minVotingPeriod,
-            maxVotingPeriod: _maxVotingPeriod,
-            quorumThreshold: _quorumThreshold,
-            executionDelay: _executionDelay,
-            executionPeriod: _executionPeriod,
-            scheduledTime: block.timestamp,
-            isPending: true
-        });
-
-        emit ParameterChangeScheduled(
-            _proposalThreshold,
-            _minVotingPeriod,
-            _maxVotingPeriod,
-            _quorumThreshold,
-            _executionDelay,
-            _executionPeriod,
-            block.timestamp
-        );
-    }
-
-    /**
     * @dev Executes a scheduled parameter change after timelock delay
     */
     function executeParameterChange() external {
@@ -604,13 +566,30 @@ contract PlatformGovernance is
         uint256 _executionDelay,
         uint256 _executionPeriod
     ) external onlyAdmin {
-        scheduleParameterChange(
+        require(_minVotingPeriod <= _maxVotingPeriod, "PlatformGovernance: invalid voting periods");
+        require(_quorumThreshold <= 5000, "PlatformGovernance: quorum too high");
+        require(!pendingChange.isPending, "PlatformGovernance: change already pending");
+
+        // Schedule the change
+        pendingChange = PendingParameterChange({
+            proposalThreshold: _proposalThreshold,
+            minVotingPeriod: _minVotingPeriod,
+            maxVotingPeriod: _maxVotingPeriod,
+            quorumThreshold: _quorumThreshold,
+            executionDelay: _executionDelay,
+            executionPeriod: _executionPeriod,
+            scheduledTime: block.timestamp,
+            isPending: true
+        });
+
+        emit ParameterChangeScheduled(
             _proposalThreshold,
             _minVotingPeriod,
             _maxVotingPeriod,
             _quorumThreshold,
             _executionDelay,
-            _executionPeriod
+            _executionPeriod,
+            block.timestamp
         );
     }
 
