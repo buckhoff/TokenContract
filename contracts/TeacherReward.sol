@@ -212,7 +212,7 @@ contract TeacherReward is
     /**
      * @dev Allows teachers to register in the reward system
      */
-    function registerAsTeacher() external whenNotPaused {
+    function registerAsTeacher() external whenSystemNotPaused {
         require(!teachers[msg.sender].isRegistered, "TeacherReward: already registered");
         
         teachers[msg.sender] = Teacher({
@@ -246,7 +246,7 @@ contract TeacherReward is
      * @param _teacher Address of the teacher
      * @param _newReputation New reputation score (1-200)
      */
-    function updateReputation(address _teacher, uint256 _newReputation) external whenNotPaused onlyVerifier {
+    function updateReputation(address _teacher, uint256 _newReputation) external whenSystemNotPaused onlyVerifier {
         require(teachers[_teacher].isRegistered, "TeacherReward: teacher not registered");
         require(_newReputation >= 1 && _newReputation <= 200, "TeacherReward: invalid reputation range");
         
@@ -306,7 +306,7 @@ contract TeacherReward is
     /**
      * @dev Teachers claim their pending rewards
      */
-    function claimReward() external onlyTeacher nonReentrant whenNotPaused {
+    function claimReward() external onlyTeacher nonReentrant whenSystemNotPaused {
         uint256 pendingReward = calculatePendingReward(msg.sender);
         require(pendingReward > 0, "TeacherReward: no rewards to claim");
         
@@ -327,7 +327,7 @@ contract TeacherReward is
      * @dev Adds funds to the reward pool
      * @param _amount Amount of tokens to add to the reward pool
      */
-    function increaseRewardPool(uint256 _amount) external whenNotPaused {
+    function increaseRewardPool(uint256 _amount) external whenSystemNotPaused {
         require(_amount > 0, "TeacherReward: zero amount");
         
         // Transfer tokens from caller to contract
@@ -534,7 +534,7 @@ contract TeacherReward is
      * @param _score Review score (1-5)
      * @param _comment Review comment
      */
-    function submitPeerReview(address _teacher, uint256 _score, string memory _comment) external whenNotPaused {
+    function submitPeerReview(address _teacher, uint256 _score, string memory _comment) external whenSystemNotPaused {
         require(_teacher != address(0), "TeacherReward: zero address");
         require(_teacher != msg.sender, "TeacherReward: cannot review self");
         require(teachers[_teacher].isRegistered, "TeacherReward: teacher not registered");
@@ -645,7 +645,7 @@ contract TeacherReward is
         address _teacher,
         bool _resourceCreated,
         uint256 _saleCount
-    ) external whenNotPaused {
+    ) external whenSystemNotPaused {
         // Check if caller is the marketplace contract
         if (address(registry) != address(0) && registry.isContractActive(Constants.MARKETPLACE_NAME)) {
             address marketplace = registry.getContractAddress(Constants.MARKETPLACE_NAME);

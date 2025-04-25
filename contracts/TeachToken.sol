@@ -298,7 +298,7 @@ contract TeachToken is
      * @dev Hook that is called before any transfer of tokens.
      * Prevents transfers when the contract is paused.
      */
-    function _beforeTokenTransfer(address from, address to, uint256 amount) internal override whenNotPaused
+    function _beforeTokenTransfer(address from, address to, uint256 amount) internal override whenSystemNotPaused
     {
         // Also check if system is paused via registry
         if (address(registry) != address(0)) {
@@ -489,13 +489,13 @@ contract TeachToken is
         return AccessControlUpgradeable.getRoleMember(role, index);
     }
 
-    /**
+  /*  *//**
  * @dev Makes a safe call to another contract through the registry
  * @param _contractNameBytes32 Name of the contract to call
  * @param _callData The calldata to send
  * @return success Whether the call succeeded
  * @return returnData The data returned by the call
- */
+ *//*
     function _safeContractCall(
         bytes32 _contractNameBytes32,
         bytes memory _callData
@@ -530,6 +530,6 @@ contract TeachToken is
             emit BurnNotificationFailed(0, "Failed to check contract active status");
             return (false, bytes(""));
         }
-    }
+    }*/
     
 }

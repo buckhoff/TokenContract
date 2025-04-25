@@ -4,7 +4,6 @@ pragma solidity ^0.8.29;
 import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
@@ -22,7 +21,6 @@ contract PlatformStabilityFund is
     ReentrancyGuardUpgradeable,
     AccessControlUpgradeable,
     RegistryAwareUpgradeable,
-    PausableUpgradeable,
     IStabilityFund
 {
 
@@ -164,16 +162,16 @@ contract PlatformStabilityFund is
         _;
     }
     
-    modifier whenNotPaused() {
+    modifier whenSystemNotPaused() {
         if (address(registry) != address(0)) {
             try registry.isSystemPaused() returns (bool systemPaused) {
                 require(!systemPaused, "PlatformStabilityFund: system is paused");
             } catch {
                 // If registry call fails, fall back to local pause state
-                require(!paused, "PlatformStabilityFund: paused");
+                require(!systemPaused, "PlatformStabilityFund: system is paused");
             }
         } else {
-            require(!paused, "PlatformStabilityFund: paused");
+            require(!paused, "PlatformStabilityFund: system is paused");
         }
         _;
     }
@@ -293,22 +291,6 @@ contract PlatformStabilityFund is
     function setRegistry(address _registry) external onlyAdmin {
         _setRegistry(_registry, Constants.PLATFORM_STABILITY_FUND);
         emit RegistrySet(_registry);
-    }
-    
-    /**
-     * @dev Updates the token price and checks if low value mode should be activated
-     * @param _newPrice New token price in stable coin units (scaled by 1e18)
-     */
-    function updatePrice(uint256 _newPrice) external onlyPriceOracle {
-        require(_newPrice > 0, "PlatformStabilityFund: zero price");
-
-        emit PriceUpdated(tokenPrice, _newPrice);
-
-        tokenPrice = _newPrice;
-        lastPriceUpdateTime = block.timestamp;
-
-        // Check if we should enter or exit low value mode
-        updateValueMode();
     }
 
     /**
@@ -430,7 +412,7 @@ contract PlatformStabilityFund is
         address _project,
         uint256 _tokenAmount,
         uint256 _minReturn
-    ) external onlyAdmin nonReentrant whenNotPaused flashLoanGuard(_tokenAmount) returns (uint256 stableAmount) {
+    ) external onlyAdmin nonReentrant whenSystemNotPaused flashLoanGuard(_tokenAmount) returns (uint256 stableAmount) {
         require(_project != address(0), "PlatformStabilityFund: zero project address");
         require(_tokenAmount > 0, "PlatformStabilityFund: zero amount");
 
@@ -1292,7 +1274,7 @@ contract PlatformStabilityFund is
      * @param _callData The calldata to send
      * @return success Whether the call succeeded
      * @return returnData The data returned by the call
-     */
+     *//*
     function _safeContractCall(
         bytes32 _contractNameBytes32,
         bytes memory _callData
@@ -1331,5 +1313,5 @@ contract PlatformStabilityFund is
             emit ContractCallFailed(_contractNameBytes32, bytes4(_callData), "Failed to check contract active status");
             return (false, bytes(""));
         }
-    }
+    }*/
 }

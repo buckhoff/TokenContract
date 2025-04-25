@@ -136,6 +136,7 @@ contract ContractRegistry is Initializable, AccessControlUpgradeable, Reentrancy
      * @dev Update an existing contract address
      * @param _name Name of the contract (as bytes32)
      * @param _newAddress New address of the contract
+     * @param _interfaceId set the new interface ID
      */
     function updateContract(bytes32 _name, address _newAddress, bytes4 _interfaceId) external onlyUpgrader nonReentrant {
         require(_newAddress != address(0), "ContractRegistry: zero address");
@@ -205,7 +206,7 @@ contract ContractRegistry is Initializable, AccessControlUpgradeable, Reentrancy
     /**
      * @dev Get the address of a registered contract
      * @param _name Name of the contract (as bytes32)
-     * @return Address of the contract
+     * @return address of the contract
      */
     function getContractAddress(bytes32 _name) external view returns (address) {
         require(contracts[_name] != address(0), "ContractRegistry: not registered");
@@ -289,7 +290,7 @@ contract ContractRegistry is Initializable, AccessControlUpgradeable, Reentrancy
     /**
      * @dev Utility to convert string to bytes32
      * @param _str String to convert
-     * @return bytes32 representation
+     * @return result bytes32
      */
     function stringToBytes32(string memory _str) external pure returns (bytes32 result) {
         require(bytes(_str).length <= 32, "ContractRegistry: string too long");
@@ -341,21 +342,39 @@ contract ContractRegistry is Initializable, AccessControlUpgradeable, Reentrancy
         }
         return count;
     }
-
+    /**
+     * @dev Utility to set the recovery approvals
+     * @param _required approvals needed
+     */
     function setRequiredRecoveryApprovals(uint256 _required) external onlyAdmin {
         require(_required > 0, "ContractRegistry: invalid approval count");
         requiredRecoveryApprovals = _required;
         emit RecoveryApprovalsUpdated(_required);
     }
 
+    /**
+     * @dev get count of role members
+     * @param role item to count
+     * @return Count of members
+     */
     function getRoleMemberCount(bytes32 role) internal view returns (uint256) {
         return AccessControlUpgradeable.getRoleMemberCount(role);
     }
 
+    /**
+     * @dev Utility to get member of role
+     * @param role to look into
+     * @param index of user
+     * @return address of the user
+     */
     function getRoleMember(bytes32 role, uint256 index) internal view returns (address) {
         return AccessControlUpgradeable.getRoleMember(role, index);
     }
 
+    /**
+     * @dev Set timeout
+     * @param _timeout new timeout to set
+     */
     function setRecoveryTimeout(uint256 _timeout) external onlyAdmin {
         require(_timeout >= 1 hours, "ContractRegistry: timeout too short");
         require(_timeout <= 7 days, "ContractRegistry: timeout too long");

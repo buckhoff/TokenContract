@@ -9,7 +9,7 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
 import "./Interfaces/IPlatformStaking.sol";
 import {Constants} from "./Libraries/Constants.sol";
-import {IPlatformGovernance} from "./Interfaces/IPlatformGovernance.sol";
+import "./Interfaces/IPlatformGovernance.sol";
 
 /**
  * @title PlatformGovernance

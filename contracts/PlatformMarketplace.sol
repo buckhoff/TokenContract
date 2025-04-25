@@ -209,41 +209,13 @@ contract PlatformMarketplace is
     }
     
     /**
-     * @dev Creates a new educational resource
-     * @param _metadataURI IPFS URI containing resource metadata
-     * @param _price Price in platform tokens
-     * @return resourceId The ID of the newly created resource
-     */
-    function createResource(string memory _metadataURI, uint256 _price) external nonReentrant whenNotPaused returns (uint256) {
-        require(bytes(_metadataURI).length > 0, "PlatformMarketplace: empty metadata URI");
-        require(_price > 0, "PlatformMarketplace: zero price");
-        
-        uint256 resourceId = _resourceIdCounter;
-        _resourceIdCounter++;
-        
-        resources[resourceId] = Resource({
-            creator: msg.sender,
-            metadataURI: _metadataURI,
-            price: _price,
-            isActive: true,
-            sales: 0,
-            rating: 0,
-            ratingCount: 0
-        });
-        
-        emit ResourceCreated(resourceId, msg.sender, _metadataURI, _price);
-        
-        return resourceId;
-    }
-    
-    /**
      * @dev Updates an existing resource
      * @param _resourceId Resource ID to update
      * @param _metadataURI New IPFS URI containing resource metadata
      * @param _price New price in platform tokens
      * @param _isActive Whether the resource is active and available for purchase
      */
-    function updateResource(uint256 _resourceId, string memory _metadataURI, uint256 _price, bool _isActive) external whenNotPaused nonReentrant {
+    function updateResource(uint256 _resourceId, string memory _metadataURI, uint256 _price, bool _isActive) external whenSystemNotPaused nonReentrant {
         Resource storage resource = resources[_resourceId];
         
         require(resource.creator != address(0), "PlatformMarketplace: resource does not exist");
@@ -262,7 +234,7 @@ contract PlatformMarketplace is
      * @dev Purchases a resource using platform tokens
      * @param _resourceId Resource ID to purchase
      */
-    function purchaseResource(uint256 _resourceId) external whenSystemNotPaused whenNotPaused nonReentrant {
+    function purchaseResource(uint256 _resourceId) external whenSystemNotPaused nonReentrant {
         Resource storage resource = resources[_resourceId];
         
         require(resource.creator != address(0), "PlatformMarketplace: resource does not exist");
@@ -404,11 +376,6 @@ contract PlatformMarketplace is
         require(_stabilityFund != address(0), "PlatformMarketplace: zero address");
         stabilityFund = IPlatformStabilityFund(_stabilityFund);
     }
-    
-    function calculateTokenPrice(uint256 _stableAmount) public view returns (uint256) {
-        uint256 verifiedPrice = stabilityFund.getVerifiedPrice();
-        return (_stableAmount * 1e18) / verifiedPrice;
-    }
 
     /**
      * @dev Share a portion of the platform fee with the stability fund
@@ -499,7 +466,7 @@ contract PlatformMarketplace is
      * @dev Purchases a subscription for marketplace access
      * @param _isYearly Whether the subscription is yearly or monthly
      */
-    function purchaseSubscription(bool _isYearly) external nonReentrant whenSystemNotPaused whenNotPaused {
+    function purchaseSubscription(bool _isYearly) external nonReentrant whenSystemNotPaused {
         uint256 duration;
         uint256 fee;
 
@@ -545,7 +512,7 @@ contract PlatformMarketplace is
      * @dev Bulk purchase multiple resources with discount
      * @param _resourceIds Array of resource IDs to purchase
      */
-    function bulkPurchaseResources(uint256[] memory _resourceIds) external nonReentrant whenSystemNotPaused whenNotPaused {
+    function bulkPurchaseResources(uint256[] memory _resourceIds) external nonReentrant whenSystemNotPaused {
         require(_resourceIds.length > 0, "PlatformMarketplace: empty purchase");
 
         // Calculate total cost and validate resources
@@ -646,7 +613,7 @@ contract PlatformMarketplace is
             }));
         }
     }
-
+    
     /**
      * @dev Calculates token price from the stability fund (if available)
      * @param _stableAmount Amount in stable coins
@@ -687,7 +654,7 @@ contract PlatformMarketplace is
      * @param _price Price in platform tokens
      * @return resourceId The ID of the newly created resource
      */
-    function createResource(string memory _metadataURI, uint256 _price) external nonReentrant whenSystemNotPaused whenNotPaused returns (uint256)
+    function createResource(string memory _metadataURI, uint256 _price) external nonReentrant whenSystemNotPaused returns (uint256)
     {
         require(bytes(_metadataURI).length > 0, "PlatformMarketplace: empty metadata URI");
         require(_price > 0, "PlatformMarketplace: zero price");
@@ -709,7 +676,7 @@ contract PlatformMarketplace is
 
         return resourceId;
     }
-
+    
     // Add emergency recovery functions
     function initiateEmergencyRecovery() external onlyEmergency {
         require(paused(), "Marketplace: not paused");

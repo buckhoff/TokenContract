@@ -160,16 +160,18 @@ contract TokenCrowdSale is
         _;
     }
 
-    modifier whenSystemNotPaused() {
+/*    modifier whenSystemNotPaused() {
         if (address(registry) != address(0)) {
             try registry.isSystemPaused() returns (bool _paused) {
                 require(!_paused, "CrowdSale: system is paused");
             } catch {
-                // If registry call fails, continue execution
+                require(!_paused, "CrowdSale: system is paused");
             }
+        }else {
+            require(!paused, "CrowdSale: system is paused");
         }
         _;
-    }
+    }*/
     
     /**
      * @dev Constructor
@@ -358,7 +360,7 @@ contract TokenCrowdSale is
      * @param _tierId Tier to purchase from
      * @param _usdAmount USD amount to spend (scaled by 1e6)
      */
-    function purchase(uint256 _tierId, uint256 _usdAmount) external nonReentrant whenSystemNotPaused whenNotPaused purchaseRateLimit(_usdAmount) {
+    function purchase(uint256 _tierId, uint256 _usdAmount) external nonReentrant whenSystemNotPaused purchaseRateLimit(_usdAmount) {
         require(block.timestamp >= presaleStart && block.timestamp <= presaleEnd, "Presale not active");
         require(_tierId < tiers.length, "Invalid tier ID");
         PresaleTier storage tier = tiers[_tierId];
@@ -591,14 +593,6 @@ contract TokenCrowdSale is
     function setMaxTokensPerAddress(uint96 _maxTokens) external onlyRole(DEFAULT_ADMIN_ROLE){
         require(_maxTokens > 0, "Max tokens must be positive");
         maxTokensPerAddress = _maxTokens;
-    }
-
-    /**
-    * @dev Modifier to check if presale is not paused
-    */
-    modifier whenNotPaused() {
-        require(!paused, "Presale is paused");
-        _;
     }
 
     /**

@@ -140,16 +140,16 @@ contract TokenStaking is
     /**
     * @dev Modifier to ensure the contract and system are not paused
      */
-    modifier whenNotPaused() {
+    modifier whenSystemNotPaused() {
         // Check local pause state
-        require(!paused, "TokenStaking: paused");
+        require(!paused, "TokenStaking: system is paused");
 
         // Check system pause state if registry is set
         if (address(registry) != address(0)) {
             try registry.isSystemPaused() returns (bool systemPaused) {
                 require(!systemPaused, "TokenStaking: system is paused");
             } catch {
-                // If registry call fails, continue using local pause state
+                require(!systemPaused, "TokenStaking: system is paused");
             }
         }
         _;
@@ -380,7 +380,7 @@ contract TokenStaking is
      * @param _amount Amount of tokens to stake
      * @param _schoolBeneficiary Address of the school to receive 50% of rewards
      */
-    function stake(uint256 _poolId, uint256 _amount, address _schoolBeneficiary) external nonReentrant whenNotPaused {
+    function stake(uint256 _poolId, uint256 _amount, address _schoolBeneficiary) external nonReentrant whenSystemNotPaused {
         require(_poolId < stakingPools.length, "TokenStaking: invalid pool ID");
         require(_amount > 0, "TokenStaking: zero amount");
 
@@ -435,7 +435,7 @@ contract TokenStaking is
      * @param _poolId ID of the pool to unstake from
      * @param _amount Amount of tokens to unstake
      */
-    function unstake(uint256 _poolId, uint256 _amount) external nonReentrant whenNotPaused {
+    function unstake(uint256 _poolId, uint256 _amount) external nonReentrant whenSystemNotPaused {
         require(_poolId < stakingPools.length, "TokenStaking: invalid pool ID");
         require(_amount > 0, "TokenStaking: zero amount");
         

@@ -29,7 +29,7 @@ interface IStabilityFund {
     * @dev Updates the current fee based on token price relative to baseline
     * @return uint16 The newly calculated fee percentage
     */
-    function updateCurrentFee() public returns (uint16);
+    function updateCurrentFee() external returns (uint16);
 
     /**
      * @dev Adds stable coins to the stability reserves
@@ -60,7 +60,7 @@ interface IStabilityFund {
      * @dev Get the reserve ratio health of the fund
      * @return uint256 Current reserve ratio (10000 = 100%)
      */
-    function getReserveRatioHealth() public view returns (uint256);
+    function getReserveRatioHealth() external view returns (uint256);
 
 /**
      * @dev Simulates a token conversion without executing it
@@ -102,7 +102,7 @@ interface IStabilityFund {
     * @dev Checks if reserve ratio is below critical threshold and pauses if needed
     * @return bool True if paused due to critical reserve ratio
     */
-    function checkAndPauseIfCritical() public returns (bool);
+    function checkAndPauseIfCritical() external returns (bool);
 
     /**
     * @dev Manually pauses the fund in case of emergency
@@ -147,7 +147,7 @@ interface IStabilityFund {
     /**
      * @dev Get the verified token price
      */
-    function getVerifiedPrice() public view returns (uint256);
+    function getVerifiedPrice() external view returns (uint256);
 
     /**
      * @dev Process platform fees and add portion to reserves
@@ -175,12 +175,10 @@ interface IStabilityFund {
     
     function removeSuspiciousAddressCooldown(address _address) external;
     
-    function recordPriceObservation() public;
-
-    function updatePrice(uint256 _newPrice) external;
+    function recordPriceObservation() external;
 
     // Calculate time-weighted average price
-    function calculateTWAP() public view returns (uint256);
+    function calculateTWAP() external view returns (uint256);
 
     // Configure TWAP parameters
     function configureTWAP(uint256 _windowSize, uint256 _interval, bool _enabled) external;
@@ -194,7 +192,7 @@ interface IStabilityFund {
     * @dev Get the Token address from the registry
      * @return Address of the Token contract
      */
-    function getPlatformTokenFromRegistry() public view returns (address);
+    function getPlatformTokenFromRegistry() external view returns (address);
 
     /**
     * @dev Update contract references from registry
@@ -211,5 +209,5 @@ interface IStabilityFund {
     function approveRecovery() external;
     
     // Update cache periodically
-    function updateAddressCache() public;
+    function updateAddressCache() external;
 }

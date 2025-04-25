@@ -75,8 +75,12 @@ interface IContractRegistry {
      * @return Array of historical addresses
      */
     function getImplementationHistory(bytes32 _name) external view returns (address[] memory);
-
-    function getAllContractNames() external;
+    
+    /**
+     * @dev Get all the registered contracts
+     * @return memory data
+     */
+    function getAllContractNames() external view returns (bytes32[]);
     
     /**
      * @dev Pause the entire system in case of emergency
@@ -97,7 +101,7 @@ interface IContractRegistry {
     /**
      * @dev Convert string to bytes32
      * @param _str String to convert
-     * @return bytes32 representation
+     * @return result bytes32 representation
      */
     function stringToBytes32(string memory _str) external pure returns (bytes32 result);
 
@@ -118,19 +122,8 @@ interface IContractRegistry {
     function setRequiredRecoveryApprovals(uint256 _required) external;
 
     /**
-     * @dev Gets role member count
-     * @param role Role identifier
-     * @return Number of members with the role
+     * @dev Set recovery timeout time
+     * @param _timeout value for timeout
      */
-    function getRoleMemberCount(bytes32 role) external view returns (uint256);
-
-    /**
-     * @dev Gets member address for a role at specific index
-     * @param role Role identifier
-     * @param index Index in the role member array
-     * @return Member address
-     */
-    function getRoleMember(bytes32 role, uint256 index) external view returns (address);
-
     function setRecoveryTimeout(uint256 _timeout) external;
 }

@@ -62,12 +62,6 @@ interface IPlatformGovernance {
     function updateVotingPower(address _voter) external;
 
     /**
-     * @dev Trigger system-wide emergency mode
-     * @param _reason Reason for the emergency
-     */
-    function triggerSystemEmergency(string calldata _reason) external;
-
-    /**
      * @dev Create a proposal
      * @param _targets Contract addresses to call
      * @param _signatures Function signatures to call
@@ -178,19 +172,7 @@ interface IPlatformGovernance {
      * @return uint256[] Array of active proposal IDs
      */
     function getActiveProposals() external view returns (uint256[] memory);
-
-    /**
-    * @dev Schedules a governance parameter change with timelock
-    * @param _proposalThreshold New proposal threshold
-    * @param _minVotingPeriod New minimum voting period
-    * @param _maxVotingPeriod New maximum voting period
-    * @param _quorumThreshold New quorum threshold
-    * @param _executionDelay New execution delay
-    * @param _executionPeriod New execution period
-    */
-    function scheduleParameterChange(uint256 _proposalThreshold, uint256 _minVotingPeriod, uint256 _maxVotingPeriod,
-        uint256 _quorumThreshold, uint256 _executionDelay, uint256 _executionPeriod) external;
-
+    
     /**
     * @dev Executes a scheduled parameter change after timelock delay
     */
@@ -201,12 +183,6 @@ interface IPlatformGovernance {
     */
     function cancelParameterChange() external;
     
-    /**
-    * @dev Schedules a governance parameter update (replaces immediate update)
-    */
-    function updateGovernanceParameters(uint256 _proposalThreshold, uint256 _minVotingPeriod, uint256 _maxVotingPeriod,
-        uint256 _quorumThreshold, uint256 _executionDelay, uint256 _executionPeriod) external;
-
     /**
    * @dev Sets the staking contract for calculating weighted votes
     * @param _stakingContract Address of the staking contract
@@ -220,7 +196,7 @@ interface IPlatformGovernance {
     * @param _voter Address to calculate voting power for
     * @return power The weighted voting power
      */
-    function getVotingPower(address _voter) public view returns (uint256 power);
+    function getVotingPower(address _voter) external view returns (uint256 power);
 
     /**
 	* @dev Allow or disallow a token for treasury operations
@@ -293,7 +269,7 @@ interface IPlatformGovernance {
      * @dev Triggers system-wide emergency mode
      * @param _reason Reason for the emergency
      */
-    function triggerSystemEmergency(string memory _reason) external;
+    function triggerSystemEmergency(string calldata _reason) external;
 
     // Add emergency recovery for governance operations
     function setRecoveryRequirements(uint16 _requiredGuardians, uint16 _emergencyPeriod) external;
@@ -302,5 +278,5 @@ interface IPlatformGovernance {
     function cancelProposalByGovernance(uint256 _proposalId, string calldata _reason) external;
 
     // Update cache periodically
-    function updateAddressCache() public;
+    function updateAddressCache() external;
 }

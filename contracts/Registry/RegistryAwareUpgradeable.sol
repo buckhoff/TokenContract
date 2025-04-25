@@ -49,11 +49,7 @@ abstract contract RegistryAwareUpgradeable is Initializable, AccessControlUpgrad
         }
         _;
     }
-
-    modifier onlyAdmin() {
-        require(hasRole(Constants.ADMIN_ROLE, msg.sender), "RegistryAware: caller is not admin role");
-        _;
-    }
+    
     /**
      * @dev Modifier to check if the caller is a specific contract from registry
      * @param _contractNameBytes32 Name of the expected contract
@@ -201,17 +197,17 @@ abstract contract RegistryAwareUpgradeable is Initializable, AccessControlUpgrad
         }
     }
 
-    function setFallbackAddress(bytes32 _contractName, address _fallbackAddress) external onlyAdmin {
+    function setFallbackAddress(bytes32 _contractName, address _fallbackAddress) external onlyRole(Constants.ADMIN_ROLE) {
         _fallbackAddresses[_contractName] = _fallbackAddress;
         emit FallbackAddressSet(_contractName, _fallbackAddress);
     }
 
-    function enableRegistryOfflineMode() external onlyAdmin {
+    function enableRegistryOfflineMode() external onlyRole(Constants.ADMIN_ROLE) {
         registryOfflineMode = true;
         emit RegistryOfflineModeEnabled();
     }
 
-    function disableRegistryOfflineMode() external onlyAdmin {
+    function disableRegistryOfflineMode() external onlyRole(Constants.ADMIN_ROLE) {
         // Verify registry is accessible before disabling offline mode
         require(address(registry) != address(0), "RegistryAware: registry not set");
         

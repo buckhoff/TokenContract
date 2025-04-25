@@ -143,7 +143,7 @@ interface IPlatformStaking {
      * @param _user Address of the user
      * @return uint256 Pending reward amount (total, before 50/50 split)
      */
-    function calculatePendingReward(uint256 _poolId, address _user) public view returns (uint256);
+    function calculatePendingReward(uint256 _poolId, address _user) external view returns (uint256);
 
     /**
      * @dev Adjusts reward rates based on total staked tokens and available rewards
