@@ -146,7 +146,7 @@ contract PlatformGovernance is
     uint16 public maxStakingMultiplier; // multiplier scaled by 100 (e.g., 200 = 2x)
     uint16 public maxStakingPeriod; // in days
 
-    modifier whenContractNotPaused() {
+    modifier whenContractNotPaused(){
         if (address(registry) != address(0)) {
             try registry.isSystemPaused() returns (bool systemPaused) {
                 require(!systemPaused, "PlatformGovernance: system is paused");
@@ -159,6 +159,7 @@ contract PlatformGovernance is
             require(!paused, "PlatformGovernance: contract is paused");
         }
         require(!paused, "PlatformGovernance: contract is paused");
+        _;
     }
     
     modifier onlyAdmin() {

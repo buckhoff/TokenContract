@@ -57,7 +57,7 @@ contract TeachToken is
     event EmergencyRecoveryInitiated(address indexed recoveryAdmin, uint256 timestamp);
     event EmergencyRecoveryCompleted(address indexed recoveryAdmin);
 
-    modifier whenContractNotPaused() {
+    modifier whenContractNotPaused(){
         if (address(registry) != address(0)) {
             try registry.isSystemPaused() returns (bool systemPaused) {
                 require(!systemPaused, "TeachToken: system is paused");
@@ -333,14 +333,15 @@ contract TeachToken is
     {
         // Also check if system is paused via registry
         if (address(registry) != address(0)) {
-            try registry.isSystemPaused() returns (bool paused) {
-                require(!paused, "TeachToken: system is paused");
+            try registry.isSystemPaused() returns (bool systemPaused) {
+                require(!systemPaused, "TeachToken: system is paused");
             } catch {
-                // If registry call fails, continue with the transfer
-                // This prevents tokens being locked if the registry is compromised
+                require(!paused, "TeachToken: contract is paused");  
             }
+            super._beforeTokenTransfer(from, to, amount);
         }
-        super._beforeTokenTransfer(from, to, amount);
+        require(!paused, "TeachToken: system is paused"); 
+        _;
     }
 
     /**

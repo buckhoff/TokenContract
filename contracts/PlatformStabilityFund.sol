@@ -162,7 +162,7 @@ contract PlatformStabilityFund is
         _;
     }
     
-    modifier whenContractNotPaused() {
+    modifier whenContractNotPaused(){
         if (address(registry) != address(0)) {
             try registry.isSystemPaused() returns (bool systemPaused) {
                 require(!systemPaused, "PlatformStabilityFund: system is paused");
@@ -175,6 +175,7 @@ contract PlatformStabilityFund is
             require(!paused, "PlatformStabilityFund: contract is paused");
         }
         require(!paused, "PlatformStabilityFund: contract is paused");
+        _;
     }
 
     modifier flashLoanGuard(uint256 _amount) {

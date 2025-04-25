@@ -126,7 +126,7 @@ contract PlatformMarketplace is
         _;
     }
 
-    modifier whenContractNotPaused() {
+    modifier whenContractNotPaused(){
         if (address(registry) != address(0)) {
             try registry.isSystemPaused() returns (bool systemPaused) {
                 require(!systemPaused, "PlatformMarketplace: system is paused");
@@ -139,6 +139,7 @@ contract PlatformMarketplace is
             require(!paused, "PlatformMarketplace: contract is paused");
         }
         require(!paused, "PlatformMarketplace: contract is paused");
+        _;
     }
     
     /**
@@ -369,7 +370,6 @@ contract PlatformMarketplace is
 
     
     function pauseMarketplace() external {
-        // Check if caller is StabilityFund or has EMERGENCY_ROLE
         if (address(registry) != address(0) && registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
             stabilityFund = registry.getContractAddress(Constants.STABILITY_FUND_NAME);
             require(
@@ -380,7 +380,6 @@ contract PlatformMarketplace is
         } else {
             require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "PlatformMarketplace: not authorized");
         }
-        _;
     }
 
     function unpauseMarketplace() external {
@@ -388,6 +387,13 @@ contract PlatformMarketplace is
             msg.sender == stabilityFund || hasRole(Constants.EMERGENCY_ROLE, msg.sender),
             "PlatformMarketplace: not authorized"
         );
+        if (address(registry) != address(0)) {
+            try registry.isSystemPaused() returns (bool systemPaused) {
+                require(!systemPaused, "TokenStaking: system still paused");
+            } catch {
+                // If registry call fails, proceed with unpause
+            }
+        }
         paused = false;
     }
 

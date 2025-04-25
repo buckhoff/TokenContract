@@ -110,7 +110,7 @@ contract TeacherReward is
     event AchievementAwarded(address indexed teacher, uint256 indexed achievementId, uint256 count);
     event PeerReviewSubmitted(address indexed teacher, address indexed reviewer, uint256 score);
 
-    modifier whenContractNotPaused() {
+    modifier whenContractNotPaused(){
         if (address(registry) != address(0)) {
             try registry.isSystemPaused() returns (bool systemPaused) {
                 require(!systemPaused, "TeacherReward: system is paused");
@@ -123,6 +123,7 @@ contract TeacherReward is
             require(!paused, "TeacherReward: contract is paused");
         }
         require(!paused, "TeacherReward: contract is paused");
+        _;
     }
     
     modifier onlyAdmin() {
