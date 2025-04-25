@@ -25,6 +25,42 @@ contract PlatformGovernance is
 {
 
     ERC20Upgradeable internal token;
+
+    // Struct to store proposal information
+    struct Proposal {
+        address proposer;
+        string description;
+        bytes[] calldatas;
+        address[] targets;
+        string[] signatures;
+        uint256 startTime;
+        uint256 endTime;
+        uint256 forVotes;
+        uint256 againstVotes;
+        uint256 abstainVotes;
+        bool executed;
+        bool canceled;
+        mapping(address => Receipt) receipts;
+    }
+
+    // Struct to store vote receipt
+    struct Receipt {
+        bool hasVoted;
+        VoteType voteType;
+        uint256 votes;
+    }
+
+    // Struct to track pending parameter changes
+    struct PendingParameterChange {
+        uint256 proposalThreshold;
+        uint256 minVotingPeriod;
+        uint256 maxVotingPeriod;
+        uint256 quorumThreshold;
+        uint256 executionDelay;
+        uint256 executionPeriod;
+        uint256 scheduledTime;
+        bool isPending;
+    }
     
     // Staking contract reference
     IPlatformStaking public stakingContract;
@@ -64,46 +100,6 @@ contract PlatformGovernance is
     mapping(address => bool) public guardians; // Addresses with guardian power
     mapping(uint256 => mapping(address => bool)) public guardianCancellations; // Track guardian votes
     mapping(uint256 => uint16) public cancellationVotes; // Count cancellation votes
-    
-
-    
-
-    
-    // Struct to store proposal information
-    struct Proposal {
-        address proposer;
-        string description;
-        bytes[] calldatas;
-        address[] targets;
-        string[] signatures;
-        uint256 startTime;
-        uint256 endTime;
-        uint256 forVotes;
-        uint256 againstVotes;
-        uint256 abstainVotes;
-        bool executed;
-        bool canceled;
-        mapping(address => Receipt) receipts;
-    }
-    
-    // Struct to store vote receipt
-    struct Receipt {
-        bool hasVoted;
-        VoteType voteType;
-        uint256 votes;
-    }
-
-    // Struct to track pending parameter changes
-    struct PendingParameterChange {
-        uint256 proposalThreshold;
-        uint256 minVotingPeriod;
-        uint256 maxVotingPeriod;
-        uint256 quorumThreshold;
-        uint256 executionDelay;
-        uint256 executionPeriod;
-        uint256 scheduledTime;
-        bool isPending;
-    }
     
     // Mapping from proposal ID to Proposal
     mapping(uint256 => Proposal) public proposals;
@@ -477,37 +473,6 @@ contract PlatformGovernance is
 
         emit TimelockDelayUpdated(parameterChangeDelay, _newDelay);
         parameterChangeDelay = _newDelay;
-    }
-    
-    /**
-     * @dev Updates governance parameters
-     * @param _proposalThreshold New proposal threshold
-     * @param _minVotingPeriod New minimum voting period
-     * @param _maxVotingPeriod New maximum voting period
-     * @param _quorumThreshold New quorum threshold
-     * @param _executionDelay New execution delay
-     * @param _executionPeriod New execution period
-     */
-    function updateGovernanceParameters(uint256 _proposalThreshold, uint256 _minVotingPeriod, uint256 _maxVotingPeriod,
-        uint256 _quorumThreshold, uint256 _executionDelay, uint256 _executionPeriod) external onlyAdmin {
-        require(_minVotingPeriod <= _maxVotingPeriod, "PlatformGovernance: invalid voting periods");
-        require(_quorumThreshold <= 5000, "PlatformGovernance: quorum too high");
-        
-        proposalThreshold = _proposalThreshold;
-        minVotingPeriod = _minVotingPeriod;
-        maxVotingPeriod = _maxVotingPeriod;
-        quorumThreshold = _quorumThreshold;
-        executionDelay = _executionDelay;
-        executionPeriod = _executionPeriod;
-        
-        emit GovernanceParametersUpdated(
-            _proposalThreshold,
-            _minVotingPeriod,
-            _maxVotingPeriod,
-            _quorumThreshold,
-            _executionDelay,
-            _executionPeriod
-        );
     }
     
     /**
