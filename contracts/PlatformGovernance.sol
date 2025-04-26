@@ -140,7 +140,8 @@ contract PlatformGovernance is
     event ContractReferenceUpdated(bytes32 indexed contractName, address indexed oldAddress, address indexed newAddress);
     event RecoveryRequirementsUpdated(uint16 requiredGuardians, uint16 emergencyPeriod);
     event ProposalCanceledByGovernance(uint256 indexed proposalId, address indexed governor, string reason);
-
+    event VotingPowerUpdated(address indexed voter, uint256 newVotingPower);
+    
     
     bool public stakingWeightEnabled;
     uint16 public maxStakingMultiplier; // multiplier scaled by 100 (e.g., 200 = 2x)
@@ -994,5 +995,26 @@ contract PlatformGovernance is
 
         // Final fallback: Use hardcoded address (if appropriate) or revert
         revert("Token address unavailable through all fallback mechanisms");
+    }
+
+    /**
+     * @dev Update voting power for an address
+     * @param _voter Address to update voting power for
+     */
+    function updateVotingPower(address _voter) external override {
+        // This function should be called from the staking contract when a user's stake changes
+        // It doesn't need to do much since getVotingPower already calculates the value dynamically
+
+        // Verify caller is the staking contract
+        if (address(registry) != address(0) && registry.isContractActive(Constants.STAKING_NAME)) {
+            address stakingAddress = registry.getContractAddress(Constants.STAKING_NAME);
+            require(msg.sender == stakingAddress, "PlatformGovernance: not staking contract");
+        } else if (address(stakingContract) != address(0)) {
+            require(msg.sender == address(stakingContract), "PlatformGovernance: not staking contract");
+        }
+
+        // No need to store voting power as it's calculated dynamically in getVotingPower()
+        // But we might want to emit an event for tracking purposes
+        emit VotingPowerUpdated(_voter, getVotingPower(_voter));
     }
 }

@@ -1016,4 +1016,29 @@ contract TokenStaking is
         // Final fallback: Use hardcoded address (if appropriate) or revert
         revert("Token address unavailable through all fallback mechanisms");
     }
+
+    /**
+     * @dev Update voting power for a user in the governance contract
+     * This function updates the user's voting power in the governance contract
+     * @param _user User whose voting power should be updated
+     */
+    function updateVotingPower(address _user) external override {
+        // Only the contract itself can call this function
+        require(msg.sender == address(this), "TokenStaking: only self");
+
+        // Notify governance of stake change if governance is registered
+        if (address(registry) != address(0) && registry.isContractActive(Constants.GOVERNANCE_NAME)) {
+            address governance = registry.getContractAddress(Constants.GOVERNANCE_NAME);
+
+            // Call the updateVotingPower function in Governance
+            (bool success, ) = governance.call(
+                abi.encodeWithSignature(
+                    "updateVotingPower(address)",
+                    _user
+                )
+            );
+
+            // We don't revert on failure since this is a non-critical operation
+        }
+    }
 }

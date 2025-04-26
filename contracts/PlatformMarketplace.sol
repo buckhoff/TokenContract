@@ -724,7 +724,7 @@ contract PlatformMarketplace is
 
         if (approvalCount >= requiredRecoveryApprovals) {
             inEmergencyRecovery = false;
-            unpauseMarketplace();
+            this.unpauseMarketplace();
             emit EmergencyRecoveryCompleted(msg.sender, block.timestamp);
         }
     }

@@ -42,7 +42,7 @@ contract ContractRegistry is Initializable, AccessControlUpgradeable, Reentrancy
     uint256 public recoveryInitiatedTimestamp;
     uint256 public recoveryTimeout = 24 hours;
     
-    event SystemHasBeenPaused(byte32 indexed contractName);
+    event SystemHasBeenPaused(bytes32 indexed contractName);
     event SystemEmergencyTriggered(address indexed triggeredBy, string reason);
     
     modifier onlyAdmin() {
@@ -391,15 +391,15 @@ contract ContractRegistry is Initializable, AccessControlUpgradeable, Reentrancy
     function triggerSystemEmergency(string memory _reason) external onlyEmergency {
         
         // Pause the registry
-        try pauseSystem() {
+        try this.pauseSystem() {
             emit SystemHasBeenPaused("Contract Registry");
         } catch {
            
         }
 
         // Notify stability fund
-        if (isContractActive(Constants.STABILITY_FUND_NAME)) {
-            address stabilityFund = getContractAddress(Constants.STABILITY_FUND_NAME);
+        if (this.isContractActive(Constants.STABILITY_FUND_NAME)) {
+            address stabilityFund = this.getContractAddress(Constants.STABILITY_FUND_NAME);
             (bool success, ) = stabilityFund.call(
                 abi.encodeWithSignature("emergencyPause()")
             );
@@ -407,24 +407,24 @@ contract ContractRegistry is Initializable, AccessControlUpgradeable, Reentrancy
         }
 
         // Notify marketplace
-        if (isContractActive(Constants.MARKETPLACE_NAME)) {
-            address marketplace = getContractAddress(Constants.MARKETPLACE_NAME);
+        if (this.isContractActive(Constants.MARKETPLACE_NAME)) {
+            address marketplace = this.getContractAddress(Constants.MARKETPLACE_NAME);
             (bool success, ) = marketplace.call(
                 abi.encodeWithSignature("pauseMarketplace()")
             );
         }
 
         // Notify crowdsale
-        if (isContractActive(Constants.CROWDSALE_NAME)) {
-            address crowdsale = getContractAddress(Constants.CROWDSALE_NAME);
+        if (this.isContractActive(Constants.CROWDSALE_NAME)) {
+            address crowdsale = this.getContractAddress(Constants.CROWDSALE_NAME);
             (bool success, ) = crowdsale.call(
                 abi.encodeWithSignature("pausePresale()")
             );
         }
 
         // Notify staking
-        if (isContractActive(Constants.STAKING_NAME)) {
-            address staking = getContractAddress(Constants.STAKING_NAME);
+        if (this.isContractActive(Constants.STAKING_NAME)) {
+            address staking = this.getContractAddress(Constants.STAKING_NAME);
             (bool success, ) = staking.call(
                 abi.encodeWithSignature("pauseStaking()")
             );
@@ -432,8 +432,8 @@ contract ContractRegistry is Initializable, AccessControlUpgradeable, Reentrancy
         }
 
         // Notify rewards
-        if (isContractActive(Constants.PLATFORM_REWARD_NAME)) {
-            address rewards = getContractAddress(Constants.PLATFORM_REWARD_NAME);
+        if (this.isContractActive(Constants.PLATFORM_REWARD_NAME)) {
+            address rewards = this.getContractAddress(Constants.PLATFORM_REWARD_NAME);
             (bool success, ) = rewards.call(
                 abi.encodeWithSignature("pauseRewards()")
             );

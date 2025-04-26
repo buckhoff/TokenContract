@@ -340,8 +340,7 @@ contract TeachToken is
             }
             super._beforeTokenTransfer(from, to, amount);
         }
-        require(!paused, "TeachToken: system is paused"); 
-        _;
+        require(!paused, "TeachToken: system is paused");
     }
 
     /**
@@ -408,7 +407,7 @@ contract TeachToken is
 
         if (_countRecoveryApprovals() >= requiredRecoveryApprovals) {
             inEmergencyRecovery = false;
-            _unpause();
+            this.unpause();
             emit EmergencyRecoveryCompleted(msg.sender);
         }
     }

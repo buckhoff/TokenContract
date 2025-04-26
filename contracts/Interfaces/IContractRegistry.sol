@@ -80,7 +80,7 @@ interface IContractRegistry {
      * @dev Get all the registered contracts
      * @return memory data
      */
-    function getAllContractNames() external view returns (bytes32[]);
+    function getAllContractNames() external view returns (bytes32[] memory);
     
     /**
      * @dev Pause the entire system in case of emergency

@@ -465,13 +465,10 @@ contract TeacherReward is
                 }
             } else {
                 require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "TeacherReward: not authorized");
-                _;
             }
         } else {
             require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "TeacherReward: not authorized");
-            _;
         }
-        _;
     }
 
     function unpauseRewards() external onlyRole(Constants.EMERGENCY_ROLE) {
@@ -505,11 +502,9 @@ contract TeacherReward is
             }
             } else {
                 require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "TeacherReward: not authorized");
-                _;
             }
         } else {
             require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "TeacherReward: not authorized");
-            _;
         }
     }
 
