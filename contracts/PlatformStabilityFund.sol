@@ -138,28 +138,6 @@ contract PlatformStabilityFund is
     event AddressPlacedInCooldown(address indexed suspiciousAddress, uint256 endTime);
     event AddressRemovedFromCooldown(address indexed cooldownAddress);
     
-    /**
-     * @dev Modifier to restrict certain functions to the price oracle
-     */
-    modifier onlyPriceOracle() {
-        require(hasRole(Constants.ORACLE_ROLE, msg.sender), "PlatformStabilityFund: not price oracle role");
-        _;
-    }
-    modifier onlyAdmin() {
-        require(hasRole(Constants.ADMIN_ROLE, msg.sender), "PlatformStabilityFund: caller is not admin role");
-        _;
-    }
-
-    modifier onlyBurner() {
-        require(hasRole(Constants.BURNER_ROLE, msg.sender), "PlatformStabilityFund: caller is not burner role");
-        _;
-    }
-
-    modifier onlyEmergency() {
-        require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "PlatformStabilityFund: caller is not emergency role");
-        _;
-    }
-    
     modifier whenContractNotPaused(){
         if (address(registry) != address(0)) {
             try registry.isSystemPaused() returns (bool systemPaused) {
@@ -286,7 +264,7 @@ contract PlatformStabilityFund is
     * @dev Sets the registry contract address
     * @param _registry Address of the registry contract
     */
-    function setRegistry(address _registry) external onlyAdmin {
+    function setRegistry(address _registry) external onlyRole(Constants.ADMIN_ROLE){
         _setRegistry(_registry, Constants.STABILITY_FUND_NAME);
         emit RegistrySet(_registry);
     }
@@ -295,7 +273,7 @@ contract PlatformStabilityFund is
      * @dev Updates the baseline price (governance function)
      * @param _newBaselinePrice New baseline price in stable coin units (scaled by 1e18)
      */
-    function updateBaselinePrice(uint256 _newBaselinePrice) external onlyAdmin {
+    function updateBaselinePrice(uint256 _newBaselinePrice) external onlyRole(Constants.ADMIN_ROLE) {
         require(_newBaselinePrice > 0, "PlatformStabilityFund: zero baseline price");
 
         emit BaselinePriceUpdated(baselinePrice, _newBaselinePrice);
@@ -310,7 +288,7 @@ contract PlatformStabilityFund is
     * @dev Updates the current fee based on token price relative to baseline
     * @return uint16 The newly calculated fee percentage
     */
-    function updateCurrentFee() public onlyAdmin returns (uint16) {
+    function updateCurrentFee() public onlyRole(Constants.ADMIN_ROLE) returns (uint16) {
         uint256 valueDropPercent = 0;
         uint256 verifiedPrice = getVerifiedPrice();
         
@@ -376,7 +354,7 @@ contract PlatformStabilityFund is
      * @dev Withdraws stable coins from reserves (only owner)
      * @param _amount Amount of stable coins to withdraw
      */
-    function withdrawReserves(uint256 _amount) external onlyAdmin nonReentrant {
+    function withdrawReserves(uint256 _amount) external onlyRole(Constants.ADMIN_ROLE) nonReentrant {
         require(_amount > 0, "PlatformStabilityFund: zero amount");
         uint256 verifiedPrice = getVerifiedPrice();
         
@@ -410,7 +388,7 @@ contract PlatformStabilityFund is
         address _project,
         uint256 _tokenAmount,
         uint256 _minReturn
-    ) external onlyAdmin nonReentrant whenContractNotPaused flashLoanGuard(_tokenAmount) returns (uint256 stableAmount) {
+    ) external onlyRole(Constants.ADMIN_ROLE) nonReentrant whenContractNotPaused flashLoanGuard(_tokenAmount) returns (uint256 stableAmount) {
         require(_project != address(0), "PlatformStabilityFund: zero project address");
         require(_tokenAmount > 0, "PlatformStabilityFund: zero amount");
 
@@ -544,7 +522,7 @@ contract PlatformStabilityFund is
         uint256 _platformFeePercent,
         uint256 _lowValueFeePercent,
         uint256 _valueThreshold
-    ) external onlyAdmin {
+    ) external onlyRole(Constants.ADMIN_ROLE) {
         require(_reserveRatio > _minReserveRatio, "PlatformStabilityFund: invalid reserve ratios");
         require(_platformFeePercent >= _lowValueFeePercent, "PlatformStabilityFund: regular fee must be >= low value fee");
         require(_valueThreshold > 0, "PlatformStabilityFund: zero threshold");
@@ -565,7 +543,7 @@ contract PlatformStabilityFund is
      * @dev Updates the price oracle address
      * @param _newOracle New price oracle address
      */
-    function updatePriceOracle(address _newOracle) external onlyAdmin {
+    function updatePriceOracle(address _newOracle) external onlyRole(Constants.ADMIN_ROLE) {
         require(_newOracle != address(0), "PlatformStabilityFund: zero oracle address");
 
         emit PriceOracleUpdated(priceOracle, _newOracle);
@@ -630,7 +608,7 @@ contract PlatformStabilityFund is
     /**
     * @dev Manually pauses the fund in case of emergency
     */
-    function emergencyPause() external onlyEmergency{
+    function emergencyPause() external onlyRole(Constants.EMERGENCY_ROLE){
         require(msg.sender == owner() || msg.sender == emergencyAdmin, "PlatformStabilityFund: not authorized");
         require(!paused, "PlatformStabilityFund: already paused");
 
@@ -641,7 +619,7 @@ contract PlatformStabilityFund is
     /**
     * @dev Resumes the fund from pause state
     */
-    function resumeFromPause() external onlyAdmin {
+    function resumeFromPause() external onlyRole(Constants.ADMIN_ROLE) {
         require(paused, "PlatformStabilityFund: not paused");
 
         // Ensure reserves are above critical threshold before resuming
@@ -657,7 +635,7 @@ contract PlatformStabilityFund is
     * @dev Sets the critical reserve threshold percentage
     * @param _threshold New threshold as percentage of min reserve ratio
     */
-    function setCriticalReserveThreshold(uint16 _threshold) external onlyAdmin{
+    function setCriticalReserveThreshold(uint16 _threshold) external onlyRole(Constants.ADMIN_ROLE){
         require(_threshold > 100, "PlatformStabilityFund: threshold must be > 100%");
         require(_threshold <= 200, "PlatformStabilityFund: threshold too high");
 
@@ -672,7 +650,7 @@ contract PlatformStabilityFund is
     * @dev Updates the emergency admin address
     * @param _newAdmin New emergency admin address
     */
-    function setEmergencyAdmin(address _newAdmin) external onlyAdmin {
+    function setEmergencyAdmin(address _newAdmin) external onlyRole(Constants.ADMIN_ROLE) {
         require(_newAdmin != address(0), "PlatformStabilityFund: zero admin address");
 
         emit EmergencyAdminUpdated(emergencyAdmin, _newAdmin);
@@ -695,7 +673,7 @@ contract PlatformStabilityFund is
         uint16 _adjustmentFactor,
         uint16 _dropThreshold,
         uint16 _maxDropPercent
-    ) external onlyAdmin {
+    ) external onlyRole(Constants.ADMIN_ROLE) {
         require(_maxFee >= _baseFee && _baseFee >= _minFee, "PlatformStabilityFund: invalid fee range");
         require(_maxDropPercent > _dropThreshold, "PlatformStabilityFund: invalid drop thresholds");
         require(_adjustmentFactor > 0, "PlatformStabilityFund: zero adjustment factor");
@@ -717,7 +695,7 @@ contract PlatformStabilityFund is
     * @dev Process burned tokens and convert a portion to reserves
     * @param _burnedAmount Amount of platform tokens that were burned
     */
-    function processBurnedTokens(uint256 _burnedAmount) external onlyBurner{
+    function processBurnedTokens(uint256 _burnedAmount) external onlyRole(Constants.BURNER_ROLE){
         require(_burnedAmount > 0, "PlatformStabilityFund: zero burn amount");
 
         // If the registry is set, verify the caller is either a registered burner or the token contract
@@ -751,7 +729,7 @@ contract PlatformStabilityFund is
     * @dev Process platform fees and add a portion to reserves
     * @param _feeAmount Amount of platform fees collected
     */
-    function processPlatformFees(uint256 _feeAmount) external onlyAdmin {
+    function processPlatformFees(uint256 _feeAmount) external onlyRole(Constants.ADMIN_ROLE) {
         require(_feeAmount > 0, "PlatformStabilityFund: zero fee amount");
 
         // Calculate portion to add to reserves
@@ -775,7 +753,7 @@ contract PlatformStabilityFund is
     function updateReplenishmentParameters(
         uint16 _burnPercent,
         uint16 _feePercent
-    ) external onlyAdmin {
+    ) external onlyRole(Constants.ADMIN_ROLE) {
         require(_burnPercent <= 5000, "PlatformStabilityFund: burn percent too high");
         require(_feePercent <= 10000, "PlatformStabilityFund: fee percent too high");
 
@@ -790,7 +768,7 @@ contract PlatformStabilityFund is
     * @param _burner Address of the burner
     * @param _authorized Whether the address is authorized
     */
-    function setAuthBurner(address _burner, bool _authorized) external onlyAdmin {
+    function setAuthBurner(address _burner, bool _authorized) external onlyRole(Constants.ADMIN_ROLE) {
         require(_burner != address(0), "PlatformStabilityFund: zero burner address");
         
         if (_authorized) {
@@ -816,7 +794,7 @@ contract PlatformStabilityFund is
         uint256 _maxSingleConversionAmount,
         uint256 _minTimeBetweenActions,
         bool _enabled
-    ) external onlyAdmin {
+    ) external onlyRole(Constants.ADMIN_ROLE) {
         maxDailyUserVolume = _maxDailyUserVolume;
         maxSingleConversionAmount = _maxSingleConversionAmount;
         minTimeBetweenActions = _minTimeBetweenActions;
@@ -852,12 +830,12 @@ contract PlatformStabilityFund is
         }
     }
 
-    function placeSuspiciousAddressInCooldown(address _suspiciousAddress) external onlyEmergency {
+    function placeSuspiciousAddressInCooldown(address _suspiciousAddress) external onlyRole(Constants.EMERGENCY_ROLE) {
         addressCooldown[_suspiciousAddress] = true;
         emit AddressPlacedInCooldown(_suspiciousAddress, block.timestamp + suspiciousCooldownPeriod);
     }
 
-    function removeSuspiciousAddressCooldown(address _address) external onlyAdmin {
+    function removeSuspiciousAddressCooldown(address _address) external onlyRole(Constants.ADMIN_ROLE) {
         addressCooldown[_address] = false;
         emit AddressRemovedFromCooldown(_address);
     }
@@ -905,7 +883,7 @@ contract PlatformStabilityFund is
         }
     }
 
-    function updatePrice(uint256 _newPrice) external onlyPriceOracle {
+    function updatePrice(uint256 _newPrice) external onlyRole(Constants.ORACLE_ROLE) {
         require(_newPrice > 0, "PlatformStabilityFund: zero price");
 
         uint256 verifiedPrice = getVerifiedPrice();
@@ -1007,7 +985,7 @@ contract PlatformStabilityFund is
         uint256 _windowSize,
         uint256 _interval,
         bool _enabled
-    ) external onlyAdmin {
+    ) external onlyRole(Constants.ADMIN_ROLE) {
         require(_windowSize > 0 && _windowSize <= MAX_PRICE_OBSERVATIONS, "PlatformStabilityFund: invalid window size");
         require(_interval > 0, "PlatformStabilityFund: interval cannot be zero");
 
@@ -1045,7 +1023,7 @@ contract PlatformStabilityFund is
      * @dev Emergency notification to all connected contracts
      * Called when critical stability issues are detected
      */
-    function notifyEmergencyToConnectedContracts() external onlyEmergency {
+    function notifyEmergencyToConnectedContracts() external onlyRole(Constants.EMERGENCY_ROLE) {
         require(address(registry) != address(0), "PlatformStabilityFund: registry not set");
 
         // Try to notify the marketplace to pause
@@ -1115,18 +1093,18 @@ contract PlatformStabilityFund is
     }
     
     // Add initialization
-    function initializeEmergencyRecovery(uint256 _requiredApprovals) external onlyAdmin {
+    function initializeEmergencyRecovery(uint256 _requiredApprovals) external onlyRole(Constants.ADMIN_ROLE) {
         requiredRecoveryApprovals = _requiredApprovals;
     }
 
     // Add recovery function
-    function initiateEmergencyRecovery() external onlyEmergency {
+    function initiateEmergencyRecovery() external onlyRole(Constants.EMERGENCY_ROLE) {
         require(paused, "StabilityFund: not paused");
         inEmergencyRecovery = true;
         emit EmergencyRecoveryInitiated(msg.sender, block.timestamp);
     }
 
-    function approveRecovery() external onlyAdmin {
+    function approveRecovery() external onlyRole(Constants.ADMIN_ROLE) {
         require(inEmergencyRecovery, "StabilityFund: not in recovery mode");
         require(!emergencyRecoveryApprovals[msg.sender], "StabilityFund: already approved");
 
