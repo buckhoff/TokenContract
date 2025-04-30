@@ -645,14 +645,9 @@ contract PlatformGovernance is
                 try IPlatformStaking(stakingAddress).getPoolCount() returns (uint256 poolCount) {
                     // Add weighted staking power
                     for (uint256 poolId = 0; poolId < poolCount; poolId++) {
-                        try IPlatformStaking(stakingAddress).getUserStake(poolId, _voter) returns (
+                        try IPlatformStaking(stakingAddress).getUserStakeforVoting(poolId, _voter) returns (
                             uint256 stakedAmount,
-                            uint256 startTime,
-                            uint256 lastClaimTime,
-                            uint256 pendingReward,
-                            address secondaryBeneficiary,
-                            uint256 userRewardPortion,
-                            uint256 secondaryRewardPortion
+                            uint256 startTime
                         ) {
                             if (stakedAmount > 0) {
                                 // Calculate staking duration in days
@@ -685,14 +680,9 @@ contract PlatformGovernance is
             try stakingContract.getPoolCount() returns (uint256 poolCount) {
                 // Add weighted staking power (same logic as above)
                 for (uint256 poolId = 0; poolId < poolCount; poolId++) {
-                    try stakingContract.getUserStake(poolId, _voter) returns (
+                    try stakingContract.getUserStakeforVoting(poolId, _voter) returns (
                         uint256 stakedAmount,
-                        uint256 startTime,
-                        uint256 lastClaimTime,
-                        uint256 pendingReward,
-                        address secondaryBeneficiary,
-                        uint256 userRewardPortion,
-                        uint256 secondaryRewardPortion
+                        uint256 startTime
                     ) {
                         if (stakedAmount > 0) {
                             // Calculate staking duration in days

@@ -188,17 +188,6 @@ interface IStabilityFund {
      * Called when critical stability issues are detected
      */
     function notifyEmergencyToConnectedContracts() external;
-    /**
-    * @dev Get the Token address from the registry
-     * @return Address of the Token contract
-     */
-    function getPlatformTokenFromRegistry() external view returns (address);
-
-    /**
-    * @dev Update contract references from registry
-     * This ensures contracts always have the latest addresses
-     */
-    function updateContractReferences() external;
 
     // Add initialization
     function initializeEmergencyRecovery(uint256 _requiredApprovals) external;
@@ -208,6 +197,4 @@ interface IStabilityFund {
 
     function approveRecovery() external;
     
-    // Update cache periodically
-    function updateAddressCache() external;
 }

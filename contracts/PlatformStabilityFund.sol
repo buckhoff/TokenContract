@@ -106,7 +106,7 @@ contract PlatformStabilityFund is
     event CircuitBreakerTriggered(uint256 currentRatio, uint256 threshold);
     event RegistrySet(address indexed registry);
     event ContractReferenceUpdated(bytes32 indexed contractName, address indexed oldAddress, address indexed newAddress);
-    event EmergencyNotificationFailed(bytes32 indexed contractName);
+
     event EmergencyPaused(address indexed triggeredBy);
     event EmergencyResumed(address indexed resumedBy);
     event CriticalThresholdUpdated(uint256 oldThreshold, uint256 newThreshold);
@@ -266,19 +266,19 @@ contract PlatformStabilityFund is
         priceDropThreshold = _valueThreshold;       // When fee adjustment begins
         maxPriceDropPercent = 3000;                 // 30% price drop applies max fee reduction
         feeAdjustmentFactor = 100;                  // Linear adjustment by default
-        criticalReserveThreshold = 120; // Default: 120% of minimum reserve ratio
+        criticalReserveThreshold = 120;             // Default: 120% of minimum reserve ratio
         emergencyAdmin = msg.sender;
-        burnToReservePercent = 1000; // 10% by default
-        platformFeeToReservePercent = 2000; // 20% by default
+        burnToReservePercent = 1000;                // 10% by default
+        platformFeeToReservePercent = 2000;         // 20% by default
         authorizedBurners[msg.sender] = true;
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(Constants.ADMIN_ROLE, msg.sender);
         _grantRole(Constants.ORACLE_ROLE, _priceOracle);
         _grantRole(Constants.EMERGENCY_ROLE, emergencyAdmin);
         _grantRole(Constants.BURNER_ROLE, msg.sender);
-        maxDailyUserVolume = 1_000_000 * 10**18; // 1M tokens per day per user
-        maxSingleConversionAmount = 100_000 * 10**18; // 100K tokens per conversion
-        minTimeBetweenActions = 15 minutes; // 15 minutes between actions
+        maxDailyUserVolume = 1_000_000 * 10**18;      // 1M tokens per day per user
+        maxSingleConversionAmount = 100_000 * 10**18;// 100K tokens per conversion
+        minTimeBetweenActions = 15 minutes;         // 15 minutes between actions
         flashLoanProtectionEnabled = true;
     }
 
@@ -1113,37 +1113,7 @@ contract PlatformStabilityFund is
         paused = true;
         emit EmergencyPaused(msg.sender);
     }
-
-    /**
-     * @dev Get the Token address from the registry
-     * @return Address of the Token contract
-     */
-    function getPlatformTokenFromRegistry() public view returns (address) {
-        require(address(registry) != address(0), "PlatformStabilityFund: registry not set");
-        require(registry.isContractActive(Constants.TOKEN_NAME), "PlatformStabilityFund: token not active");
-
-        return registry.getContractAddress(Constants.TOKEN_NAME);
-    }
-
-    /**
-    * @dev Update contract references from registry
-     * This ensures contracts always have the latest addresses
-     */
-    function updateContractReferences() external onlyAdmin {
-        require(address(registry) != address(0), "PlatformStabilityFund: registry not set");
-
-        // Update Token reference
-        if (registry.isContractActive(Constants.TOKEN_NAME)) {
-            address newToken = registry.getContractAddress(Constants.TOKEN_NAME);
-            address oldToken = address(token);
-
-            if (newToken != oldToken) {
-                token = ERC20Upgradeable(newToken);
-                emit ContractReferenceUpdated(Constants.TOKEN_NAME, oldToken, newToken);
-            }
-        }
-    }
-
+    
     // Add initialization
     function initializeEmergencyRecovery(uint256 _requiredApprovals) external onlyAdmin {
         requiredRecoveryApprovals = _requiredApprovals;
@@ -1186,26 +1156,7 @@ contract PlatformStabilityFund is
         // Reset any emergency state variables
         emit EmergencyRecoveryCompleted(msg.sender, block.timestamp);
     }
-
-    // Update cache periodically
-    function updateAddressCache() public {
-        if (address(registry) != address(0)) {
-            try registry.getContractAddress(Constants.TOKEN_NAME) returns (address tokenAddress) {
-                if (tokenAddress != address(0)) {
-                    _cachedTokenAddress = tokenAddress;
-                }
-            } catch {}
-
-            try registry.getContractAddress(Constants.STABILITY_FUND_NAME) returns (address stabilityFund) {
-                if (stabilityFund != address(0)) {
-                    _cachedStabilityFundAddress = stabilityFund;
-                }
-            } catch {}
-
-            _lastCacheUpdate = block.timestamp;
-        }
-    }
-
+    
     /**
      * @dev Retrieves the address of the token contract, with fallback mechanisms
      * @return The address of the token contract

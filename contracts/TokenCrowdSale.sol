@@ -435,9 +435,6 @@ contract TokenCrowdSale is
         uint96 totalPurchased = userPurchase.tokens;
         if (totalPurchased == 0) return 0;
 
-        // Calculate time-based vesting
-        uint96 elapsedMonths = (uint96(block.timestamp) - presaleEnd) / 30 days;
-
         // Calculate tokens from each tier
         uint96 totalClaimable = 0;
 
@@ -475,7 +472,7 @@ contract TokenCrowdSale is
 
         // Subtract already claimed tokens
         uint96 alreadyClaimed = totalPurchased - userPurchase.tokens;
-        userPurchase.lastClaimTime = uint96(block.timestamp);
+     
         return totalClaimable > alreadyClaimed ? totalClaimable - alreadyClaimed : 0;
     }
 
@@ -488,6 +485,9 @@ contract TokenCrowdSale is
         uint96 claimable = claimableTokens(msg.sender);
         require(claimable > 0, "No tokens available to claim");
 
+        // Update user's last claim time
+        purchases[msg.sender].lastClaimTime = uint96(block.timestamp);
+        
         // Update user's token balance
         purchases[msg.sender].tokens = purchases[msg.sender].tokens - claimable;
 
@@ -635,27 +635,31 @@ contract TokenCrowdSale is
      * @dev Update contract references from registry
      * This ensures contracts always have the latest addresses
      */
-    function updateContractReferences() external onlyRole(Constants.ADMIN_ROLE) {
+    function updateContractCache() external onlyRole(Constants.ADMIN_ROLE) {
         require(address(registry) != address(0), "CrowdSale: registry not set");
 
         // Update Token reference
         if (registry.isContractActive(Constants.TOKEN_NAME)) {
             address newToken = registry.getContractAddress(Constants.TOKEN_NAME);
-            address oldToken = address(token);
+            address oldToken = address(_cachedTokenAddress);
 
             if (newToken != oldToken) {
                 token = ERC20Upgradeable(newToken);
+                _cachedTokenAddress=newToken;
                 emit ContractReferenceUpdated(Constants.TOKEN_NAME, oldToken, newToken);
             }
         }
 
         // Update StabilityFund reference for price oracle
         if (registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
-            address stabilityFund = registry.getContractAddress(Constants.STABILITY_FUND_NAME);
+            address newStabilityFund = registry.getContractAddress(Constants.STABILITY_FUND_NAME);
+            address oldStabilityFund = address(_cachedStabilityFundAddress);
 
-            // Here we might need to update any reference to the stability fund
-            // For example, if the crowdsale uses the stability fund for pricing
-        }
+            if (newStabilityFund != oldStabilityFund) {
+                // Update the stabilityFund reference if you have one
+                _cachedStabilityFundAddress = newStabilityFund;
+                emit ContractReferenceUpdated(Constants.STABILITY_FUND_NAME, oldStabilityFund, newStabilityFund);
+            }        }
     }
 
     /**
@@ -908,25 +912,6 @@ contract TokenCrowdSale is
     function getApprover(uint256 index) public view returns (address) {
         require(index < getRoleMemberCount(Constants.ADMIN_ROLE), "Invalid approver index");
         return getRoleMember(Constants.ADMIN_ROLE, index);
-    }
-
-    // Update cache periodically
-    function updateAddressCache() public {
-        if (address(registry) != address(0)) {
-            try registry.getContractAddress(Constants.TOKEN_NAME) returns (address tokenAddress) {
-                if (tokenAddress != address(0)) {
-                    _cachedTokenAddress = tokenAddress;
-                }
-            } catch {}
-
-            try registry.getContractAddress(Constants.STABILITY_FUND_NAME) returns (address stabilityFund) {
-                if (stabilityFund != address(0)) {
-                    _cachedStabilityFundAddress = stabilityFund;
-                }
-            } catch {}
-
-            _lastCacheUpdate = block.timestamp;
-        }
     }
 
     /**

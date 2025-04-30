@@ -257,24 +257,19 @@ contract TeachToken is
             
             try registry.isContractActive(stabilityFundName) returns (bool isActive) {
                 if (isActive) {
+                    // Create the calldata
+                    bytes memory callData = abi.encodeWithSignature(
+                        "processBurnedTokens(uint256)",
+                        amount
+                    );
+                    // Call the stability fund's processBurnedTokens function
+                    (bool success, ) = _safeContractCall( stabilityFundName, callData);
                     
-                    try registry.getContractAddress(stabilityFundName) returns (address stabilityFund) {
-                        // Create the calldata
-                        bytes memory callData = abi.encodeWithSignature(
-                            "processBurnedTokens(uint256)",
-                            amount
-                        );
-                        // Call the stability fund's processBurnedTokens function
-                        (bool success, ) = _safeContractCall(stabilityFundName, callData);
-                        
-                        // We don't revert if this call fails to maintain the primary burn functionality
-                        if (success) {
-                            emit BurnNotificationSent(amount);
-                        } else {
-                            emit BurnNotificationFailed(amount, "Call to stability fund failed");
-                        }
-                    } catch {
-                        emit BurnNotificationFailed(amount, "Failed to get stability fund address");
+                    // We don't revert if this call fails to maintain the primary burn functionality
+                    if (success) {
+                        emit BurnNotificationSent(amount);
+                    } else {
+                        emit BurnNotificationFailed(amount, "Call to stability fund failed");
                     }
                 }
             } catch{

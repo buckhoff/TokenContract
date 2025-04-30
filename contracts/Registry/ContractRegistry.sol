@@ -383,7 +383,9 @@ contract ContractRegistry is Initializable, AccessControlEnumerableUpgradeable, 
             (bool success, ) = stabilityFund.call(
                 abi.encodeWithSignature("emergencyPause()")
             );
-            
+            if (!success) {
+                emit EmergencyNotificationFailed(Constants.STABILITY_FUND_NAME);
+            }
         }
 
         // Notify marketplace
@@ -392,6 +394,9 @@ contract ContractRegistry is Initializable, AccessControlEnumerableUpgradeable, 
             (bool success, ) = marketplace.call(
                 abi.encodeWithSignature("pauseMarketplace()")
             );
+            if (!success) {
+                emit EmergencyNotificationFailed(Constants.STABILITY_FUND_NAME);
+            }
         }
 
         // Notify crowdsale
@@ -400,6 +405,9 @@ contract ContractRegistry is Initializable, AccessControlEnumerableUpgradeable, 
             (bool success, ) = crowdsale.call(
                 abi.encodeWithSignature("pausePresale()")
             );
+            if (!success) {
+                emit EmergencyNotificationFailed(Constants.STABILITY_FUND_NAME);
+            }
         }
 
         // Notify staking
@@ -408,6 +416,9 @@ contract ContractRegistry is Initializable, AccessControlEnumerableUpgradeable, 
             (bool success, ) = staking.call(
                 abi.encodeWithSignature("pauseStaking()")
             );
+            if (!success) {
+                emit EmergencyNotificationFailed(Constants.STABILITY_FUND_NAME);
+            }
             
         }
 
@@ -417,6 +428,9 @@ contract ContractRegistry is Initializable, AccessControlEnumerableUpgradeable, 
             (bool success, ) = rewards.call(
                 abi.encodeWithSignature("pauseRewards()")
             );
+            if (!success) {
+                emit EmergencyNotificationFailed(Constants.STABILITY_FUND_NAME);
+            }
         }
 
         emit SystemEmergencyTriggered(msg.sender, _reason);

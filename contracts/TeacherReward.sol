@@ -296,8 +296,6 @@ contract TeacherReward is
         // Get performance multiplier based on reputation and marketplace metrics
         uint256 performanceMultiplier = calculatePerformanceMultiplier(_teacher);
         
-        // Calculate reward based on reputation and time
-        uint256 reputationFactor = (teacher.reputation * reputationMultiplier) / 100;
         pendingReward = (baseRewardRate * performanceMultiplier * daysSinceLastClaim) / performanceMultiplierBase;
         
         // Cap reward at maximum daily reward

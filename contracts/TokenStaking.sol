@@ -129,6 +129,7 @@ contract TokenStaking is
     event RewardsAdded(uint256 amount);
     event RewardRatesAdjusted();
     event PlatformRewardsManagerUpdated(address indexed oldManager, address indexed newManager);
+    event PlatformGovernanceUpdateFailed(address indexed user, string error);
     event UnstakingRequested(address indexed user, uint256 indexed poolId, uint256 amount, uint256 requestTime);
     event UnstakedTokensClaimed(address indexed user, uint256 indexed poolId, uint256 amount);
     event RegistrySet(address indexed registry);
@@ -720,6 +721,27 @@ contract TokenStaking is
             schoolRewardPortion
         );
     }
+
+    /**
+     * @dev Gets stake details for a specific user in a specific pool
+     * @param _poolId ID of the pool
+     * @param _user Address of the user
+     * @return amount Amount staked
+     * @return startTime Timestamp when staking started
+     */
+    function getUserStakeforVoting(uint256 _poolId, address _user) external view returns (
+        uint256 amount,
+        uint256 startTime
+    ) {
+        require(_poolId < stakingPools.length, "TokenStaking: invalid pool ID");
+
+        UserStake storage userStake = userStakes[_poolId][_user];
+
+        return (
+            userStake.amount,
+            userStake.startTime
+        );
+    }
     
     /**
      * @dev Gets details for a specific school
@@ -974,6 +996,9 @@ contract TokenStaking is
                     _user
                 )
             );
+            if (!success){
+                emit PlatformGovernanceUpdateFailed(_user,"TokenStaking: could not update voting power");
+            }
 
             // We don't revert on failure since this is a non-critical operation
         }
@@ -1033,7 +1058,9 @@ contract TokenStaking is
                     _user
                 )
             );
-
+            if(!success){
+                emit PlatformGovernanceUpdateFailed(_user,"TokenStaking: could not update voting power");
+            }
             // We don't revert on failure since this is a non-critical operation
         }
     }

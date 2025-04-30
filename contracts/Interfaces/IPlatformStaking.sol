@@ -196,6 +196,18 @@ interface IPlatformStaking {
         uint256 userRewardPortion,
         uint256 schoolRewardPortion
     );
+
+    /**
+ * @dev Get user stake information
+     * @param _poolId The ID of the staking pool
+     * @param _user The user address
+     * @return amount The amount of tokens staked
+     * @return startTime The timestamp when staking began
+     */
+    function getUserStakeforVoting(uint256 _poolId, address _user) external view returns (
+        uint256 amount,
+        uint256 startTime
+    );
     
     /**
         * @dev Gets the total amount staked by a user across all pools

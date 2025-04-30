@@ -31,6 +31,7 @@ abstract contract RegistryAwareUpgradeable is Initializable, AccessControlEnumer
     event RegistryOfflineModeEnabled();
     event RegistryOfflineModeDisabled();
     event RegistryCallFailed(string action, string reason);
+    event EmergencyNotificationFailed(bytes32 indexed contractName);
     
    /* *//**
      * @dev Modifier to check if the system is not paused
@@ -114,7 +115,6 @@ abstract contract RegistryAwareUpgradeable is Initializable, AccessControlEnumer
             }
         } catch {
             // Registry call failed, use fallback
-            emit RegistryCallFailed("getContractAddress", "Registry call failed");
         }
 
         return _fallbackAddresses[_contractNameBytes32];

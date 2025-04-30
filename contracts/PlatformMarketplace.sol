@@ -62,7 +62,8 @@ contract PlatformMarketplace is
     address private _cachedTokenAddress;
     address private _cachedStabilityFundAddress;
     uint256 private _lastCacheUpdate;
-
+    mapping(uint256 => bool) public isResourceResellable;
+    
     // Events
     event ResourceCreated(uint256 indexed resourceId, address indexed creator, string metadataURI, uint256 price);
     event ResourcePurchased(uint256 indexed resourceId, address indexed buyer, address indexed creator, uint256 price);
@@ -112,7 +113,8 @@ contract PlatformMarketplace is
     // Events for subscription and bulk purchases
     event SubscriptionPurchased(address indexed user, uint256 duration, uint256 endTime);
     event BulkPurchaseDiscountApplied(address indexed buyer, uint256 resourceCount, uint256 discountPercent);
-
+    event ResourceResellableStatusChanged(uint256 indexed resourceId, bool isResellable);
+    
     modifier onlyAdmin() {
         require(hasRole(Constants.ADMIN_ROLE, msg.sender), "PlatformMarketplace: caller is not admin role");
         _;
@@ -464,9 +466,15 @@ contract PlatformMarketplace is
             // Issue refund to buyer
             dispute.refunded = true;
 
-            // Use feeRecipient's balance (platform) to refund
+            // Calculate platform fee from the original amount
             uint256 platformFee = (dispute.amount * platformFeePercent) / 10000;
-            require(token.transferFrom(feeRecipient, dispute.buyer, dispute.amount), "PlatformMarketplace: refund failed");
+
+            // Transfer the refund to the buyer from the fee recipient
+            require(token.transferFrom(feeRecipient, dispute.buyer, platformFee), "PlatformMarketplace: platform fee refund failed");
+
+            // Transfer the creator's portion from the creator back to the buyer
+            uint256 creatorAmount = dispute.amount - platformFee;
+            require(token.transferFrom(dispute.seller, dispute.buyer, creatorAmount), "PlatformMarketplace: creator refund failed");
         }
 
         emit DisputeResolved(_resourceId, _refund);
@@ -658,13 +666,16 @@ contract PlatformMarketplace is
      * @param _resourceId Resource ID
      * @param _isResellable Whether the resource can be resold
      */
-    function setResourceResellable(uint256 _resourceId, bool _isResellable) external {
+    function setResourceResellable(uint256 _resourceId, bool _isResellable) external  {
         Resource storage resource = resources[_resourceId];
         require(resource.creator == msg.sender || hasRole(Constants.ADMIN_ROLE, msg.sender), "PlatformMarketplace: not authorized");
         require(resource.creator != address(0), "PlatformMarketplace: resource does not exist");
 
-        // Update resellable status in new struct field or mapping
-        // Implementation depends on how you want to store this
+        // Update resellable status
+        isResourceResellable[_resourceId] = _isResellable;
+
+        // Optionally add an event to track this change
+        emit ResourceResellableStatusChanged(_resourceId, _isResellable);
     }
 
     /**

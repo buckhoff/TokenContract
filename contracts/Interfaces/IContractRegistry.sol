@@ -17,7 +17,8 @@ interface IContractRegistry {
     event EmergencyRecoveryInitiated(address indexed recoveryAdmin, uint256 timestamp);
     event EmergencyRecoveryCompleted(address indexed recoveryAdmin);
     event RecoveryApprovalsUpdated(uint256 requiredApprovals);
-
+    event EmergencyNotificationFailed(bytes32 indexed contractName);
+    
     /**
      * @dev Register a new contract in the registry
      * @param _name Name of the contract (as bytes32)
