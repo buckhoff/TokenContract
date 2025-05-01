@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlEnumerableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {Constants} from "../Libraries/Constants.sol";
 import "../Interfaces/IContractRegistry.sol";
 
@@ -12,7 +13,13 @@ import "../Interfaces/IContractRegistry.sol";
  * @dev Central registry to manage contract addresses and versions for the TeacherSupport ecosystem
  * This facilitates cross-contract communication and upgradability
  */
-contract ContractRegistry is Initializable, AccessControlEnumerableUpgradeable,  ReentrancyGuardUpgradeable, IContractRegistry {
+contract ContractRegistry is 
+    Initializable, 
+    AccessControlEnumerableUpgradeable, 
+    UUPSUpgradeable, 
+    ReentrancyGuardUpgradeable, 
+    IContractRegistry 
+{
     
     // List of registered contract names
     bytes32[] public registeredContracts;
@@ -37,32 +44,17 @@ contract ContractRegistry is Initializable, AccessControlEnumerableUpgradeable, 
     mapping(bytes32 => bytes4) private contractInterfaces;
 
     uint256 public recoveryInitiatedTimestamp;
-    uint256 public recoveryTimeout = 24 hours;
+    uint256 public recoveryTimeout;
     
     event SystemHasBeenPaused(bytes32 indexed contractName);
     event SystemEmergencyTriggered(address indexed triggeredBy, string reason);
     
-    modifier onlyAdmin() {
-        require(hasRole(Constants.ADMIN_ROLE, msg.sender), "ContractRegistry: caller is not admin role");
-        _;
-    }
-
-    modifier onlyUpgrader() {
-        require(hasRole(Constants.UPGRADER_ROLE, msg.sender), "ContractRegistry: caller is not upgrader role");
-        _;
-    }
-
-    modifier onlyEmergency() {
-        require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "ContractRegistry: caller is not emergency role");
-        _;
-    }
-    
     /**
-     * @dev Constructor sets the initial admin
+     * @dev Constructor 
      */
-    constructor() {
-        _disableInitializers();
-    }
+    //constructor() {
+    //    _disableInitializers();
+    //}
 
     /**
      * @dev Initialize function to replace constructor
@@ -70,20 +62,29 @@ contract ContractRegistry is Initializable, AccessControlEnumerableUpgradeable, 
     function initialize() initializer public {
         __AccessControl_init();
         __ReentrancyGuard_init();
+        __UUPSUpgradeable_init();
         
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(Constants.ADMIN_ROLE, msg.sender);
         _grantRole(Constants.UPGRADER_ROLE, msg.sender);
         _grantRole(Constants.EMERGENCY_ROLE, msg.sender);
         systemPaused = false;
+        recoveryTimeout = 24 hours;
     }
 
+    /**
+     * @dev Required override for UUPS proxy pattern
+     */
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(Constants.ADMIN_ROLE) {
+        // Additional upgrade logic can be added here
+    }
+    
     /**
      * @dev Register a new contract in the registry
      * @param _name Name of the contract (as bytes32)
      * @param _address Address of the contract
      */
-    function registerContract(bytes32 _name, address _address, bytes4 _interfaceId) external onlyAdmin nonReentrant {
+    function registerContract(bytes32 _name, address _address, bytes4 _interfaceId) external onlyRole(Constants.ADMIN_ROLE) nonReentrant {
         require(_address != address(0), "ContractRegistry: zero address");
         require(contracts[_name] == address(0), "ContractRegistry: already registered");
 
@@ -138,7 +139,7 @@ contract ContractRegistry is Initializable, AccessControlEnumerableUpgradeable, 
      * @param _newAddress New address of the contract
      * @param _interfaceId set the new interface ID
      */
-    function updateContract(bytes32 _name, address _newAddress, bytes4 _interfaceId) external onlyUpgrader nonReentrant {
+    function updateContract(bytes32 _name, address _newAddress, bytes4 _interfaceId) external onlyRole(Constants.UPGRADER_ROLE) nonReentrant {
         require(_newAddress != address(0), "ContractRegistry: zero address");
         require(contracts[_name] != address(0), "ContractRegistry: not registered");
         require(contracts[_name] != _newAddress, "ContractRegistry: same address");
@@ -195,7 +196,7 @@ contract ContractRegistry is Initializable, AccessControlEnumerableUpgradeable, 
      * @param _name Name of the contract (as bytes32)
      * @param _isActive Whether the contract is active
      */
-    function setContractStatus(bytes32 _name, bool _isActive) external onlyAdmin {
+    function setContractStatus(bytes32 _name, bool _isActive) external onlyRole(Constants.ADMIN_ROLE) {
         require(contracts[_name] != address(0), "ContractRegistry: not registered");
 
         contractActive[_name] = _isActive;
@@ -264,7 +265,7 @@ contract ContractRegistry is Initializable, AccessControlEnumerableUpgradeable, 
     /**
      * @dev Pause the entire system in case of emergency
      */
-    function pauseSystem() external onlyAdmin onlyEmergency {
+    function pauseSystem() external onlyRole(Constants.ADMIN_ROLE) onlyRole(Constants.EMERGENCY_ROLE) {
         require(!systemPaused, "ContractRegistry: already paused");
         systemPaused = true;
         emit SystemPaused(msg.sender);
@@ -273,7 +274,7 @@ contract ContractRegistry is Initializable, AccessControlEnumerableUpgradeable, 
     /**
      * @dev Resume the system after emergency
      */
-    function resumeSystem() external onlyAdmin {
+    function resumeSystem() external onlyRole(Constants.ADMIN_ROLE) {
         require(systemPaused, "ContractRegistry: not paused");
         systemPaused = false;
         emit SystemResumed(msg.sender);
@@ -300,7 +301,7 @@ contract ContractRegistry is Initializable, AccessControlEnumerableUpgradeable, 
     }
 
     // Add emergency recovery functions
-    function initiateEmergencyRecovery() external onlyEmergency {
+    function initiateEmergencyRecovery() external onlyRole(Constants.EMERGENCY_ROLE) {
         require(systemPaused, "ContractRegistry: system not paused");
         inEmergencyRecovery = true;
         recoveryInitiatedTimestamp = block.timestamp;
@@ -313,7 +314,7 @@ contract ContractRegistry is Initializable, AccessControlEnumerableUpgradeable, 
         emit EmergencyRecoveryInitiated(msg.sender, block.timestamp);
     }
 
-    function approveRecovery() external onlyAdmin {
+    function approveRecovery() external onlyRole(Constants.ADMIN_ROLE) {
         require(inEmergencyRecovery, "ContractRegistry: not in recovery mode");
         require(!emergencyRecoveryApprovals[msg.sender], "ContractRegistry: already approved");
 
@@ -346,7 +347,7 @@ contract ContractRegistry is Initializable, AccessControlEnumerableUpgradeable, 
      * @dev Utility to set the min number of recovery approvals
      * @param _required approvals needed
      */
-    function setRequiredRecoveryApprovals(uint256 _required) external onlyAdmin {
+    function setRequiredRecoveryApprovals(uint256 _required) external onlyRole(Constants.ADMIN_ROLE) {
         require(_required > 0, "ContractRegistry: invalid approval count");
         requiredRecoveryApprovals = _required;
         emit RecoveryApprovalsUpdated(_required);
@@ -358,7 +359,7 @@ contract ContractRegistry is Initializable, AccessControlEnumerableUpgradeable, 
      * @dev Set timeout
      * @param _timeout new timeout to set
      */
-    function setRecoveryTimeout(uint256 _timeout) external onlyAdmin {
+    function setRecoveryTimeout(uint256 _timeout) external onlyRole(Constants.ADMIN_ROLE) {
         require(_timeout >= 1 hours, "ContractRegistry: timeout too short");
         require(_timeout <= 7 days, "ContractRegistry: timeout too long");
         recoveryTimeout = _timeout;
@@ -368,7 +369,7 @@ contract ContractRegistry is Initializable, AccessControlEnumerableUpgradeable, 
      * @dev Triggers system-wide emergency mode
      * @param _reason Reason for the emergency
      */
-    function triggerSystemEmergency(string memory _reason) external onlyEmergency {
+    function triggerSystemEmergency(string memory _reason) external onlyRole(Constants.EMERGENCY_ROLE) {
         
         // Pause the registry
         try this.pauseSystem() {

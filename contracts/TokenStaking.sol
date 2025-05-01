@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
 import {Constants} from "./Libraries/Constants.sol";
 import {IPlatformStaking} from "./Interfaces/IPlatformStaking.sol";
@@ -16,7 +17,8 @@ contract TokenStaking is
     OwnableUpgradeable,
     ReentrancyGuardUpgradeable,
     RegistryAwareUpgradeable,
-    IPlatformStaking
+    IPlatformStaking,
+    UUPSUpgradeable
 {
     
     // Struct for staking pool information
@@ -45,8 +47,6 @@ contract TokenStaking is
         uint256 totalRewards;         // Total rewards earned by school
         bool isActive;                // Whether school is active
     }
-
-   
 
     ERC20Upgradeable internal token;
     
@@ -84,23 +84,6 @@ contract TokenStaking is
     address private _cachedTokenAddress;
     address private _cachedStabilityFundAddress;
     uint256 private _lastCacheUpdate;
-    
-    /**
-   * @dev Modifier to restrict certain functions to the price oracle
-     */
-    modifier onlyManager() {
-        require(hasRole(Constants.MANAGER_ROLE, msg.sender), "TokenStaking: not price manager role");
-        _;
-    }
-    modifier onlyAdmin() {
-        require(hasRole(Constants.ADMIN_ROLE, msg.sender), "TokenStaking: caller is not admin role");
-        _;
-    }
-
-    modifier onlyEmergency() {
-        require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "TokenStaking: caller is not emergency role");
-        _;
-    }
 
     modifier whenContractNotPaused() {
         if (address(registry) != address(0)) {
@@ -138,9 +121,9 @@ contract TokenStaking is
     event AddressRemovedFromCooldown(address indexed cooldownaddress);
     event FlashLoanProtectionConfigured(uint256 maxDailyUserVolume, uint256 maxSingleConversionAmount, uint256 minTimeBetweenActions, bool enabled);
 
-    constructor(){
-        _disableInitializers();
-    }
+    //constructor(){
+    //    _disableInitializers();
+    //}
     /**
      * @dev Modifier to restrict school reward withdrawals to platform manager
      */
@@ -176,6 +159,13 @@ contract TokenStaking is
     }
 
     /**
+     * @dev Required override for UUPS proxy pattern
+     */
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(Constants.ADMIN_ROLE) {
+        // Additional upgrade logic can be added here
+    }
+    
+    /**
      * @dev Sets the registry contract address
      * @param _registry Address of the registry contract
      */
@@ -188,7 +178,7 @@ contract TokenStaking is
      * @dev Update contract references from registry
      * This ensures contracts always have the latest addresses
      */
-    function updateContractReferences() external onlyAdmin {
+    function updateContractReferences() external onlyRole(Constants.ADMIN_ROLE) {
         require(address(registry) != address(0), "TokenStaking: registry not set");
 
         // Update TeachToken reference
@@ -268,7 +258,7 @@ contract TokenStaking is
         uint256 _rewardRate,
         uint256 _lockDuration,
         uint256 _earlyWithdrawalFee
-    ) external onlyAdmin returns (uint256) {
+    ) external onlyRole(Constants.ADMIN_ROLE) returns (uint256) {
         require(bytes(_name).length > 0, "TokenStaking: empty pool name");
         require(_earlyWithdrawalFee <= 3000, "TokenStaking: fee too high");
         
@@ -293,7 +283,7 @@ contract TokenStaking is
      * @param _schoolAddress Address of the school
      * @param _name Name of the school
      */
-    function registerSchool(address _schoolAddress, string memory _name) external onlyAdmin {
+    function registerSchool(address _schoolAddress, string memory _name) external onlyRole(Constants.ADMIN_ROLE) {
         require(_schoolAddress != address(0), "TokenStaking: zero school address");
         require(bytes(_name).length > 0, "TokenStaking: empty school name");
         require(!schools[_schoolAddress].isRegistered, "TokenStaking: already registered");
@@ -316,7 +306,7 @@ contract TokenStaking is
      * @param _name New name of the school
      * @param _isActive Whether the school is active
      */
-    function updateSchool(address _schoolAddress, string memory _name, bool _isActive) external onlyAdmin {
+    function updateSchool(address _schoolAddress, string memory _name, bool _isActive) external onlyRole(Constants.ADMIN_ROLE) {
         require(schools[_schoolAddress].isRegistered, "TokenStaking: school not registered");
         
         schools[_schoolAddress].name = _name;
@@ -329,7 +319,7 @@ contract TokenStaking is
      * @dev Updates the platform rewards manager address
      * @param _newManager New platform rewards manager address
      */
-    function updatePlatformRewardsManager(address _newManager) external onlyAdmin {
+    function updatePlatformRewardsManager(address _newManager) external onlyRole(Constants.ADMIN_ROLE) {
         require(_newManager != address(0), "TokenStaking: zero manager address");
         
         emit PlatformRewardsManagerUpdated(platformRewardsManager, _newManager);
@@ -352,7 +342,7 @@ contract TokenStaking is
         uint256 _lockDuration,
         uint256 _earlyWithdrawalFee,
         bool _isActive
-    ) external onlyAdmin {
+    ) external onlyRole(Constants.ADMIN_ROLE) {
         require(_poolId < stakingPools.length, "TokenStaking: invalid pool ID");
         require(_earlyWithdrawalFee <= 3000, "TokenStaking: fee too high");
         
@@ -545,7 +535,7 @@ contract TokenStaking is
      * @param _school Address of the school
      * @param _amount Amount to withdraw
      */
-    function withdrawSchoolRewards(address _school, uint256 _amount) external onlyManager nonReentrant {
+    function withdrawSchoolRewards(address _school, uint256 _amount) external onlyRole(Constants.MANAGER_ROLE) nonReentrant {
         require(schools[_school].isRegistered, "TokenStaking: school not registered");
         require(_amount > 0, "TokenStaking: zero amount");
         require(_amount <= schools[_school].totalRewards, "TokenStaking: insufficient school rewards");
@@ -839,7 +829,7 @@ contract TokenStaking is
     * @dev Updates the cooldown period for unstaking
     * @param _cooldownPeriod New cooldown period in seconds
     */
-    function setCooldownPeriod(uint96 _cooldownPeriod) external onlyAdmin {
+    function setCooldownPeriod(uint96 _cooldownPeriod) external onlyRole(Constants.ADMIN_ROLE) {
         cooldownPeriod = _cooldownPeriod;
     }
 
@@ -929,7 +919,7 @@ contract TokenStaking is
     * @dev Sets the emergency unstake fee
     * @param _fee Fee percentage (scaled by 100)
     */
-    function setEmergencyUnstakeFee(uint16 _fee) external onlyAdmin {
+    function setEmergencyUnstakeFee(uint16 _fee) external onlyRole(Constants.ADMIN_ROLE) {
         require(_fee <= 5000, "TokenStaking: fee too high"); // Max 50%
         emergencyUnstakeFee = _fee;
     }
@@ -939,7 +929,7 @@ contract TokenStaking is
     * @param _poolId ID of the pool to unstake from
     * @param _amount Amount of tokens to unstake
     */
-    function emergencyUnstake(uint256 _poolId, uint256 _amount) external onlyEmergency nonReentrant {
+    function emergencyUnstake(uint256 _poolId, uint256 _amount) external onlyRole(Constants.EMERGENCY_ROLE) nonReentrant {
         require(_poolId < stakingPools.length, "TokenStaking: invalid pool ID");
         require(_amount > 0, "TokenStaking: zero amount");
 

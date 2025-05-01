@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
 import {Constants} from "./Libraries/Constants.sol";
 import {IStabilityFund} from "./Interfaces/IStabilityFund.sol";
@@ -17,7 +18,8 @@ contract PlatformStabilityFund is
     OwnableUpgradeable,
     ReentrancyGuardUpgradeable,
     RegistryAwareUpgradeable,
-    IStabilityFund
+    IStabilityFund,
+    UUPSUpgradeable
 {
 
     struct PriceObservation {
@@ -190,9 +192,9 @@ contract PlatformStabilityFund is
     /**
      * @dev Constructor
      */
-    constructor(){
-        _disableInitializers();
-    }
+    //constructor(){
+    //    _disableInitializers();
+    //}
 
     /**
      * @dev Initializes the contract replacing the constructor
@@ -260,6 +262,13 @@ contract PlatformStabilityFund is
         flashLoanProtectionEnabled = true;
     }
 
+    /**
+     * @dev Required override for UUPS proxy pattern
+     */
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(Constants.ADMIN_ROLE) {
+        // Additional upgrade logic can be added here
+    }
+    
     /**
     * @dev Sets the registry contract address
     * @param _registry Address of the registry contract

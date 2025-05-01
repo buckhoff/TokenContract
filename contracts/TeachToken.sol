@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20BurnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
 import {Constants} from "./Libraries/Constants.sol";
 
@@ -15,6 +16,7 @@ contract TeachToken is
     ERC20Upgradeable,
     ERC20BurnableUpgradeable,
     ReentrancyGuardUpgradeable,
+    UUPSUpgradeable,
     RegistryAwareUpgradeable
 {
 
@@ -66,14 +68,14 @@ contract TeachToken is
             require(!paused, "TeachToken: contract is paused");
         }
         _;
-    }    
+    }
     
     /**
      * @dev Constructor that initializes the token with name, symbol, and roles
      */
-    constructor() {
-        _disableInitializers();
-    }
+    //constructor() {
+    //    _disableInitializers();
+    //}
 
     /**
     * @dev Initializes the contract replacing the constructor
@@ -83,6 +85,7 @@ contract TeachToken is
         __ERC20Burnable_init();
         __AccessControl_init();
         __ReentrancyGuard_init();
+        __UUPSUpgradeable_init();
         
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(Constants.ADMIN_ROLE, msg.sender);
@@ -92,6 +95,13 @@ contract TeachToken is
         requiredRecoveryApprovals = 3;
     }
 
+    /**
+     * @dev Required override for UUPS proxy pattern
+     */
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(Constants.ADMIN_ROLE) {
+        // Additional upgrade logic can be added here
+    }
+    
     /**
      * @dev Sets the registry contract address
      * @param _registry Address of the registry contract

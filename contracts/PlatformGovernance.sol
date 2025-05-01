@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
 import "./Interfaces/IPlatformStaking.sol";
 import {Constants} from "./Libraries/Constants.sol";
@@ -16,6 +17,7 @@ import "./Interfaces/IPlatformGovernance.sol";
 contract PlatformGovernance is
     RegistryAwareUpgradeable,
     OwnableUpgradeable,
+    UUPSUpgradeable,
     ReentrancyGuardUpgradeable,
     IPlatformGovernance
 {
@@ -159,22 +161,12 @@ contract PlatformGovernance is
         _;
     }
     
-    modifier onlyAdmin() {
-        require(hasRole(Constants.ADMIN_ROLE, msg.sender), "PlatformGovernance: caller is not admin role");
-        _;
-    }
-
-    modifier onlyEmergency() {
-        require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "PlatformGovernance: caller is not emergency role");
-        _;
-    }
-    
     /**
      * @dev Constructor
      */
-    constructor(){
-        _disableInitializers();
-    }
+    //constructor(){
+    //    _disableInitializers();
+    //}
     
     /**
      * @dev Initializer sets the token address and governance parameters
@@ -217,6 +209,13 @@ contract PlatformGovernance is
         emergencyPeriod = 24; // 24 hours emergency period by default
         requiredGuardians = 3; // Require 3 guardians to cancel a proposal
         allowedTokens[_token] = true; // Allow platform token by default
+    }
+
+    /**
+     * @dev Required override for UUPS proxy pattern
+     */
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(Constants.ADMIN_ROLE) {
+        // Additional upgrade logic can be added here
     }
     
     /**
@@ -476,7 +475,7 @@ contract PlatformGovernance is
     * @dev Sets the timelock delay for parameter changes
     * @param _newDelay New delay in seconds
      */
-    function setParameterChangeDelay(uint256 _newDelay) external onlyAdmin {
+    function setParameterChangeDelay(uint256 _newDelay) external onlyRole(Constants.ADMIN_ROLE) {
         require(_newDelay <= 30 days, "PlatformGovernance: delay too long");
 
         emit TimelockDelayUpdated(parameterChangeDelay, _newDelay);
@@ -553,7 +552,7 @@ contract PlatformGovernance is
     /**
     * @dev Cancels a scheduled parameter change
     */
-    function cancelParameterChange() external onlyAdmin {
+    function cancelParameterChange() external onlyRole(Constants.ADMIN_ROLE) {
         require(pendingChange.isPending, "PlatformGovernance: no pending change");
 
         // Clear the pending change
@@ -573,7 +572,7 @@ contract PlatformGovernance is
         uint256 _quorumThreshold,
         uint256 _executionDelay,
         uint256 _executionPeriod
-    ) external onlyAdmin {
+    ) external onlyRole(Constants.ADMIN_ROLE) {
         require(_minVotingPeriod <= _maxVotingPeriod, "PlatformGovernance: invalid voting periods");
         require(_quorumThreshold <= 5000, "PlatformGovernance: quorum too high");
         require(!pendingChange.isPending, "PlatformGovernance: change already pending");
@@ -611,7 +610,7 @@ contract PlatformGovernance is
         address _stakingContract,
         uint16 _maxStakingMultiplier,
         uint16 _maxStakingPeriod
-    ) external onlyAdmin {
+    ) external onlyRole(Constants.ADMIN_ROLE) {
         require(_stakingContract != address(0), "PlatformGovernance: zero staking address");
         require(_maxStakingMultiplier >= 100, "PlatformGovernance: multiplier must be >= 100");
         require(_maxStakingPeriod > 0, "PlatformGovernance: period must be > 0");
@@ -719,7 +718,7 @@ contract PlatformGovernance is
 	* @param _token Address of the token
 	* @param _allowed Whether the token is allowed
 	*/
-	function setTokenAllowance(address _token, bool _allowed) external onlyAdmin {
+	function setTokenAllowance(address _token, bool _allowed) external onlyRole(Constants.ADMIN_ROLE) {
 		allowedTokens[_token] = _allowed;
 		emit TokenAllowanceChanged(_token, _allowed);
 	}
@@ -783,7 +782,7 @@ contract PlatformGovernance is
 	* @dev Add a new guardian address
 	* @param _guardian Address to add as guardian
 	*/
-	function addGuardian(address _guardian) external onlyAdmin {
+	function addGuardian(address _guardian) external onlyRole(Constants.ADMIN_ROLE) {
 		require(_guardian != address(0), "PlatformGovernance: zero guardian address");
 		require(!guardians[_guardian], "PlatformGovernance: already guardian");
 		
@@ -795,7 +794,7 @@ contract PlatformGovernance is
 	* @dev Remove a guardian address
 	* @param _guardian Address to remove as guardian
 	*/
-	function removeGuardian(address _guardian) external onlyAdmin {
+	function removeGuardian(address _guardian) external onlyRole(Constants.ADMIN_ROLE) {
 		require(guardians[_guardian], "PlatformGovernance: not a guardian");
 		
 		guardians[_guardian] = false;
@@ -807,7 +806,7 @@ contract PlatformGovernance is
 	* @param _emergencyPeriod Time in hours to allow emergency cancellation
 	* @param _requiredGuardians Minimum guardians required to cancel proposal
 	*/
-	function setEmergencyParameters(uint16 _emergencyPeriod, uint16 _requiredGuardians) external onlyAdmin {
+	function setEmergencyParameters(uint16 _emergencyPeriod, uint16 _requiredGuardians) external onlyRole(Constants.ADMIN_ROLE) {
 		emergencyPeriod = _emergencyPeriod;
 		requiredGuardians = _requiredGuardians;
 	}
@@ -863,7 +862,7 @@ contract PlatformGovernance is
      * @dev Sets the registry contract address
      * @param _registry Address of the registry contract
      */
-    function setRegistry(address _registry) external onlyAdmin {
+    function setRegistry(address _registry) external onlyRole(Constants.ADMIN_ROLE) {
         _setRegistry(_registry, Constants.GOVERNANCE_NAME);
         emit RegistrySet(_registry);
     }
@@ -872,7 +871,7 @@ contract PlatformGovernance is
      * @dev Update contract references from registry
      * This ensures contracts always have the latest addresses
      */
-    function updateContractReferences() external onlyAdmin {
+    function updateContractReferences() external onlyRole(Constants.ADMIN_ROLE) {
         require(address(registry) != address(0), "PlatformGovernance: registry not set");
 
         // Update token reference
@@ -900,14 +899,14 @@ contract PlatformGovernance is
     }
 
     // Add emergency recovery for governance operations
-    function setRecoveryRequirements(uint16 _requiredGuardians, uint16 _emergencyPeriod) external onlyAdmin {
+    function setRecoveryRequirements(uint16 _requiredGuardians, uint16 _emergencyPeriod) external onlyRole(Constants.ADMIN_ROLE) {
         requiredGuardians = _requiredGuardians;
         emergencyPeriod = _emergencyPeriod;
         emit RecoveryRequirementsUpdated(_requiredGuardians, _emergencyPeriod);
     }
 
     // Add proposal cancellation by governor consensus
-    function cancelProposalByGovernance(uint256 _proposalId, string calldata _reason) external onlyAdmin {
+    function cancelProposalByGovernance(uint256 _proposalId, string calldata _reason) external onlyRole(Constants.ADMIN_ROLE) {
         ProposalState currentState = state(_proposalId);
         require(
             currentState == ProposalState.Queued ||
@@ -1009,7 +1008,7 @@ contract PlatformGovernance is
  * This will pause all connected contracts through the registry
  * @param _reason Reason for the emergency
  */
-    function triggerSystemEmergency(string calldata _reason) external override onlyEmergency {
+    function triggerSystemEmergency(string calldata _reason) external override onlyRole(Constants.EMERGENCY_ROLE) {
         require(address(registry) != address(0), "PlatformGovernance: registry not set");
 
         // Directly trigger system emergency in the registry

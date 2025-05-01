@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
 import {Constants} from "./Libraries/Constants.sol";
 
@@ -18,7 +19,8 @@ interface IPlatformStabilityFund {
  */
 contract PlatformMarketplace is 
     Initializable,
-    OwnableUpgradeable, 
+    OwnableUpgradeable,
+    UUPSUpgradeable,
     ReentrancyGuardUpgradeable,
     RegistryAwareUpgradeable
 {
@@ -114,16 +116,6 @@ contract PlatformMarketplace is
     event SubscriptionPurchased(address indexed user, uint256 duration, uint256 endTime);
     event BulkPurchaseDiscountApplied(address indexed buyer, uint256 resourceCount, uint256 discountPercent);
     event ResourceResellableStatusChanged(uint256 indexed resourceId, bool isResellable);
-    
-    modifier onlyAdmin() {
-        require(hasRole(Constants.ADMIN_ROLE, msg.sender), "PlatformMarketplace: caller is not admin role");
-        _;
-    }
-
-    modifier onlyEmergency() {
-        require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "PlatformMarketplace: caller is not emergency role");
-        _;
-    }
 
     modifier whenContractNotPaused(){
         if (address(registry) != address(0)) {
@@ -143,9 +135,9 @@ contract PlatformMarketplace is
     /**
      * @dev Constructor
      */
-    constructor(){
-       _disableInitializers();
-    }
+    //constructor(){
+    //   _disableInitializers();
+    //}
 
     /**
      * @dev Initializes the contract replacing the constructor
@@ -187,10 +179,17 @@ contract PlatformMarketplace is
     }
 
     /**
+     * @dev Required override for UUPS proxy pattern
+     */
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(Constants.ADMIN_ROLE) {
+        // Additional upgrade logic can be added here
+    }
+    
+    /**
      * @dev Sets the registry contract address
      * @param _registry Address of the registry contract
      */
-    function setRegistry(address _registry) external onlyAdmin {
+    function setRegistry(address _registry) external onlyRole(Constants.ADMIN_ROLE) {
         _setRegistry(_registry, Constants.MARKETPLACE_NAME);
         emit RegistrySet(_registry);
     }
@@ -199,7 +198,7 @@ contract PlatformMarketplace is
      * @dev Update contract references from registry
      * This ensures contracts always have the latest addresses
      */
-    function updateContractReferences() external onlyAdmin {
+    function updateContractReferences() external onlyRole(Constants.ADMIN_ROLE) {
         require(address(registry) != address(0), "PlatformMarketplace: registry not set");
 
         // Update Token reference
@@ -308,7 +307,7 @@ contract PlatformMarketplace is
      * @dev Updates the platform fee percentage
      * @param _newFeePercent New fee percentage (e.g., 5% = 500)
      */
-    function updatePlatformFee(uint256 _newFeePercent) external onlyAdmin {
+    function updatePlatformFee(uint256 _newFeePercent) external onlyRole(Constants.ADMIN_ROLE) {
         require(_newFeePercent <= 3000, "PlatformMarketplace: fee too high");
         platformFeePercent = _newFeePercent;
         emit PlatformFeeUpdated(_newFeePercent);
@@ -318,7 +317,7 @@ contract PlatformMarketplace is
      * @dev Updates the fee recipient address
      * @param _newFeeRecipient New fee recipient address
      */
-    function updateFeeRecipient(address _newFeeRecipient) external onlyAdmin {
+    function updateFeeRecipient(address _newFeeRecipient) external onlyRole(Constants.ADMIN_ROLE) {
         require(_newFeeRecipient != address(0), "PlatformMarketplace: zero fee recipient");
         feeRecipient = _newFeeRecipient;
         emit FeeRecipientUpdated(_newFeeRecipient);
@@ -393,7 +392,7 @@ contract PlatformMarketplace is
         paused = false;
     }
 
-    function setStabilityFund(address _stabilityFund) external onlyAdmin {
+    function setStabilityFund(address _stabilityFund) external onlyRole(Constants.ADMIN_ROLE) {
         require(_stabilityFund != address(0), "PlatformMarketplace: zero address");
         stabilityFund = IPlatformStabilityFund(_stabilityFund);
     }
@@ -454,7 +453,7 @@ contract PlatformMarketplace is
      * @param _resourceId Resource ID of the dispute
      * @param _refund Whether to refund the buyer
      */
-    function resolveDispute(uint256 _resourceId, bool _refund) external onlyAdmin nonReentrant {
+    function resolveDispute(uint256 _resourceId, bool _refund) external onlyRole(Constants.ADMIN_ROLE) nonReentrant {
         DisputeInfo storage dispute = resourceDisputes[_resourceId];
         require(!dispute.resolved, "PlatformMarketplace: already resolved");
         require(dispute.buyer != address(0), "PlatformMarketplace: dispute does not exist");
@@ -484,7 +483,7 @@ contract PlatformMarketplace is
      * @dev Sets the dispute resolution period
      * @param _newPeriod New period in seconds
      */
-    function setDisputeResolutionPeriod(uint256 _newPeriod) external onlyAdmin {
+    function setDisputeResolutionPeriod(uint256 _newPeriod) external onlyRole(Constants.ADMIN_ROLE) {
         require(_newPeriod > 0, "PlatformMarketplace: zero period");
         disputeResolutionPeriod = _newPeriod;
     }
@@ -529,7 +528,7 @@ contract PlatformMarketplace is
      * @param _monthlyFee Monthly subscription fee
      * @param _yearlyDiscount Yearly subscription discount percentage
      */
-    function setSubscriptionFees(uint256 _monthlyFee, uint256 _yearlyDiscount) external onlyAdmin {
+    function setSubscriptionFees(uint256 _monthlyFee, uint256 _yearlyDiscount) external onlyRole(Constants.ADMIN_ROLE) {
         require(_yearlyDiscount <= 5000, "PlatformMarketplace: discount too high");
         monthlySubscriptionFee = _monthlyFee;
         yearlySubscriptionDiscount = _yearlyDiscount;
@@ -622,7 +621,7 @@ contract PlatformMarketplace is
     function updateDiscountTiers(
         uint256[] memory _minAmounts,
         uint256[] memory _discountPercents
-    ) external onlyAdmin {
+    ) external onlyRole(Constants.ADMIN_ROLE) {
         require(_minAmounts.length == _discountPercents.length, "PlatformMarketplace: arrays length mismatch");
         require(_minAmounts.length > 0, "PlatformMarketplace: empty tiers");
 
@@ -708,13 +707,13 @@ contract PlatformMarketplace is
     }
     
     // Add emergency recovery functions
-    function initiateEmergencyRecovery() external onlyEmergency {
+    function initiateEmergencyRecovery() external onlyRole(Constants.EMERGENCY_ROLE) {
         require(paused, "Marketplace: not paused");
         inEmergencyRecovery = true;
         emit EmergencyRecoveryInitiated(msg.sender, block.timestamp);
     }
 
-    function approveRecovery() external onlyAdmin {
+    function approveRecovery() external onlyRole(Constants.ADMIN_ROLE) {
         require(inEmergencyRecovery, "Marketplace: not in recovery mode");
         require(!emergencyRecoveryApprovals[msg.sender], "Marketplace: already approved");
 

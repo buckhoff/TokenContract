@@ -4,9 +4,11 @@ pragma solidity ^0.8.29;
 import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
 import {VestingCalculations} from "./Libraries/VestingCalculations.sol";
 import {Constants} from "./Libraries/Constants.sol";
+import {PresaleTiers} from "./Libraries/PresaleTiers.sol";
 
 /**
  * @title GenericTokenPresale
@@ -15,20 +17,11 @@ import {Constants} from "./Libraries/Constants.sol";
 contract TokenCrowdSale is
     OwnableUpgradeable,
     ReentrancyGuardUpgradeable,
-    RegistryAwareUpgradeable
+    RegistryAwareUpgradeable,
+    UUPSUpgradeable
 {
     
-    // Presale tiers structure
-    struct PresaleTier {
-        uint96 price;         // Price in USD (scaled by 1e6)
-        uint96 allocation;    // Total allocation for this tier
-        uint96 sold;          // Amount sold in this tier
-        uint96 minPurchase;   // Minimum purchase amount in USD
-        uint96 maxPurchase;   // Maximum purchase amount in USD
-        uint16 vestingTGE;    // Percentage released at TGE (scaled by 100)
-        uint16 vestingMonths; // Remaining vesting period in months
-        bool isActive;        // Whether this tier is currently active
-    }    
+    using PresaleTiers for PresaleTiers.PresaleTier[];
 
     // User purchase tracking
     struct Purchase {
@@ -66,7 +59,7 @@ contract TokenCrowdSale is
     ERC20Upgradeable public paymentToken;
 
     // Presale tiers
-    PresaleTier[] public tiers;
+    PresaleTiers.PresaleTier[] public tiers;
 
     // Mapping from user address to purchase info
     mapping(address => Purchase) public purchases;
@@ -172,9 +165,9 @@ contract TokenCrowdSale is
         _;
     }
     
-    constructor(){
-        _disableInitializers();
-    }
+    //constructor(){
+    //    _disableInitializers();
+    // }
 
     /**
      * @dev Initializer function to replace constructor
@@ -187,6 +180,7 @@ contract TokenCrowdSale is
         __Ownable_init(msg.sender);
         __ReentrancyGuard_init();
         __AccessControl_init();
+        __UUPSUpgradeable_init();
         
         paymentToken = _paymentToken;
         treasury = _treasury;
@@ -198,95 +192,10 @@ contract TokenCrowdSale is
 
         _resourceIdCounter = 1;
         
-        // Initialize the 7 tiers with our pricing structure
-        // Prices are in USD scaled by 1e6 (e.g., $0.018 = 18000)
-
-        // Tier 1:
-        tiers.push(PresaleTier({
-            price: 35000, // $0.035
-            allocation: 75_000_000 * 10**18, // 75M tokens
-            sold: 0,
-            minPurchase: 100 * PRICE_DECIMALS, // $100 min
-            maxPurchase: 50_000 * PRICE_DECIMALS, // $50,000 max
-            vestingTGE: 10, // 10% at TGE
-            vestingMonths: 18, // 18 months vesting
-            isActive: false
-        }));
-
-        // Tier 2: 
-        tiers.push(PresaleTier({
-            price: 45000, // $0.045
-            allocation: 100_000_000 * 10**18, // 100M tokens
-            sold: 0,
-            minPurchase: 100 * PRICE_DECIMALS, // $100 min
-            maxPurchase: 25_000 * PRICE_DECIMALS, // $25,000 max
-            vestingTGE: 15, // 15% at TGE
-            vestingMonths: 15, // 15 months vesting
-            isActive: false
-        }));
-
-        // Tier 3: 
-        tiers.push(PresaleTier({
-            price: 55000, // $0.055
-            allocation: 100_000_000 * 10**18, // 100M tokens
-            sold: 0,
-            minPurchase: 100 * PRICE_DECIMALS, // $100 min
-            maxPurchase: 10_000 * PRICE_DECIMALS, // $10,000 max
-            vestingTGE: 20, // 20% at TGE
-            vestingMonths: 12, // 12 months vesting
-            isActive: false
-        }));
-
-        // Tier 4:
-        tiers.push(PresaleTier({
-            price: 70000, // $0.07
-            allocation: 75_000_000 * 10**18, // 75M tokens
-            sold: 0,
-            minPurchase: 100 * PRICE_DECIMALS, // $100 min
-            maxPurchase: 5_000 * PRICE_DECIMALS, // $5,000 max
-            vestingTGE: 20, // 20% at TGE
-            vestingMonths: 9, // 9 months vesting
-            isActive: false
-        }));
-
-        // Tier 5:
-        tiers.push(PresaleTier({
-            price: 85000, // $0.085
-            allocation: 50_000_000 * 10**18, // 50M tokens
-            sold: 0,
-            minPurchase: 50 * PRICE_DECIMALS, // $50 min
-            maxPurchase: 5_000 * PRICE_DECIMALS, // $5,000 max
-            vestingTGE: 25, // 25% at TGE
-            vestingMonths: 6, // 6 months vesting
-            isActive: false
-        }));
-
-        // Tier 6:
-        tiers.push(PresaleTier({
-            price: 100000, // $0.10
-            allocation: 50_000_000 * 10**18, // 50M tokens
-            sold: 0,
-            minPurchase: 20 * PRICE_DECIMALS, // $20 min
-            maxPurchase: 5_000 * PRICE_DECIMALS, // $5,000 max
-            vestingTGE: 30, // 30% at TGE
-            vestingMonths: 4, // 4 months vesting
-            isActive: false
-        }));
-
-        // Tier 7:
-        tiers.push(PresaleTier({
-            price: 120000, // $0.12
-            allocation: 50_000_000 * 10**18, // 50M tokens
-            sold: 0,
-            minPurchase: 20 * PRICE_DECIMALS, // $200 min
-            maxPurchase: 5_000 * PRICE_DECIMALS, // $5,000 max
-            vestingTGE: 40, // 40% at TGE
-            vestingMonths: 3, // 3 months vesting
-            isActive: false
-        }));
-
+        tiers = PresaleTiers.getStandardTiers();
         tierCount = uint96(tiers.length);
 
+        // Calculate tier maximums
         for (uint96 i = 0; i < tierCount; i++) {
             uint96 tierTotal = 0;
             for (uint256 j = 0; j <= i; j++) {
@@ -294,11 +203,18 @@ contract TokenCrowdSale is
             }
             maxTokensForTier[i] = tierTotal;
         }
-
+        
         // Inside the constructor, add:
         maxTokensPerAddress = 1_500_000 * 10**18; // 1.5M tokens by default
     }
 
+    /**
+     * @dev Required override for UUPS proxy pattern
+     */
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(Constants.ADMIN_ROLE) {
+        // Additional upgrade logic can be added here
+    }
+    
     function addRecorder(address _recorder) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _grantRole(Constants.RECORDER_ROLE, _recorder);
     }
@@ -359,7 +275,7 @@ contract TokenCrowdSale is
     function purchase(uint256 _tierId, uint96 _usdAmount) external nonReentrant whenContractNotPaused purchaseRateLimit(_usdAmount) {
         require(block.timestamp >= presaleStart && block.timestamp <= presaleEnd, "Presale not active");
         require(_tierId < tiers.length, "Invalid tier ID");
-        PresaleTier storage tier = tiers[_tierId];
+        PresaleTiers.PresaleTier storage tier = tiers[_tierId];
         require(tier.isActive, "Tier not active");
 
         // For earlier tiers (0-3), require whitelist
@@ -446,7 +362,7 @@ contract TokenCrowdSale is
             // Skip tiers where user hasn't purchased
             if (tierAmounts[tierId] == 0) continue;
 
-            PresaleTier storage tier = tiers[tierId];
+            PresaleTiers.PresaleTier storage tier = tiers[tierId];
             uint96 tierTokens = (tierAmounts[tierId] * 10**18) / tier.price;
 
             uint96 tierClaimable = VestingCalculations.calculateVestedAmount(
@@ -557,11 +473,7 @@ contract TokenCrowdSale is
 
     // Also add a helper function to calculate total tokens sold
     function totalTokensSold() public view returns (uint256) {
-        uint256 total = 0;
-        for (uint256 i = 0; i < tiers.length; i++) {
-            total += tiers[i].sold;
-        }
-        return total;
+        return PresaleTiers.calculateTotalTokensSold(tiers);
     }
 
     /**
@@ -571,8 +483,7 @@ contract TokenCrowdSale is
     */
     function tokensRemainingInTier(uint256 _tierId) public view returns (uint96) {
         require(_tierId < tiers.length, "Invalid tier ID");
-        PresaleTier storage tier = tiers[_tierId];
-        return uint96(tier.allocation - tier.sold);
+        return PresaleTiers.tokensRemainingInTier(tiers[_tierId]);
     }
 
     /**
@@ -747,7 +658,7 @@ contract TokenCrowdSale is
         for (uint256 tierId = 0; tierId < tiers.length; tierId++) {
             if (tierId >= userPurchase.tierAmounts.length || userPurchase.tierAmounts[tierId] == 0) continue;
 
-            PresaleTier storage tier = tiers[tierId];
+            PresaleTiers.PresaleTier storage tier = tiers[tierId];
             uint256 tierTokens = (userPurchase.tierAmounts[tierId] * (10**18)) / (tier.price);
 
             // Skip TGE portion

@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
 import {Constants} from "./Libraries/Constants.sol";
 
@@ -14,7 +15,8 @@ import {Constants} from "./Libraries/Constants.sol";
 contract TeacherReward is
     OwnableUpgradeable,
     ReentrancyGuardUpgradeable,
-    RegistryAwareUpgradeable
+    RegistryAwareUpgradeable,
+    UUPSUpgradeable
 {
     ERC20Upgradeable internal token;
     
@@ -121,17 +123,12 @@ contract TeacherReward is
         _;
     }
     
-    modifier onlyAdmin() {
-        require(hasRole(Constants.ADMIN_ROLE, msg.sender), "TeacherReward: caller is not admin role");
-        _;
-    }
-    
     /**
      * @dev Constructor
      */
-    constructor(){
-        _disableInitializers();
-    }
+    //constructor(){
+    //    _disableInitializers();
+    //}
 
     /**
      * @dev Modifier to check if caller is a teacher
@@ -191,6 +188,14 @@ contract TeacherReward is
         emit VerifierAdded(msg.sender);
     }
 
+
+    /**
+     * @dev Required override for UUPS proxy pattern
+     */
+    function _authorizeUpgrade(address newImplementation) internal override onlyRole(Constants.ADMIN_ROLE) {
+        // Additional upgrade logic can be added here
+    }
+    
     /**
      * @dev Sets the registry contract address
      * @param _registry Address of the registry contract
@@ -204,7 +209,7 @@ contract TeacherReward is
      * @dev Update contract references from registry
      * This ensures contracts always have the latest addresses
      */
-    function updateContractReferences() external onlyAdmin {
+    function updateContractReferences() external onlyRole(Constants.ADMIN_ROLE) {
         require(address(registry) != address(0), "TeacherReward: registry not set");
 
         // Update TeachToken reference
@@ -514,7 +519,7 @@ contract TeacherReward is
         string memory _description,
         uint256 _rewardAmount,
         bool _repeatable
-    ) external onlyAdmin returns (uint256) {
+    ) external onlyRole(Constants.ADMIN_ROLE) returns (uint256) {
         require(bytes(_name).length > 0, "TeacherReward: empty name");
         require(bytes(_description).length > 0, "TeacherReward: empty description");
 
