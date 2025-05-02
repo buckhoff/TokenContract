@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.29;
 
-import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "./Libraries/PresaleTiers.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
-import {VestingCalculations} from "./Libraries/VestingCalculations.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import {Constants} from "./Libraries/Constants.sol";
 import {PresaleTiers} from "./Libraries/PresaleTiers.sol";
+import {VestingCalculations} from "./Libraries/VestingCalculations.sol";
 
 /**
  * @title GenericTokenPresale
@@ -20,8 +21,6 @@ ReentrancyGuardUpgradeable,
 RegistryAwareUpgradeable,
 UUPSUpgradeable
 {
-
-    using PresaleTiers for PresaleTiers.PresaleTier[];
 
     // User purchase tracking
     struct Purchase {
