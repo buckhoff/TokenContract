@@ -23,8 +23,8 @@ UUPSUpgradeable
 {
 
     struct PriceObservation {
-        uint256 timestamp;
-        uint256 price;
+        uint40 timestamp;
+        uint96 price;
     }
 
     ERC20Upgradeable internal token;
@@ -33,85 +33,84 @@ UUPSUpgradeable
     ERC20Upgradeable public stableCoin;
 
     // Fund parameters
-    uint256 public reserveRatio;               // Target reserve ratio (10000 = 100%)
-    uint256 public minReserveRatio;            // Minimum reserve ratio to maintain solvency
-    uint256 public baselinePrice;              // Baseline price in stable coin units (scaled by 1e18)
-    uint16 public baseFeePercent;        // Base platform fee percentage (100 = 1%)
-    uint16 public maxFeePercent;         // Maximum platform fee percentage (100 = 1%)
-    uint16 public minFeePercent;         // Minimum platform fee percentage (100 = 1%)
-    uint16 public feeAdjustmentFactor;   // How quickly fees adjust with price changes
-    uint16 public currentFeePercent;     // Current effective fee (dynamically adjusted)
-    uint16 public priceDropThreshold;    // When fee adjustment begins (500 = 5% below baseline)
-    uint16 public maxPriceDropPercent;   // When max fee reduction applies (3000 = 30% below baseline)
+    uint96 public reserveRatio;                // Target reserve ratio (10000 = 100%)
+    uint96 public minReserveRatio;             // Minimum reserve ratio to maintain solvency
+    uint96 public baselinePrice;               // Baseline price in stable coin units (scaled by 1e18)
+    uint16 public baseFeePercent;               // Base platform fee percentage (100 = 1%)
+    uint16 public maxFeePercent;                // Maximum platform fee percentage (100 = 1%)
+    uint16 public minFeePercent;                // Minimum platform fee percentage (100 = 1%)
+    uint16 public feeAdjustmentFactor;          // How quickly fees adjust with price changes
+    uint16 public currentFeePercent;            // Current effective fee (dynamically adjusted)
+    uint16 public priceDropThreshold;           // When fee adjustment begins (500 = 5% below baseline)
+    uint16 public maxPriceDropPercent;          // When max fee reduction applies (3000 = 30% below baseline)
 
-    uint256 public platformFeePercent;
-    uint256 public lowValueFeePercent;
-    uint256 public valueThreshold;
+    uint32 public platformFeePercent;
+    uint32 public lowValueFeePercent;
+    uint32 public valueThreshold;
 
     // Price oracle data
-    uint256 public tokenPrice;                 // Current price in stable coin units (scaled by 1e18)
-    uint256 public lastPriceUpdateTime;        // Timestamp of last price update
-    address public priceOracle;                // Address authorized to update price
+    uint96 public tokenPrice;                  // Current price in stable coin units (scaled by 1e18)
+    uint40 public lastPriceUpdateTime;         // Timestamp of last price update
+    address public priceOracle;                 // Address authorized to update price
 
     // Fund state
-    uint256 public totalReserves;              // Total stable coin reserves
-    uint256 public totalConversions;           // Total conversion transactions processed
-    uint256 public totalStabilized;            // Total value stabilized (in stable coins)
+    uint96 public totalReserves;               // Total stable coin reserves
+    uint96 public totalConversions;            // Total conversion transactions processed
+    uint96 public totalStabilized;             // Total value stabilized (in stable coins)
 
     // Platform state
     bool internal paused;
-    uint16 public criticalReserveThreshold;    // percentage of min reserve ratio (e.g. 120 = 120% of min)
-    address public emergencyAdmin;             // additional address that can trigger circuit breaker
+    uint16 public criticalReserveThreshold;     // percentage of min reserve ratio (e.g. 120 = 120% of min)
+    address public emergencyAdmin;              // additional address that can trigger circuit breaker
 
-    uint16 public burnToReservePercent;  // Percentage of burned tokens to convert to reserves
-    uint16 public platformFeeToReservePercent; // Percentage of platform fees to add to reserves
+    uint16 public burnToReservePercent;         // Percentage of burned tokens to convert to reserves
+    uint16 public platformFeeToReservePercent;  // Percentage of platform fees to add to reserves
     mapping(address => bool) public authorizedBurners; // Addresses authorized to burn tokens
 
     // Flash Loan protection
-    mapping(address => uint256) private lastActionTimestamp;
-    mapping(address => uint256) private dailyConversionVolume;
-    uint256 public maxDailyUserVolume;
-    uint256 public maxSingleConversionAmount;
-    uint256 public minTimeBetweenActions;
+    mapping(address => uint40) private lastActionTimestamp;
+    mapping(address => uint96) private dailyConversionVolume;
+    uint96 public maxDailyUserVolume;
+    uint96 public maxSingleConversionAmount;
+    uint96 public minTimeBetweenActions;
     bool public flashLoanProtectionEnabled;
 
     mapping(address => bool) public addressCooldown;
-    uint256 public suspiciousCooldownPeriod = 24 hours;
+    uint40 public suspiciousCooldownPeriod = 24 hours;
 
     uint8 public constant MAX_PRICE_OBSERVATIONS = 24; // Store 24 hourly observations
     PriceObservation[MAX_PRICE_OBSERVATIONS] public priceHistory;
     uint8 public currentObservationIndex;
-    uint256 public lastObservationTimestamp;
-    uint256 public observationInterval = 1 hours;
-    uint256 public twapWindowSize = 12; // Use 12 hours for TWAP by default
+    uint40 public lastObservationTimestamp;
+    uint40 public observationInterval = 1 hours;
+    uint8 public twapWindowSize = 12; // Use 12 hours for TWAP by default
     bool public twapEnabled = true;
 
     bool public inEmergencyRecovery;
     mapping(address => bool) public emergencyRecoveryApprovals;
-    uint256 public requiredRecoveryApprovals;
+    uint8 public requiredRecoveryApprovals;
 
     address private _cachedTokenAddress;
     address private _cachedStabilityFundAddress;
-    uint256 private _lastCacheUpdate;
+    uint40 private _lastCacheUpdate;
 
 
 
     // Events
-    event ReservesAdded(address indexed contributor, uint256 amount);
-    event ReservesWithdrawn(address indexed recipient, uint256 amount);
-    event TokensConverted(address indexed project, uint256 tokenAmount, uint256 stableAmount, uint256 subsidyAmount);
-    event PriceUpdated(uint256 oldPrice, uint256 newPrice);
-    event FundParametersUpdated(uint256 reserveRatio, uint256 minReserveRatio, uint256 platformFee, uint256 lowValueFee, uint256 threshold);
+    event ReservesAdded(address indexed contributor, uint96 amount);
+    event ReservesWithdrawn(address indexed recipient, uint96 amount);
+    event TokensConverted(address indexed project, uint96 tokenAmount, uint96 stableAmount, uint96 subsidyAmount);
+    event PriceUpdated(uint96 oldPrice, uint96 newPrice);
+    event FundParametersUpdated(uint96 reserveRatio, uint96 minReserveRatio, uint96 platformFee, uint96 lowValueFee, uint96 threshold);
     event PriceOracleUpdated(address indexed oldOracle, address indexed newOracle);
     event ValueModeChanged(bool isLowValueMode);
-    event BaselinePriceUpdated(uint256 oldPrice, uint256 newPrice);
-    event CircuitBreakerTriggered(uint256 currentRatio, uint256 threshold);
+    event BaselinePriceUpdated(uint96 oldPrice, uint96 newPrice);
+    event CircuitBreakerTriggered(uint96 currentRatio, uint96 threshold);
     event RegistrySet(address indexed registry);
     event ContractReferenceUpdated(bytes32 indexed contractName, address indexed oldAddress, address indexed newAddress);
-
     event EmergencyPaused(address indexed triggeredBy);
     event EmergencyResumed(address indexed resumedBy);
-    event CriticalThresholdUpdated(uint256 oldThreshold, uint256 newThreshold);
+    event CriticalThresholdUpdated(uint96 oldThreshold, uint96 newThreshold);
     event EmergencyAdminUpdated(address indexed oldAdmin, address indexed newAdmin);
     event FeeParametersUpdated(
         uint16 baseFee,
@@ -122,68 +121,103 @@ UUPSUpgradeable
         uint16 maxDropPercent
     );
     event FlashLoanProtectionConfigured(
-        uint256 maxDailyUserVolume,
-        uint256 maxSingleConversionAmount,
-        uint256 minTimeBetweenActions,
+        uint96 maxDailyUserVolume,
+        uint96 maxSingleConversionAmount,
+        uint96 minTimeBetweenActions,
         bool enabled
     );
     event CurrentFeeUpdated(uint16 oldFee, uint16 newFee);
-    event TokensBurnedToReserves(uint256 burnedAmount, uint256 reservesAdded);
-    event PlatformFeesToReserves(uint256 feeAmount, uint256 reservesAdded);
+    event TokensBurnedToReserves(uint96 burnedAmount, uint96 reservesAdded);
+    event PlatformFeesToReserves(uint96 feeAmount, uint96 reservesAdded);
     event ReplenishmentParametersUpdated(uint16 burnPercent, uint16 feePercent);
     event BurnerAuthorization(address indexed burner, bool authorized);
-    event SuspiciousActivity(address indexed user, string reason, uint256 amount);
-    event PriceObservationRecorded(uint256 timestamp, uint256 price, uint8 index);
-    event TWAPConfigUpdated(uint256 windowSize, uint256 interval, bool enabled);
-    event EmergencyRecoveryInitiated(address indexed recoveryAdmin, uint256 timestamp);
-    event EmergencyRecoveryCompleted(address indexed recoveryAdmin, uint256 timestamp);
-    event AddressPlacedInCooldown(address indexed suspiciousAddress, uint256 endTime);
+    event SuspiciousActivity(address indexed user, string reason, uint96 amount);
+    event PriceObservationRecorded(uint40 timestamp, uint96 price, uint8 index);
+    event TWAPConfigUpdated(uint96 windowSize, uint96 interval, bool enabled);
+    event EmergencyRecoveryInitiated(address indexed recoveryAdmin, uint40 timestamp);
+    event EmergencyRecoveryCompleted(address indexed recoveryAdmin, uint40 timestamp);
+    event AddressPlacedInCooldown(address indexed suspiciousAddress, uint96 endTime);
     event AddressRemovedFromCooldown(address indexed cooldownAddress);
 
+    // Error declarations for PlatformStabilityFund
+    error ZeroTokenAddress();
+    error ZeroStableCoinAddress();
+    error ZeroOracleAddress();
+    error ZeroInitialPrice();
+    error InvalidReserveRatios();
+    error FeeParamsInvalid();
+    error ZeroThreshold();
+    error ZeroAmount();
+    error ZeroAddress();
+    error ZeroBaselinePrice();
+    error TransferFailed();
+    error ZeroPriceChange();
+    error InsufficientReserves();
+    error ExceedsAvailableReserves();
+    error ZeroProjectAddress();
+    error BelowMinReturn();
+    error ThresholdMustBeGreaterThan100();
+    error ThresholdTooHigh();
+    error NotAuthorized();
+    error ContractPaused();
+    error AlreadyPaused();
+    error NotPaused();
+    error SystemPaused();
+    error ReservesStillCritical();
+    error InvalidFeeRange();
+    error InvalidDropThresholds();
+    error ZeroAdjustmentFactor();
+    error AddressInCooldown(address suspiciousAddress);
+    error ActionTooSoon();
+    error AmountExceedsMaxConversion();
+    error DailyVolumeLimitExceeded();
+    error PriceDeviatesFromTWAP();
+    error PriceChangeTooLarge();
+    error InvalidWindowSize();
+    error IntervalCannotBeZero();
+    error RegistryNotSet();
+    error RegistryOffline();
+    error TokenAddressUnavailable();
+    error BurnPercentTooHigh();
+    error FeePercentTooHigh();
+    error NotInRecoveryMode();
+    error EmergencyAlreadyApproved();
+    
     modifier whenContractNotPaused(){
         if (address(registry) != address(0)) {
             try registry.isSystemPaused() returns (bool systemPaused) {
-                require(!systemPaused, "PlatformStabilityFund: system is paused");
+                if(systemPaused) revert SystemPaused();
             } catch {
-                // If registry call fails, fall back to local pause state
-                require(!paused, "PlatformStabilityFund: contract is paused");
+                if (paused) revert ContractPaused();
             }
-            require(!registryOfflineMode, "PlatformStabilityFund: registry Offline");
+            if(registryOfflineMode) revert RegistryOffline();
         } else {
-            require(!paused, "PlatformStabilityFund: contract is paused");
+            if (!paused) revert ContractPaused();
         }
         _;
     }
 
-    modifier flashLoanGuard(uint256 _amount) {
+    modifier flashLoanGuard(uint96 _amount) {
         if (flashLoanProtectionEnabled) {
             // Check if this is the first action today
-            require(!addressCooldown[msg.sender], "PlatformStabilityFund: address in suspicious activity cooldown");
-            uint256 dayStart = block.timestamp - (block.timestamp % 1 days);
+            if (addressCooldown[msg.sender]) revert AddressInCooldown(msg.sender);
+            uint40 dayStart = uint40(block.timestamp - (block.timestamp % 1 days));
             if (lastActionTimestamp[msg.sender] < dayStart) {
                 dailyConversionVolume[msg.sender] = 0;
             }
 
             // Check for minimum time between actions
-            require(
-                block.timestamp >= lastActionTimestamp[msg.sender] + minTimeBetweenActions,
-                "PlatformStabilityFund: action too soon after previous action"
-            );
+            if (block.timestamp < lastActionTimestamp[msg.sender] + minTimeBetweenActions) revert ActionTooSoon();
 
             // Check for maximum single amount
-            require(
-                _amount <= maxSingleConversionAmount,
-                "PlatformStabilityFund: amount exceeds maximum single conversion limit"
-            );
+            if (_amount > maxSingleConversionAmount) revert AmountExceedsMaxConversion();
 
             // Check for daily volume limit
-            require(
-                dailyConversionVolume[msg.sender] + _amount <= maxDailyUserVolume,
-                "PlatformStabilityFund: daily volume limit exceeded"
-            );
+            if (dailyConversionVolume[msg.sender] + _amount > maxDailyUserVolume) revert DailyVolumeLimitExceeded();
+
 
             // Update tracking variables
-            lastActionTimestamp[msg.sender] = block.timestamp;
+            lastActionTimestamp[msg.sender] = uint40(block.timestamp);
             dailyConversionVolume[msg.sender] += _amount;
         }
         _;
@@ -212,9 +246,9 @@ UUPSUpgradeable
         address _token,
         address _stableCoin,
         address _priceOracle,
-        uint256 _initialPrice,
-        uint256 _reserveRatio,
-        uint256 _minReserveRatio,
+        uint96 _initialPrice,
+        uint96 _reserveRatio,
+        uint96 _minReserveRatio,
         uint16 _platformFeePercent,
         uint16 _lowValueFeePercent,
         uint16 _valueThreshold
@@ -223,20 +257,20 @@ UUPSUpgradeable
         __ReentrancyGuard_init();
         __Ownable_init(msg.sender);
 
-        require(_token != address(0), "PlatformStabilityFund: zero token address");
-        require(_stableCoin != address(0), "PlatformStabilityFund: zero stable coin address");
-        require(_priceOracle != address(0), "PlatformStabilityFund: zero oracle address");
-        require(_initialPrice > 0, "PlatformStabilityFund: zero initial price");
-        require(_reserveRatio > _minReserveRatio, "PlatformStabilityFund: invalid reserve ratios");
-        require(_platformFeePercent >= _lowValueFeePercent, "PlatformStabilityFund: regular fee must be >= low value fee");
-        require(_valueThreshold > 0, "PlatformStabilityFund: zero threshold");
+        if (_token == address(0)) revert ZeroTokenAddress();
+        if (_stableCoin == address(0)) revert ZeroStableCoinAddress();
+        if (_priceOracle == address(0)) revert ZeroOracleAddress();
+        if (_initialPrice == 0) revert ZeroInitialPrice();
+        if (_reserveRatio <= _minReserveRatio) revert InvalidReserveRatios();
+        if (_platformFeePercent < _lowValueFeePercent) revert FeeParamsInvalid();
+        if (_valueThreshold == 0) revert ZeroThreshold();
 
         token = ERC20Upgradeable(_token);
         stableCoin = ERC20Upgradeable(_stableCoin);
         priceOracle = _priceOracle;
         tokenPrice = _initialPrice;
         baselinePrice = _initialPrice;
-        lastPriceUpdateTime = block.timestamp;
+        lastPriceUpdateTime = uint40(block.timestamp);
         reserveRatio = _reserveRatio;
         minReserveRatio = _minReserveRatio;
         baseFeePercent = _platformFeePercent;       // Use the original platform fee as base
@@ -282,8 +316,8 @@ UUPSUpgradeable
      * @dev Updates the baseline price (governance function)
      * @param _newBaselinePrice New baseline price in stable coin units (scaled by 1e18)
      */
-    function updateBaselinePrice(uint256 _newBaselinePrice) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_newBaselinePrice > 0, "PlatformStabilityFund: zero baseline price");
+    function updateBaselinePrice(uint96 _newBaselinePrice) external onlyRole(Constants.ADMIN_ROLE) {
+        if (_newBaselinePrice == 0) revert ZeroBaselinePrice();
 
         emit BaselinePriceUpdated(baselinePrice, _newBaselinePrice);
 
@@ -298,8 +332,8 @@ UUPSUpgradeable
     * @return uint16 The newly calculated fee percentage
     */
     function updateCurrentFee() public onlyRole(Constants.ADMIN_ROLE) returns (uint16) {
-        uint256 valueDropPercent = 0;
-        uint256 verifiedPrice = getVerifiedPrice();
+        uint96 valueDropPercent = 0;
+        uint96 verifiedPrice = getVerifiedPrice();
 
         if (verifiedPrice < baselinePrice) {
             // Calculate how far below baseline we are (in percentage points, scaled by 10000)
@@ -319,9 +353,9 @@ UUPSUpgradeable
             // Otherwise calculate gradual fee reduction
         else {
             // Calculate how far between threshold and max drop we are (0-100%)
-            uint256 adjustmentRange = maxPriceDropPercent - priceDropThreshold;
-            uint256 adjustmentPosition = valueDropPercent - priceDropThreshold;
-            uint256 adjustmentPercent = (adjustmentPosition * 100) / adjustmentRange;
+            uint96 adjustmentRange = maxPriceDropPercent - priceDropThreshold;
+            uint96 adjustmentPosition = valueDropPercent - priceDropThreshold;
+            uint96 adjustmentPercent = (adjustmentPosition * 100) / adjustmentRange;
 
             // Apply adjustment factor to make the curve more or less aggressive
             adjustmentPercent = (adjustmentPercent * feeAdjustmentFactor) / 100;
@@ -330,8 +364,8 @@ UUPSUpgradeable
             }
 
             // Calculate fee reduction amount
-            uint256 feeRange = baseFeePercent - minFeePercent;
-            uint256 feeReduction = (feeRange * adjustmentPercent) / 100;
+            uint96 feeRange = baseFeePercent - minFeePercent;
+            uint96 feeReduction = (feeRange * adjustmentPercent) / 100;
 
             // Apply the reduction to the base fee
             currentFeePercent = uint16(baseFeePercent - feeReduction);
@@ -348,12 +382,12 @@ UUPSUpgradeable
      * @dev Adds stable coins to the stability reserves
      * @param _amount Amount of stable coins to add
      */
-    function addReserves(uint256 _amount) external nonReentrant {
-        require(_amount > 0, "PlatformStabilityFund: zero amount");
+    function addReserves(uint96 _amount) external nonReentrant {
+        if (_amount == 0) revert ZeroAmount();
 
         // Transfer stable coins to contract
-        require(stableCoin.transferFrom(msg.sender, address(this), _amount), "PlatformStabilityFund: transfer failed");
-
+        if (!stableCoin.transferFrom(msg.sender, address(this), _amount)) revert TransferFailed();
+        
         totalReserves += _amount;
 
         emit ReservesAdded(msg.sender, _amount);
@@ -363,25 +397,25 @@ UUPSUpgradeable
      * @dev Withdraws stable coins from reserves (only owner)
      * @param _amount Amount of stable coins to withdraw
      */
-    function withdrawReserves(uint256 _amount) external onlyRole(Constants.ADMIN_ROLE) nonReentrant {
-        require(_amount > 0, "PlatformStabilityFund: zero amount");
-        uint256 verifiedPrice = getVerifiedPrice();
+    function withdrawReserves(uint96 _amount) external onlyRole(Constants.ADMIN_ROLE) nonReentrant {
+        if (_amount == 0) revert ZeroAmount();
+        uint96 verifiedPrice = getVerifiedPrice();
 
         // Calculate maximum withdrawable amount based on min reserve ratio
-        uint256 totalTokenValue = (token.totalSupply() * verifiedPrice) / 1e18;
-        uint256 minReserveRequired = (totalTokenValue * minReserveRatio) / 10000;
+        uint96 totalTokenValue = uint96((token.totalSupply() * verifiedPrice) / 1e18);
+        uint96 minReserveRequired = (totalTokenValue * minReserveRatio) / 10000;
 
-        uint256 excessReserves = 0;
+        uint96 excessReserves = 0;
         if (totalReserves > minReserveRequired) {
             excessReserves = totalReserves - minReserveRequired;
         }
 
-        require(_amount <= excessReserves, "PlatformStabilityFund: exceeds available reserves");
-
+        if (_amount > excessReserves) revert ExceedsAvailableReserves();
+        
         totalReserves -= _amount;
 
         // Transfer stable coins from contract
-        require(stableCoin.transfer(msg.sender, _amount), "PlatformStabilityFund: transfer failed");
+        if (!stableCoin.transfer(msg.sender, _amount)) revert TransferFailed();
 
         emit ReservesWithdrawn(msg.sender, _amount);
     }
@@ -395,30 +429,30 @@ UUPSUpgradeable
      */
     function convertTokensToFunding(
         address _project,
-        uint256 _tokenAmount,
-        uint256 _minReturn
-    ) external onlyRole(Constants.ADMIN_ROLE) nonReentrant whenContractNotPaused flashLoanGuard(_tokenAmount) returns (uint256 stableAmount) {
-        require(_project != address(0), "PlatformStabilityFund: zero project address");
-        require(_tokenAmount > 0, "PlatformStabilityFund: zero amount");
+        uint96 _tokenAmount,
+        uint96 _minReturn
+    ) external onlyRole(Constants.ADMIN_ROLE) nonReentrant whenContractNotPaused flashLoanGuard(_tokenAmount) returns (uint96 stableAmount) {
+        if (_project == address(0)) revert ZeroProjectAddress();
+        if (_tokenAmount == 0) revert ZeroAmount();
+        
+        uint96 oldReserves = totalReserves;
+        uint96 oldStableBalance = uint96(stableCoin.balanceOf(_project));
 
-        uint256 oldReserves = totalReserves;
-        uint256 oldStableBalance = stableCoin.balanceOf(_project);
-
-        uint256 verifiedPrice = getVerifiedPrice();
+        uint96 verifiedPrice = getVerifiedPrice();
 
         // Calculate expected value at baseline price
-        uint256 baselineValue = (_tokenAmount * baselinePrice) / 1e18;
+        uint96 baselineValue = (_tokenAmount * baselinePrice) / 1e18;
 
         // Calculate current value
-        uint256 currentValue = (_tokenAmount * verifiedPrice) / 1e18;
+        uint96 currentValue = (_tokenAmount * verifiedPrice) / 1e18;
 
         // Apply platform fee based on value mode
-        uint256 feePercent = updateCurrentFee();
-        uint256 fee = (currentValue * feePercent) / 10000;
-        uint256 valueAfterFee = currentValue - fee;
+        uint96 feePercent = updateCurrentFee();
+        uint96 fee = (currentValue * feePercent) / 10000;
+        uint96 valueAfterFee = currentValue - fee;
 
         // Calculate subsidy (if any)
-        uint256 subsidy = 0;
+        uint96 subsidy = 0;
         if (valueAfterFee < baselineValue) {
             subsidy = baselineValue - valueAfterFee;
 
@@ -430,7 +464,7 @@ UUPSUpgradeable
 
         // Calculate final amount to send to project
         stableAmount = valueAfterFee + subsidy;
-        require(stableAmount >= _minReturn, "PlatformStabilityFund: below min return");
+        if (stableAmount < _minReturn) revert BelowMinReturn();
 
         // Update state
         if (subsidy > 0) {
@@ -440,11 +474,11 @@ UUPSUpgradeable
         totalConversions += 1;
 
         // Transfer ERC20 tokens from sender to contract
-        require(token.transferFrom(msg.sender, address(this), _tokenAmount), "PlatformStabilityFund: token transfer failed");
-
+        if (!token.transferFrom(msg.sender, address(this), _tokenAmount)) revert TransferFailed();
+        
         // Transfer stable coins to project
         if (stableAmount > 0) {
-            require(stableCoin.transfer(_project, stableAmount), "PlatformStabilityFund: stable transfer failed");
+            if (!stableCoin.transfer(_project, stableAmount)) revert TransferFailed();
         }
 
         emit TokensConverted(_project, _tokenAmount, stableAmount, subsidy);
@@ -461,11 +495,11 @@ UUPSUpgradeable
 
     /**
      * @dev Get the reserve ratio health of the fund
-     * @return uint256 Current reserve ratio (10000 = 100%)
+     * @return uint96 Current reserve ratio (10000 = 100%)
      */
-    function getReserveRatioHealth() public view returns (uint256) {
-        uint256 verifiedPrice = getVerifiedPrice();
-        uint256 totalTokenValue = (token.totalSupply() * verifiedPrice) / 1e18;
+    function getReserveRatioHealth() public view returns (uint96) {
+        uint96 verifiedPrice = getVerifiedPrice();
+        uint96 totalTokenValue = uint96((token.totalSupply() * verifiedPrice) / 1e18);
 
         if (totalTokenValue == 0) {
             return 10000; // 100% if no tokens
@@ -482,23 +516,23 @@ UUPSUpgradeable
      * @return finalAmount Final amount after subsidy
      * @return feeAmount Platform fee amount
      */
-    function simulateConversion(uint256 _tokenAmount) external view returns (
-        uint256 expectedValue,
-        uint256 subsidyAmount,
-        uint256 finalAmount,
-        uint256 feeAmount
+    function simulateConversion(uint96 _tokenAmount) external view returns (
+        uint96 expectedValue,
+        uint96 subsidyAmount,
+        uint96 finalAmount,
+        uint96 feeAmount
     ) {
-        uint256 verifiedPrice = getVerifiedPrice();
+        uint96 verifiedPrice = getVerifiedPrice();
         // Calculate expected value at current price
         expectedValue = (_tokenAmount * verifiedPrice) / 1e18;
 
         // Calculate baseline value
-        uint256 baselineValue = (_tokenAmount * baselinePrice) / 1e18;
+        uint96 baselineValue = (_tokenAmount * baselinePrice) / 1e18;
 
         // Apply platform fee based on value mode
-        uint256 feePercent = currentFeePercent;
+        uint96 feePercent = currentFeePercent;
         feeAmount = (expectedValue * feePercent) / 10000;
-        uint256 valueAfterFee = expectedValue - feeAmount;
+        uint96 valueAfterFee = expectedValue - feeAmount;
 
         // Calculate subsidy (if any)
         subsidyAmount = 0;
@@ -526,16 +560,16 @@ UUPSUpgradeable
      * @param _valueThreshold New threshold for low value detection
      */
     function updateFundParameters(
-        uint256 _reserveRatio,
-        uint256 _minReserveRatio,
-        uint256 _platformFeePercent,
-        uint256 _lowValueFeePercent,
-        uint256 _valueThreshold
+        uint96 _reserveRatio,
+        uint96 _minReserveRatio,
+        uint32 _platformFeePercent,
+        uint32 _lowValueFeePercent,
+        uint32 _valueThreshold
     ) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_reserveRatio > _minReserveRatio, "PlatformStabilityFund: invalid reserve ratios");
-        require(_platformFeePercent >= _lowValueFeePercent, "PlatformStabilityFund: regular fee must be >= low value fee");
-        require(_valueThreshold > 0, "PlatformStabilityFund: zero threshold");
-
+        if (_reserveRatio <= _minReserveRatio) revert InvalidReserveRatios();
+        if (_platformFeePercent < _lowValueFeePercent) revert FeeParamsInvalid();
+        if (_valueThreshold == 0) revert ZeroThreshold();
+        
         reserveRatio = _reserveRatio;
         minReserveRatio = _minReserveRatio;
         platformFeePercent = _platformFeePercent;
@@ -553,8 +587,8 @@ UUPSUpgradeable
      * @param _newOracle New price oracle address
      */
     function updatePriceOracle(address _newOracle) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_newOracle != address(0), "PlatformStabilityFund: zero oracle address");
-
+        if (_newOracle == address(0)) revert ZeroOracleAddress();
+        
         emit PriceOracleUpdated(priceOracle, _newOracle);
 
         priceOracle = _newOracle;
@@ -566,29 +600,29 @@ UUPSUpgradeable
      * @param _minReturn Minimum stable coin amount to receive
      * @return stableAmount Amount of stable coins received
      */
-    function swapTokensForStable(uint256 _tokenAmount, uint256 _minReturn) external nonReentrant flashLoanGuard(_tokenAmount) returns (uint256 stableAmount) {
-        require(_tokenAmount > 0, "PlatformStabilityFund: zero amount");
+    function swapTokensForStable(uint96 _tokenAmount, uint96 _minReturn) external nonReentrant flashLoanGuard(_tokenAmount) returns (uint96 stableAmount) {
+        if (_tokenAmount == 0) revert ZeroAmount();
 
-        uint256 verifiedPrice = getVerifiedPrice();
+        uint96 verifiedPrice = getVerifiedPrice();
 
         // Calculate the value of platform tokens at current price
         stableAmount = (_tokenAmount * verifiedPrice) / 1e18;
 
         // Check minimum return
-        require(stableAmount >= _minReturn, "PlatformStabilityFund: below min return");
-
+        if (stableAmount < _minReturn) revert BelowMinReturn();
+        
         // Check if we have enough reserves
-        require(stableAmount <= totalReserves, "PlatformStabilityFund: insufficient reserves");
-
+        if (stableAmount > totalReserves) revert InsufficientReserves();
+        
         // Update state
         totalReserves -= stableAmount;
 
         // Transfer platform tokens from sender to contract
-        require(token.transferFrom(msg.sender, address(this), _tokenAmount), "PlatformStabilityFund: token transfer failed");
-
+        if (!token.transferFrom(msg.sender, address(this), _tokenAmount)) revert TransferFailed();
+        
         // Transfer stable coins to sender
-        require(stableCoin.transfer(msg.sender, stableAmount), "PlatformStabilityFund: stable transfer failed");
-
+        if (!stableCoin.transfer(msg.sender, stableAmount)) revert TransferFailed();
+        
         checkAndPauseIfCritical();
 
         return stableAmount;
@@ -599,8 +633,8 @@ UUPSUpgradeable
     * @return bool True if paused due to critical reserve ratio
     */
     function checkAndPauseIfCritical() public returns (bool) {
-        uint256 reserveRatioHealth = getReserveRatioHealth();
-        uint256 criticalThreshold = (minReserveRatio * criticalReserveThreshold) / 100;
+        uint96 reserveRatioHealth = getReserveRatioHealth();
+        uint96 criticalThreshold = (minReserveRatio * criticalReserveThreshold) / 100;
 
         if (reserveRatioHealth < criticalThreshold) {
             if (!paused) {
@@ -618,9 +652,9 @@ UUPSUpgradeable
     * @dev Manually pauses the fund in case of emergency
     */
     function emergencyPause() external onlyRole(Constants.EMERGENCY_ROLE){
-        require(msg.sender == owner() || msg.sender == emergencyAdmin, "PlatformStabilityFund: not authorized");
-        require(!paused, "PlatformStabilityFund: already paused");
-
+        if (msg.sender != owner() && msg.sender != emergencyAdmin) revert NotAuthorized();
+        if (paused) revert AlreadyPaused();
+        
         paused = true;
         emit EmergencyPaused(msg.sender);
     }
@@ -629,13 +663,13 @@ UUPSUpgradeable
     * @dev Resumes the fund from pause state
     */
     function resumeFromPause() external onlyRole(Constants.ADMIN_ROLE) {
-        require(paused, "PlatformStabilityFund: not paused");
+        if (!paused) revert NotPaused();
 
         // Ensure reserves are above critical threshold before resuming
-        uint256 reserveRatioHealth = getReserveRatioHealth();
-        uint256 criticalThreshold = (minReserveRatio * criticalReserveThreshold) / 100;
-        require(reserveRatioHealth >= criticalThreshold, "PlatformStabilityFund: reserves still critical");
-
+        uint96 reserveRatioHealth = getReserveRatioHealth();
+        uint96 criticalThreshold = (minReserveRatio * criticalReserveThreshold) / 100;
+        if (reserveRatioHealth < criticalThreshold) revert ReservesStillCritical();
+        
         paused = false;
         emit EmergencyResumed(msg.sender);
     }
@@ -645,8 +679,8 @@ UUPSUpgradeable
     * @param _threshold New threshold as percentage of min reserve ratio
     */
     function setCriticalReserveThreshold(uint16 _threshold) external onlyRole(Constants.ADMIN_ROLE){
-        require(_threshold > 100, "PlatformStabilityFund: threshold must be > 100%");
-        require(_threshold <= 200, "PlatformStabilityFund: threshold too high");
+        if (_threshold <= 100) revert ThresholdMustBeGreaterThan100();
+        if (_threshold > 200) revert ThresholdTooHigh();
 
         emit CriticalThresholdUpdated(criticalReserveThreshold, _threshold);
         criticalReserveThreshold = _threshold;
@@ -660,8 +694,8 @@ UUPSUpgradeable
     * @param _newAdmin New emergency admin address
     */
     function setEmergencyAdmin(address _newAdmin) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_newAdmin != address(0), "PlatformStabilityFund: zero admin address");
-
+        if (_newAdmin == address(0)) revert ZeroAddress();
+        
         emit EmergencyAdminUpdated(emergencyAdmin, _newAdmin);
         emergencyAdmin = _newAdmin;
     }
@@ -683,10 +717,10 @@ UUPSUpgradeable
         uint16 _dropThreshold,
         uint16 _maxDropPercent
     ) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_maxFee >= _baseFee && _baseFee >= _minFee, "PlatformStabilityFund: invalid fee range");
-        require(_maxDropPercent > _dropThreshold, "PlatformStabilityFund: invalid drop thresholds");
-        require(_adjustmentFactor > 0, "PlatformStabilityFund: zero adjustment factor");
-
+        if (!(_maxFee >= _baseFee && _baseFee >= _minFee)) revert InvalidFeeRange();
+        if (_maxDropPercent <= _dropThreshold) revert InvalidDropThresholds();
+        if (_adjustmentFactor == 0) revert ZeroAdjustmentFactor();
+        
         baseFeePercent = _baseFee;
         maxFeePercent = _maxFee;
         minFeePercent = _minFee;
@@ -704,28 +738,25 @@ UUPSUpgradeable
     * @dev Process burned tokens and convert a portion to reserves
     * @param _burnedAmount Amount of platform tokens that were burned
     */
-    function processBurnedTokens(uint256 _burnedAmount) external onlyRole(Constants.BURNER_ROLE){
-        require(_burnedAmount > 0, "PlatformStabilityFund: zero burn amount");
+    function processBurnedTokens(uint96 _burnedAmount) external onlyRole(Constants.BURNER_ROLE){
+        if (_burnedAmount == 0) revert ZeroAmount();
 
         // If the registry is set, verify the caller is either a registered burner or the token contract
         if (address(registry) != address(0)) {
             if (registry.isContractActive(Constants.TOKEN_NAME)) {
                 address tokenAddress = registry.getContractAddress(Constants.TOKEN_NAME);
-                require(
-                    msg.sender == tokenAddress || hasRole(Constants.BURNER_ROLE, msg.sender),
-                    "PlatformStabilityFund: not authorized"
-                );
+                if (msg.sender != tokenAddress && !hasRole(Constants.BURNER_ROLE, msg.sender)) revert NotAuthorized();
             }
         } else {
-            require(hasRole(Constants.BURNER_ROLE, msg.sender), "PlatformStabilityFund: not authorized");
+            if(!hasRole(Constants.BURNER_ROLE, msg.sender)) revert NotAuthorized();
         }
 
-        uint256 verifiedPrice = getVerifiedPrice();
+        uint96 verifiedPrice = getVerifiedPrice();
         // Calculate value of burned tokens
-        uint256 burnValue = (_burnedAmount * verifiedPrice) / 1e18;
+        uint96 burnValue = (_burnedAmount * verifiedPrice) / 1e18;
 
         // Calculate portion to add to reserves
-        uint256 reservesToAdd = (burnValue * burnToReservePercent) / 10000;
+        uint96 reservesToAdd = (burnValue * burnToReservePercent) / 10000;
 
         if (reservesToAdd > 0) {
             // Owner is expected to transfer stablecoins to the contract
@@ -738,17 +769,14 @@ UUPSUpgradeable
     * @dev Process platform fees and add a portion to reserves
     * @param _feeAmount Amount of platform fees collected
     */
-    function processPlatformFees(uint256 _feeAmount) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_feeAmount > 0, "PlatformStabilityFund: zero fee amount");
+    function processPlatformFees(uint96 _feeAmount) external onlyRole(Constants.ADMIN_ROLE) {
+        if (_feeAmount == 0) revert ZeroAmount();
 
         // Calculate portion to add to reserves
-        uint256 reservesToAdd = (_feeAmount * platformFeeToReservePercent) / 10000;
+        uint96 reservesToAdd = (_feeAmount * platformFeeToReservePercent) / 10000;
 
         if (reservesToAdd > 0) {
-            // Require the owner to transfer the stablecoins
-            require(stableCoin.transferFrom(msg.sender, address(this), reservesToAdd),
-                "PlatformStabilityFund: transfer failed");
-
+            if (!stableCoin.transferFrom(msg.sender, address(this), reservesToAdd)) revert TransferFailed();
             totalReserves += reservesToAdd;
             emit PlatformFeesToReserves(_feeAmount, reservesToAdd);
         }
@@ -763,8 +791,8 @@ UUPSUpgradeable
         uint16 _burnPercent,
         uint16 _feePercent
     ) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_burnPercent <= 5000, "PlatformStabilityFund: burn percent too high");
-        require(_feePercent <= 10000, "PlatformStabilityFund: fee percent too high");
+        if(_burnPercent > 5000) revert BurnPercentTooHigh();
+        if(_feePercent > 10000) revert FeePercentTooHigh();
 
         burnToReservePercent = _burnPercent;
         platformFeeToReservePercent = _feePercent;
@@ -778,8 +806,8 @@ UUPSUpgradeable
     * @param _authorized Whether the address is authorized
     */
     function setAuthBurner(address _burner, bool _authorized) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_burner != address(0), "PlatformStabilityFund: zero burner address");
-
+        if (_burner == address(0)) revert ZeroAddress();
+        
         if (_authorized) {
             grantRole(Constants.BURNER_ROLE, _burner);
         } else {
@@ -791,17 +819,17 @@ UUPSUpgradeable
 
     function _checkReserveRatioInvariant() internal view {
         if (!paused) {
-            uint256 verifiedPrice = getVerifiedPrice();
-            uint256 totalTokenValue = (token.totalSupply() * verifiedPrice) / 1e18;
-            uint256 minRequired = (totalTokenValue * minReserveRatio) / 10000;
+            uint96 verifiedPrice = getVerifiedPrice();
+            uint96 totalTokenValue = uint96((token.totalSupply() * verifiedPrice) / 1e18);
+            uint96 minRequired = (totalTokenValue * minReserveRatio) / 10000;
             assert(totalReserves >= minRequired);
         }
     }
 
     function configureFlashLoanProtection(
-        uint256 _maxDailyUserVolume,
-        uint256 _maxSingleConversionAmount,
-        uint256 _minTimeBetweenActions,
+        uint96 _maxDailyUserVolume,
+        uint96 _maxSingleConversionAmount,
+        uint96 _minTimeBetweenActions,
         bool _enabled
     ) external onlyRole(Constants.ADMIN_ROLE) {
         maxDailyUserVolume = _maxDailyUserVolume;
@@ -817,7 +845,7 @@ UUPSUpgradeable
         );
     }
 
-    function detectSuspiciousActivity(address _user, uint256 _amount) internal {
+    function detectSuspiciousActivity(address _user, uint96 _amount) internal {
         // Check for abnormal conversion patterns
         bool isSuspicious = false;
         string memory reason = "";
@@ -841,7 +869,7 @@ UUPSUpgradeable
 
     function placeSuspiciousAddressInCooldown(address _suspiciousAddress) external onlyRole(Constants.EMERGENCY_ROLE) {
         addressCooldown[_suspiciousAddress] = true;
-        emit AddressPlacedInCooldown(_suspiciousAddress, block.timestamp + suspiciousCooldownPeriod);
+        emit AddressPlacedInCooldown(_suspiciousAddress, uint96(block.timestamp + suspiciousCooldownPeriod));
     }
 
     function removeSuspiciousAddressCooldown(address _address) external onlyRole(Constants.ADMIN_ROLE) {
@@ -851,13 +879,13 @@ UUPSUpgradeable
 
     function _postActionCheck(
         address _user,
-        uint256 _tokenAmount,
-        uint256 _stableAmount
+        uint96 _tokenAmount,
+        uint96 _stableAmount
     ) internal {
-        uint256 verifiedPrice = getVerifiedPrice();
+        uint96 verifiedPrice = getVerifiedPrice();
         // Check for abnormal price impact
-        uint256 expectedValue = (_tokenAmount * verifiedPrice) / 1e18;
-        uint256 priceImpact = 0;
+        uint96 expectedValue = (_tokenAmount * verifiedPrice) / 1e18;
+        uint96 priceImpact = 0;
 
         if (expectedValue > _stableAmount) {
             priceImpact = ((expectedValue - _stableAmount) * 10000) / expectedValue;
@@ -875,41 +903,41 @@ UUPSUpgradeable
     function recordPriceObservation() public {
         // Only record if enough time has passed since last observation
         if (block.timestamp >= lastObservationTimestamp + observationInterval) {
-            uint256 verifiedPrice = getVerifiedPrice();
+            uint96 verifiedPrice = getVerifiedPrice();
             // Update the current observation
             priceHistory[currentObservationIndex] = PriceObservation({
-                timestamp: block.timestamp,
+                timestamp: uint40(block.timestamp),
                 price: verifiedPrice
             });
 
-            emit PriceObservationRecorded(block.timestamp, verifiedPrice, currentObservationIndex);
+            emit PriceObservationRecorded(uint40(block.timestamp), verifiedPrice, currentObservationIndex);
 
             // Update tracking variables
-            lastObservationTimestamp = block.timestamp;
+            lastObservationTimestamp = uint40(block.timestamp);
 
             // Move to next slot in circular buffer
             currentObservationIndex = (currentObservationIndex + 1) % MAX_PRICE_OBSERVATIONS;
         }
     }
 
-    function updatePrice(uint256 _newPrice) external onlyRole(Constants.ORACLE_ROLE) {
-        require(_newPrice > 0, "PlatformStabilityFund: zero price");
+    function updatePrice(uint96 _newPrice) external onlyRole(Constants.ORACLE_ROLE) {
+        if (_newPrice == 0) revert ZeroAmount();
 
-        uint256 verifiedPrice = getVerifiedPrice();
+        uint96 verifiedPrice = getVerifiedPrice();
 
         // Store the old price for the event
-        uint256 oldPrice = verifiedPrice;
+        uint96 oldPrice = verifiedPrice;
 
         // Calculate the maximum allowed price change (e.g. 10%)
-        uint256 maxPriceChange = verifiedPrice * 1000 / 10000; // 10%
+        uint96 maxPriceChange = verifiedPrice * 1000 / 10000; // 10%
 
         // If TWAP is enabled, check against the time-weighted average
         if (twapEnabled) {
-            uint256 twapPrice = calculateTWAP();
+            uint96 twapPrice = calculateTWAP();
 
             // If we have enough observations and the new price deviates significantly from TWAP
             if (twapPrice > 0) {
-                uint256 twapDeviation;
+                uint96 twapDeviation;
 
                 if (_newPrice > twapPrice) {
                     twapDeviation = ((_newPrice - twapPrice) * 10000) / twapPrice;
@@ -918,13 +946,13 @@ UUPSUpgradeable
                 }
 
                 // If the deviation exceeds a threshold (e.g. 20%), reject the update
-                require(twapDeviation <= 2000, "PlatformStabilityFund: price deviates too much from TWAP");
+                if (twapDeviation > 2000) revert PriceDeviatesFromTWAP();
             }
         }
 
         // Check for sudden large price changes
         if (verifiedPrice > 0) {
-            uint256 priceChange;
+            uint96 priceChange;
 
             if (_newPrice > verifiedPrice) {
                 priceChange = _newPrice - verifiedPrice;
@@ -933,12 +961,12 @@ UUPSUpgradeable
             }
 
             // If the change is too large, reject the update
-            require(priceChange <= maxPriceChange, "PlatformStabilityFund: price change too large");
+            if (priceChange > maxPriceChange) revert PriceChangeTooLarge();
         }
 
         // Update the price
         verifiedPrice = _newPrice;
-        lastPriceUpdateTime = block.timestamp;
+        lastPriceUpdateTime = uint40(block.timestamp);
 
         // Record this observation
         recordPriceObservation();
@@ -950,11 +978,11 @@ UUPSUpgradeable
     }
 
     // Calculate time-weighted average price
-    function calculateTWAP() public view returns (uint256) {
-        uint256 validObservations = 0;
-        uint256 weightedPriceSum = 0;
-        uint256 timeSum = 0;
-        uint256 oldestAllowedTimestamp = block.timestamp - (twapWindowSize * observationInterval);
+    function calculateTWAP() public view returns (uint96) {
+        uint96 validObservations = 0;
+        uint96 weightedPriceSum = 0;
+        uint96 timeSum = 0;
+        uint40 oldestAllowedTimestamp = uint40(block.timestamp - (twapWindowSize * observationInterval));
 
         // Start from newest and work backward for 'windowSize' observations
         uint8 startIndex = (currentObservationIndex == 0) ? MAX_PRICE_OBSERVATIONS - 1 : currentObservationIndex - 1;
@@ -968,9 +996,9 @@ UUPSUpgradeable
                 continue;
             }
 
-            uint256 timeWeight;
+            uint40 timeWeight;
             if (validObservations == 0) {
-                timeWeight = block.timestamp - observation.timestamp;
+                timeWeight = uint40(block.timestamp - observation.timestamp);
             } else {
                 uint8 prevIndex = (index + 1) % MAX_PRICE_OBSERVATIONS;
                 timeWeight = priceHistory[prevIndex].timestamp - observation.timestamp;
@@ -991,12 +1019,12 @@ UUPSUpgradeable
 
     // Configure TWAP parameters
     function configureTWAP(
-        uint256 _windowSize,
-        uint256 _interval,
+        uint8 _windowSize,
+        uint40 _interval,
         bool _enabled
     ) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_windowSize > 0 && _windowSize <= MAX_PRICE_OBSERVATIONS, "PlatformStabilityFund: invalid window size");
-        require(_interval > 0, "PlatformStabilityFund: interval cannot be zero");
+        if (_windowSize == 0 || _windowSize > MAX_PRICE_OBSERVATIONS) revert InvalidWindowSize();
+        if (_interval == 0) revert IntervalCannotBeZero();
 
         twapWindowSize = _windowSize;
         observationInterval = _interval;
@@ -1005,13 +1033,13 @@ UUPSUpgradeable
         emit TWAPConfigUpdated(_windowSize, _interval, _enabled);
     }
 
-    function getVerifiedPrice() public view returns (uint256) {
+    function getVerifiedPrice() public view returns (uint96) {
         // If TWAP is enabled and we have enough observations, use TWAP
         if (twapEnabled) {
-            uint256 twapPrice = calculateTWAP();
+            uint96 twapPrice = calculateTWAP();
             if (twapPrice > 0) {
                 // Check if current price deviates too much from TWAP
-                uint256 deviation;
+                uint96 deviation;
                 if (tokenPrice > twapPrice) {
                     deviation = ((tokenPrice - twapPrice) * 10000) / twapPrice;
                 } else {
@@ -1033,8 +1061,8 @@ UUPSUpgradeable
      * Called when critical stability issues are detected
      */
     function notifyEmergencyToConnectedContracts() external onlyRole(Constants.EMERGENCY_ROLE) {
-        require(address(registry) != address(0), "PlatformStabilityFund: registry not set");
-
+        if (address(registry) == address(0)) revert RegistryNotSet();
+        
         // Try to notify the marketplace to pause
         try registry.isContractActive(Constants.MARKETPLACE_NAME) returns (bool isActive) {
             if (isActive) {
@@ -1102,20 +1130,20 @@ UUPSUpgradeable
     }
 
     // Add initialization
-    function initializeEmergencyRecovery(uint256 _requiredApprovals) external onlyRole(Constants.ADMIN_ROLE) {
+    function initializeEmergencyRecovery(uint8 _requiredApprovals) external onlyRole(Constants.ADMIN_ROLE) {
         requiredRecoveryApprovals = _requiredApprovals;
     }
 
     // Add recovery function
     function initiateEmergencyRecovery() external onlyRole(Constants.EMERGENCY_ROLE) {
-        require(paused, "StabilityFund: not paused");
+        if (!paused) revert NotPaused();
         inEmergencyRecovery = true;
-        emit EmergencyRecoveryInitiated(msg.sender, block.timestamp);
+        emit EmergencyRecoveryInitiated(msg.sender, uint40(block.timestamp));
     }
 
     function approveRecovery() external onlyRole(Constants.ADMIN_ROLE) {
-        require(inEmergencyRecovery, "StabilityFund: not in recovery mode");
-        require(!emergencyRecoveryApprovals[msg.sender], "StabilityFund: already approved");
+        if(!inEmergencyRecovery) revert NotInRecoveryMode();
+        if(emergencyRecoveryApprovals[msg.sender]) revert EmergencyAlreadyApproved();
 
         emergencyRecoveryApprovals[msg.sender] = true;
 
@@ -1124,8 +1152,8 @@ UUPSUpgradeable
         }
     }
 
-    function _countRecoveryApprovals() internal view returns (uint256) {
-        uint256 count = 0;
+    function _countRecoveryApprovals() internal view returns (uint96) {
+        uint96 count = 0;
         // Iterate through all admin role holders
         bytes32 role = Constants.ADMIN_ROLE;
         for (uint i = 0; i < getRoleMemberCount(role); i++) {
@@ -1141,7 +1169,7 @@ UUPSUpgradeable
         inEmergencyRecovery = false;
         paused = false;
         // Reset any emergency state variables
-        emit EmergencyRecoveryCompleted(msg.sender, block.timestamp);
+        emit EmergencyRecoveryCompleted(msg.sender, uint40(block.timestamp));
     }
 
     /**
@@ -1155,7 +1183,7 @@ UUPSUpgradeable
                 if (tokenAddress != address(0)) {
                     // Update cache with successful lookup
                     _cachedTokenAddress = tokenAddress;
-                    _lastCacheUpdate = block.timestamp;
+                    _lastCacheUpdate = uint40(block.timestamp);
                     return tokenAddress;
                 }
             } catch {
@@ -1182,10 +1210,10 @@ UUPSUpgradeable
      * @dev Updates the value mode based on current price compared to baseline
      */
     function updateValueMode() internal {
-        uint256 verifiedPrice = getVerifiedPrice();
+        uint96 verifiedPrice = getVerifiedPrice();
 
         // Calculate how far below baseline we are (in percentage points)
-        uint256 valueDropPercent = 0;
+        uint96 valueDropPercent = 0;
         if (verifiedPrice < baselinePrice) {
             valueDropPercent = ((baselinePrice - verifiedPrice) * 10000) / baselinePrice;
         }

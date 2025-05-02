@@ -17,13 +17,13 @@ interface IStabilityFund {
      * @dev Updates the token price and checks if low value mode should be activated
      * @param _newPrice New token price in stable coin units (scaled by 1e18)
      */
-    function updatePrice(uint256 _newPrice) external;
+    function updatePrice(uint96 _newPrice) external;
 
     /**
      * @dev Updates the baseline price (governance function)
      * @param _newBaselinePrice New baseline price in stable coin units (scaled by 1e18)
      */
-    function updateBaselinePrice(uint256 _newBaselinePrice) external;
+    function updateBaselinePrice(uint96 _newBaselinePrice) external;
 
     /**
     * @dev Updates the current fee based on token price relative to baseline
@@ -35,13 +35,13 @@ interface IStabilityFund {
      * @dev Adds stable coins to the stability reserves
      * @param _amount Amount of stable coins to add
      */
-    function addReserves(uint256 _amount) external;
+    function addReserves(uint96 _amount) external;
 
     /**
      * @dev Withdraws stable coins from reserves (only owner)
      * @param _amount Amount of stable coins to withdraw
      */
-    function withdrawReserves(uint256 _amount) external;
+    function withdrawReserves(uint96 _amount) external;
 
     /**
      * @dev Converts ERC20 tokens to stable coins for project funding with stability protection
@@ -52,15 +52,15 @@ interface IStabilityFund {
      */
     function convertTokensToFunding(
         address _project,
-        uint256 _tokenAmount,
-        uint256 _minReturn
-    ) external returns (uint256 stableAmount);
+        uint96 _tokenAmount,
+        uint96 _minReturn
+    ) external returns (uint96 stableAmount);
 
     /**
      * @dev Get the reserve ratio health of the fund
-     * @return uint256 Current reserve ratio (10000 = 100%)
+     * @return uint96 Current reserve ratio (10000 = 100%)
      */
-    function getReserveRatioHealth() external view returns (uint256);
+    function getReserveRatioHealth() external view returns (uint96);
 
 /**
      * @dev Simulates a token conversion without executing it
@@ -70,8 +70,8 @@ interface IStabilityFund {
      * @return finalAmount Final amount after subsidy
      * @return feeAmount Platform fee amount
      */
-    function simulateConversion(uint256 _tokenAmount) external view returns (uint256 expectedValue, uint256 subsidyAmount,
-        uint256 finalAmount, uint256 feeAmount);
+    function simulateConversion(uint96 _tokenAmount) external view returns (uint96 expectedValue, uint96 subsidyAmount,
+        uint96 finalAmount, uint96 feeAmount);
 
     /**
      * @dev Updates fund parameters (only owner)
@@ -81,8 +81,8 @@ interface IStabilityFund {
      * @param _lowValueFeePercent New reduced fee percentage
      * @param _valueThreshold New threshold for low value detection
      */
-    function updateFundParameters(uint256 _reserveRatio, uint256 _minReserveRatio, uint256 _platformFeePercent, 
-        uint256 _lowValueFeePercent, uint256 _valueThreshold) external;
+    function updateFundParameters(uint96 _reserveRatio, uint96 _minReserveRatio, uint32 _platformFeePercent, 
+        uint32 _lowValueFeePercent, uint32 _valueThreshold) external;
 
     /**
      * @dev Updates the price oracle address
@@ -96,7 +96,7 @@ interface IStabilityFund {
      * @param _minReturn Minimum stable coin amount to receive
      * @return stableAmount Amount of stable coins received
      */
-    function swapTokensForStable(uint256 _tokenAmount, uint256 _minReturn) external returns (uint256 stableAmount);
+    function swapTokensForStable(uint96 _tokenAmount, uint96 _minReturn) external returns (uint96 stableAmount);
 
     /**
     * @dev Checks if reserve ratio is below critical threshold and pauses if needed
@@ -142,17 +142,17 @@ interface IStabilityFund {
     * @dev Process burned tokens and convert a portion to reserves
     * @param _burnedAmount Amount of platform tokens that were burned
     */
-    function processBurnedTokens(uint256 _burnedAmount) external;
+    function processBurnedTokens(uint96 _burnedAmount) external;
     
     /**
      * @dev Get the verified token price
      */
-    function getVerifiedPrice() external view returns (uint256);
+    function getVerifiedPrice() external view returns (uint96);
 
     /**
      * @dev Process platform fees and add portion to reserves
      */
-    function processPlatformFees(uint256 _feeAmount) external;
+    function processPlatformFees(uint96 _feeAmount) external;
 
     /**
    * @dev Updates replenishment parameters
@@ -168,7 +168,7 @@ interface IStabilityFund {
     */
     function setAuthBurner(address _burner, bool _authorized) external;
 
-    function configureFlashLoanProtection(uint256 _maxDailyUserVolume, uint256 _maxSingleConversionAmount, uint256 _minTimeBetweenActions, 
+    function configureFlashLoanProtection(uint96 _maxDailyUserVolume, uint96 _maxSingleConversionAmount, uint96 _minTimeBetweenActions, 
         bool _enabled) external;
 
     function placeSuspiciousAddressInCooldown(address _suspiciousAddress) external;
@@ -178,10 +178,10 @@ interface IStabilityFund {
     function recordPriceObservation() external;
 
     // Calculate time-weighted average price
-    function calculateTWAP() external view returns (uint256);
+    function calculateTWAP() external view returns (uint96);
 
     // Configure TWAP parameters
-    function configureTWAP(uint256 _windowSize, uint256 _interval, bool _enabled) external;
+    function configureTWAP(uint8 _windowSize, uint40 _interval, bool _enabled) external;
 
     /**
      * @dev Emergency notification to all connected contracts
@@ -190,7 +190,7 @@ interface IStabilityFund {
     function notifyEmergencyToConnectedContracts() external;
 
     // Add initialization
-    function initializeEmergencyRecovery(uint256 _requiredApprovals) external;
+    function initializeEmergencyRecovery(uint8 _requiredApprovals) external;
 
     // Add recovery function
     function initiateEmergencyRecovery() external;
