@@ -76,15 +76,15 @@ UUPSUpgradeable
     bool public flashLoanProtectionEnabled;
 
     mapping(address => bool) public addressCooldown;
-    uint40 public suspiciousCooldownPeriod = 24 hours;
+    uint40 public suspiciousCooldownPeriod;
 
     uint8 public constant MAX_PRICE_OBSERVATIONS = 24; // Store 24 hourly observations
     PriceObservation[MAX_PRICE_OBSERVATIONS] public priceHistory;
     uint8 public currentObservationIndex;
     uint40 public lastObservationTimestamp;
-    uint40 public observationInterval = 1 hours;
-    uint8 public twapWindowSize = 12; // Use 12 hours for TWAP by default
-    bool public twapEnabled = true;
+    uint40 public observationInterval;
+    uint8 public twapWindowSize; 
+    bool public twapEnabled;
 
     bool public inEmergencyRecovery;
     mapping(address => bool) public emergencyRecoveryApprovals;
@@ -254,8 +254,9 @@ UUPSUpgradeable
         uint16 _valueThreshold
     ) initializer public {
         __AccessControl_init();
-        __ReentrancyGuard_init();
         __Ownable_init(msg.sender);
+        __ReentrancyGuard_init();
+        
 
         if (_token == address(0)) revert ZeroTokenAddress();
         if (_stableCoin == address(0)) revert ZeroStableCoinAddress();
@@ -294,6 +295,10 @@ UUPSUpgradeable
         maxSingleConversionAmount = 100_000 * 10**18;// 100K tokens per conversion
         minTimeBetweenActions = 15 minutes;         // 15 minutes between actions
         flashLoanProtectionEnabled = true;
+        suspiciousCooldownPeriod = 24 hours;
+        observationInterval = 1 hours;
+        twapWindowSize=12; // Use 12 hours for TWAP by default
+        twapEnabled=true;
     }
 
     /**
@@ -1223,4 +1228,18 @@ UUPSUpgradeable
 
         emit ValueModeChanged(valueDropPercent >= priceDropThreshold);
     }
+
+    fallback() external payable {
+        // Extract function selector from calldata
+        bytes4 selector = msg.data.length >= 4 ? bytes4(msg.data[0:4]) : bytes4(0);
+
+        // Log which function is being attempted
+        emit FunctionCallFailed(selector);
+
+        revert("Function not found");
+    }
+
+    // Add this event
+    event FunctionCallFailed(bytes4 indexed selector);
+
 }

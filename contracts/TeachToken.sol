@@ -142,12 +142,12 @@ contract TeachToken is
         );
         
         // Define allocation amounts
-        uint256 platformEcosystemAmount = 1_600_000_000 * 10**18; // 32%
-        uint256 communityIncentivesAmount = 1_100_000_000 * 10**18; // 22%
-        uint256 initialLiquidityAmount = 700_000_000 * 10**18; // 14%
-        uint256 publicPresaleAmount = 500_000_000 * 10**18; // 10%
-        uint256 teamAndDevAmount = 500_000_000 * 10**18; // 10%
-        uint256 educationalPartnersAmount = 400_000_000 * 10**18; // 8%
+        uint256 publicPresaleAmount = 1_250_000_000 * 10**18; // 25%
+        uint256 communityIncentivesAmount = 1_200_000_000 * 10**18; // 24%
+        uint256 platformEcosystemAmount = 1_000_000_000 * 10**18; // 20%
+        uint256 initialLiquidityAmount = 600_000_000 * 10**18; // 12%
+        uint256 teamAndDevAmount = 400_000_000 * 10**18; // 8%
+        uint256 educationalPartnersAmount = 350_000_000 * 10**18; // 7%
         uint256 reserveAmount = 200_000_000 * 10**18; // 4%
 
         // Validate that the sum of all allocations equals MAX_SUPPLY

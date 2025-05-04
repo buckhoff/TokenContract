@@ -7,7 +7,6 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import {Constants} from "./Libraries/Constants.sol";
-import {VestingCalculations} from "./Libraries/VestingCalculations.sol";
 
 /**
  * @title TokenCrowdSale
@@ -26,19 +25,24 @@ UUPSUpgradeable
         uint96 sold;          // Amount sold in this tier
         uint96 minPurchase;   // Minimum purchase amount in USD
         uint96 maxPurchase;   // Maximum purchase amount in USD
-        uint8 vestingTGE;     // Percentage released at TGE (scaled by 100)
-        uint16 vestingMonths; // Remaining vesting period in months
         bool isActive;        // Whether this tier is currently active
     }
 
     // User purchase tracking
     struct Purchase {
         uint96 tokens;          // Total tokens purchased
+        uint96 bonusAmount;     // Amount of bonus tokens received
         uint96 usdAmount;       // USD amount paid
         uint96[] tierAmounts;   // Amount purchased in each tier
         uint96 lastClaimTime;   // Last time user claimed tokens
     }
-
+    
+    // Bonus bracket information
+    struct BonusBracket {
+        uint96 fillPercentage;  // Fill percentage threshold (e.g., 25%, 50%, 75%, 100%)
+        uint8 bonusPercentage;   // Bonus percentage for this bracket (scaled by 100)
+    }
+    
     struct ClaimEvent {
         uint128 amount;
         uint64 timestamp;
@@ -51,7 +55,12 @@ UUPSUpgradeable
     }
 
     ERC20Upgradeable internal token;
+    // Payment token (USDC)
+    ERC20Upgradeable public paymentToken;
 
+    // Treasury wallet to receive funds
+    address public treasury;
+    
     // Emergency state tracking
     enum EmergencyState { NORMAL, MINOR_EMERGENCY, CRITICAL_EMERGENCY }
     EmergencyState public emergencyState;
@@ -68,19 +77,16 @@ UUPSUpgradeable
     uint8 public currentTier;
     uint8 public tierCount;
     mapping(uint8 => uint96) public maxTokensForTier;
-
-    // Payment token (USDC)
-    ERC20Upgradeable public paymentToken;
-
+    
     // Presale tiers
     PresaleTier[] public tiers;
 
     // Mapping from user address to purchase info
     mapping(address => Purchase) public purchases;
 
-    // Treasury wallet to receive funds
-    address public treasury;
-
+    // Bonus brackets for each tier
+    mapping(uint256 => BonusBracket[4]) public tierBonuses;
+    
     // Presale start and end times
     uint64 public presaleStart;
     uint64 public presaleEnd;
@@ -116,6 +122,8 @@ UUPSUpgradeable
 
     // Events
     event TierPurchase(address indexed buyer, uint8 tierId, uint96 tokenAmount, uint96 usdAmount);
+    event TierConfigured(uint256 tierId, uint256 price, uint256 allocation);
+    event BonusConfigured(uint256 tierId, uint256 bracketId, uint256 fillPercentage, uint8 bonusPercentage);
     event TierStatusChanged(uint8 tierId, bool isActive);
     event TokensWithdrawn(address indexed user, uint96 amount);
     event PresaleTimesUpdated(uint64 newStart, uint64 newEnd);
@@ -163,95 +171,55 @@ UUPSUpgradeable
     }
 
     /**
-     * @dev Creates standard tier configurations for token presale - moved from library to contract
+     * @dev Creates standard tier configurations for token presale
      */
     function _createStandardTiers() internal pure returns (PresaleTier[] memory) {
-        PresaleTier[] memory stdTiers = new PresaleTier[](7);
+        PresaleTier[] memory stdTiers = new PresaleTier[](5);
 
         // Tier 1:
         stdTiers[0] = PresaleTier({
-            price: 35000, // $0.035
-            allocation: 75_000_000 * 10**18, // 75M tokens
+            price: 40000, // $0.04
+            allocation: 250_000_000 * 10**18, // 250M tokens
             sold: 0,
             minPurchase: 100 * PRICE_DECIMALS, // $100 min
             maxPurchase: 50_000 * PRICE_DECIMALS, // $50,000 max
-            vestingTGE: 10, // 10% at TGE
-            vestingMonths: 18, // 18 months vesting
             isActive: false
         });
 
         // Tier 2: 
         stdTiers[1] = PresaleTier({
-            price: 45000, // $0.045
-            allocation: 100_000_000 * 10**18, // 100M tokens
+            price: 60000, // $0.06
+            allocation: 375_000_000 * 10**18, // 375M tokens
             sold: 0,
             minPurchase: 100 * PRICE_DECIMALS, // $100 min
-            maxPurchase: 25_000 * PRICE_DECIMALS, // $25,000 max
-            vestingTGE: 15, // 15% at TGE
-            vestingMonths: 15, // 15 months vesting
+            maxPurchase: 50_000 * PRICE_DECIMALS, // $50,000 max
             isActive: false
         });
 
         // Tier 3: 
         stdTiers[2] = PresaleTier({
-            price: 55000, // $0.055
-            allocation: 100_000_000 * 10**18, // 100M tokens
+            price: 80000, // $0.08
+            allocation: 375_000_000 * 10**18, // 375M tokens
             sold: 0,
             minPurchase: 100 * PRICE_DECIMALS, // $100 min
-            maxPurchase: 10_000 * PRICE_DECIMALS, // $10,000 max
-            vestingTGE: 20, // 20% at TGE
-            vestingMonths: 12, // 12 months vesting
+            maxPurchase: 50_000 * PRICE_DECIMALS, // $50,000 max
             isActive: false
         });
 
         // Tier 4:
         stdTiers[3] = PresaleTier({
-            price: 70000, // $0.07
-            allocation: 75_000_000 * 10**18, // 75M tokens
+            price: 100000, // $0.10
+            allocation: 250_000_000 * 10**18, // 250M tokens
             sold: 0,
             minPurchase: 100 * PRICE_DECIMALS, // $100 min
-            maxPurchase: 5_000 * PRICE_DECIMALS, // $5,000 max
-            vestingTGE: 20, // 20% at TGE
-            vestingMonths: 9, // 9 months vesting
+            maxPurchase: 50_000 * PRICE_DECIMALS, // $50,000 max
             isActive: false
         });
 
-        // Tier 5:
-        stdTiers[4] = PresaleTier({
-            price: 85000, // $0.085
-            allocation: 50_000_000 * 10**18, // 50M tokens
-            sold: 0,
-            minPurchase: 50 * PRICE_DECIMALS, // $50 min
-            maxPurchase: 5_000 * PRICE_DECIMALS, // $5,000 max
-            vestingTGE: 25, // 25% at TGE
-            vestingMonths: 6, // 6 months vesting
-            isActive: false
-        });
-
-        // Tier 6:
-        stdTiers[5] = PresaleTier({
-            price: 100000, // $0.10
-            allocation: 50_000_000 * 10**18, // 50M tokens
-            sold: 0,
-            minPurchase: 20 * PRICE_DECIMALS, // $20 min
-            maxPurchase: 5_000 * PRICE_DECIMALS, // $5,000 max
-            vestingTGE: 30, // 30% at TGE
-            vestingMonths: 4, // 4 months vesting
-            isActive: false
-        });
-
-        // Tier 7:
-        stdTiers[6] = PresaleTier({
-            price: 120000, // $0.12
-            allocation: 50_000_000 * 10**18, // 50M tokens
-            sold: 0,
-            minPurchase: 20 * PRICE_DECIMALS, // $20 min
-            maxPurchase: 5_000 * PRICE_DECIMALS, // $5,000 max
-            vestingTGE: 40, // 40% at TGE
-            vestingMonths: 3, // 3 months vesting
-            isActive: false
-        });
-
+        for (uint256 i = 0; i < 4; i++) {
+            emit TierConfigured(i, tiers[i].price, tiers[i].allocation);
+        }
+        
         return stdTiers;
     }
 
@@ -312,8 +280,7 @@ UUPSUpgradeable
         _grantRole(Constants.ADMIN_ROLE, msg.sender);
         _grantRole(Constants.EMERGENCY_ROLE, msg.sender);
         _grantRole(Constants.RECORDER_ROLE, msg.sender);
-
-        // Create standard tiers directly instead of using library
+        
         tiers = _createStandardTiers();
         tierCount = uint8(tiers.length);
 
@@ -328,7 +295,8 @@ UUPSUpgradeable
 
         // Calculate tier maximums
         _calculateTierMaximums();
-
+        _setupDefaultBonuses();
+        
         maxTokensPerAddress = 1_500_000 * 10**18; // 1.5M tokens by default
 
         // Initialize cache
@@ -400,6 +368,105 @@ UUPSUpgradeable
     }
 
     /**
+     * @dev Updates a tier configuration
+     * @param _tierId ID of the tier to update
+     * @param _price New price in USD (scaled by 1e6)
+     * @param _allocation New allocation in tokens
+     * @param _minPurchase New minimum purchase amount in USD
+     * @param _maxPurchase New maximum purchase amount in USD
+     */
+    function configureTier(
+        uint256 _tierId,
+        uint256 _price,
+        uint256 _allocation,
+        uint256 _minPurchase,
+        uint256 _maxPurchase
+    ) external onlyRole(Constants.ADMIN_ROLE) {
+        require(_tierId < 4, "TieredTokenSale: invalid tier ID");
+        require(_price > 0, "TieredTokenSale: zero price");
+        require(_allocation > 0, "TieredTokenSale: zero allocation");
+        require(_minPurchase > 0 && _maxPurchase > _minPurchase, "TieredTokenSale: invalid purchase limits");
+
+        tiers[_tierId].price = _price;
+        tiers[_tierId].allocation = _allocation;
+        tiers[_tierId].minPurchase = _minPurchase;
+        tiers[_tierId].maxPurchase = _maxPurchase;
+
+        emit TierConfigured(_tierId, _price, _allocation);
+    }
+
+    /**
+     * @dev Updates a bonus bracket for a tier
+     * @param _tierId ID of the tier
+     * @param _bracketId ID of the bracket (0-3)
+     * @param _fillPercentage New fill percentage threshold
+     * @param _bonusPercentage New bonus percentage
+     */
+    function configureBonusBracket(
+        uint256 _tierId,
+        uint256 _bracketId,
+        uint256 _fillPercentage,
+        uint8 _bonusPercentage
+    ) external onlyRole(Constants.ADMIN_ROLE) {
+        require(_tierId < 4, "TieredTokenSale: invalid tier ID");
+        require(_bracketId < 4, "TieredTokenSale: invalid bracket ID");
+        require(_fillPercentage > 0 && _fillPercentage <= 100, "TieredTokenSale: invalid fill percentage");
+
+        // Ensure each bracket has a higher fill percentage than the previous
+        if (_bracketId > 0) {
+            require(_fillPercentage > tierBonuses[_tierId][_bracketId - 1].fillPercentage,
+                "TieredTokenSale: fill percentage must be higher than previous bracket");
+        }
+
+        // Ensure worst bonus in a tier is better than best bonus in next tier (if not the last tier)
+        if (_tierId < 3 && _bracketId == 3) {
+            require(_bonusPercentage > tierBonuses[_tierId + 1][0].bonusPercentage,
+                "TieredTokenSale: worst bonus must be better than next tier's best bonus");
+        }
+
+        tierBonuses[_tierId][_bracketId] = BonusBracket({
+            fillPercentage: _fillPercentage,
+            bonusPercentage: _bonusPercentage
+        });
+
+        emit BonusConfigured(_tierId, _bracketId, _fillPercentage, _bonusPercentage);
+    }
+
+    /**
+    * @dev Calculates the current bonus percentage for a tier
+     * @param _tierId ID of the tier
+     * @return Bonus percentage (scaled by 100)
+     */
+    function getCurrentBonus(uint256 _tierId) public view returns (uint8) {
+        require(_tierId < 4, "TieredTokenSale: invalid tier ID");
+
+        PresaleTier memory tier = tiers[_tierId];
+
+        // If nothing sold yet, return the first bracket bonus
+        if (tier.sold == 0) {
+            return tierBonuses[_tierId][0].bonusPercentage;
+        }
+
+        // Calculate fill percentage
+        uint256 fillPercentage = (tier.sold * 100) / tier.allocation;
+
+        // Find the appropriate bracket
+        for (uint256 i = 3; i >= 0; i--) {
+            if (fillPercentage >= tierBonuses[_tierId][i].fillPercentage) {
+                return tierBonuses[_tierId][i].bonusPercentage;
+            }
+
+            // Special case for the first bracket
+            if (i == 0) {
+                return tierBonuses[_tierId][0].bonusPercentage;
+            }
+        }
+
+        // Default to the first bracket (should never reach here)
+        return tierBonuses[_tierId][0].bonusPercentage;
+    }
+    
+    /**
      * @dev Purchase tokens in a specific tier
      * @param _tierId Tier to purchase from
      * @param _usdAmount USD amount to spend (scaled by 1e6)
@@ -429,25 +496,39 @@ UUPSUpgradeable
         // Check if there's enough allocation left
         require(tier.sold + tokenAmount <= tier.allocation, "Insufficient tier allocation");
 
+        // Calculate bonus percentage
+        uint8 bonusPercentage = getCurrentBonus(_tierId);
+
+        uint96 bonusTokenAmount = 0;
+        
+        // Calculate bonus token amount
+        if(bonusPercentage > 0){
+            uint96 bonusTokenAmount = (tokenAmount * bonusPercentage) / 100;
+        }
+        
+        // Total tokens to transfer
+        uint96 totalTokenAmount = tokenAmount + bonusTokenAmount;
+        
         // Update tier data
         tier.sold = tier.sold + tokenAmount;
 
         // Update user purchase data
         Purchase storage userPurchase = purchases[msg.sender];
-        userPurchase.tokens = userPurchase.tokens + tokenAmount;
-        userPurchase.usdAmount = userPurchase.usdAmount + _usdAmount;
+        userPurchase.tokens += tokenAmount;
+        userPurchase.bonusAmount += bonusTokenAmount;
+        userPurchase.usdAmount += _usdAmount;
 
         // Transfer payment tokens from user to treasury
         require(paymentToken.transferFrom(msg.sender, treasury, _usdAmount), "Payment failed");
 
         // Update total tokens purchased by address
-        addressTokensPurchased[msg.sender] += tokenAmount;
+        addressTokensPurchased[msg.sender] += totalTokenAmount;
 
         // Ensure tierAmounts array is long enough
         while (userPurchase.tierAmounts.length <= _tierId) {
             userPurchase.tierAmounts.push(0);
         }
-        userPurchase.tierAmounts[_tierId] = userPurchase.tierAmounts[_tierId] + _usdAmount;
+        userPurchase.tierAmounts[_tierId] += _usdAmount;
 
         // Record purchase for tracking using the StabilityFund
         if (address(registry) != address(0) && registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
@@ -457,6 +538,45 @@ UUPSUpgradeable
         emit TierPurchase(msg.sender, _tierId, tokenAmount, _usdAmount);
     }
 
+    /**
+     * @dev Sets up the default bonus structure for all tiers
+     * First 25% filled: 20%/18%/15%/12% bonus
+     * 26-50% filled: 15%/13%/10%/8% bonus
+     * 51-75% filled: 10%/8%/5%/4% bonus
+     * 76-100% filled: 5%/3%/2%/1% bonus
+     */
+    function _setupDefaultBonuses() internal {
+        // Tier 1 bonuses
+        tierBonuses[0][0] = BonusBracket({ fillPercentage: 25, bonusPercentage: 20 });  // 20% bonus
+        tierBonuses[0][1] = BonusBracket({ fillPercentage: 50, bonusPercentage: 15 });  // 15% bonus
+        tierBonuses[0][2] = BonusBracket({ fillPercentage: 75, bonusPercentage: 10 });  // 10% bonus
+        tierBonuses[0][3] = BonusBracket({ fillPercentage: 100, bonusPercentage: 5 });  // 5% bonus
+
+        // Tier 2 bonuses
+        tierBonuses[1][0] = BonusBracket({ fillPercentage: 25, bonusPercentage: 18 });  // 18% bonus
+        tierBonuses[1][1] = BonusBracket({ fillPercentage: 50, bonusPercentage: 13 });  // 13% bonus
+        tierBonuses[1][2] = BonusBracket({ fillPercentage: 75, bonusPercentage: 8 });   // 8% bonus
+        tierBonuses[1][3] = BonusBracket({ fillPercentage: 100, bonusPercentage: 3 });  // 3% bonus
+
+        // Tier 3 bonuses
+        tierBonuses[2][0] = BonusBracket({ fillPercentage: 25, bonusPercentage: 15 });  // 15% bonus
+        tierBonuses[2][1] = BonusBracket({ fillPercentage: 50, bonusPercentage: 10 });  // 10% bonus
+        tierBonuses[2][2] = BonusBracket({ fillPercentage: 75, bonusPercentage: 5 });   // 5% bonus
+        tierBonuses[2][3] = BonusBracket({ fillPercentage: 100, bonusPercentage: 2 });  // 2% bonus
+
+        // Tier 4 bonuses
+        tierBonuses[3][0] = BonusBracket({ fillPercentage: 25, bonusPercentage: 12 });  // 12% bonus
+        tierBonuses[3][1] = BonusBracket({ fillPercentage: 50, bonusPercentage: 8 });   // 8% bonus
+        tierBonuses[3][2] = BonusBracket({ fillPercentage: 75, bonusPercentage: 4 });   // 4% bonus
+        tierBonuses[3][3] = BonusBracket({ fillPercentage: 100, bonusPercentage: 1 });  // 1% bonus
+
+        for (uint256 i = 0; i < 4; i++) {
+            for (uint256 j = 0; j < 4; j++) {
+                emit BonusConfigured(i, j, tierBonuses[i][j].fillPercentage, tierBonuses[i][j].bonusPercentage);
+            }
+        }
+    }
+    
     /**
      * @dev Complete Token Generation Event, allowing initial token claims
      */
@@ -770,49 +890,7 @@ UUPSUpgradeable
             _setEmergencyState(0); // Set to NORMAL
         }
     }
-
-    /**
-     * @dev Gets next vesting milestone for a user
-     * @param _user Address to check
-     * @return timestamp Time of next vesting event
-     * @return amount Amount that will vest
-     */
-    function getNextVestingMilestone(address _user) public view returns (
-        uint64 timestamp,
-        uint96 amount
-    ) {
-        if (!tgeCompleted) return (0, 0);
-
-        Purchase storage userPurchase = purchases[_user];
-        if (userPurchase.tokens == 0) return (0, 0);
-
-        // Calculate next vesting event
-        uint64 elapsedMonths = uint64((block.timestamp - presaleEnd) / 30 days);
-        uint64 nextMonthTimestamp = presaleEnd + ((elapsedMonths + 1) * 30 days);
-
-        // Calculate tokens from each tier that will vest at next milestone
-        uint96 nextAmount = 0;
-
-        for (uint8 tierId = 0; tierId < tiers.length; tierId++) {
-            if (tierId >= userPurchase.tierAmounts.length || userPurchase.tierAmounts[tierId] == 0) continue;
-
-            PresaleTier storage tier = tiers[tierId];
-            uint96 tierTokens = uint96((userPurchase.tierAmounts[tierId] * (10**18)) / (tier.price));
-
-            // Skip TGE portion
-            uint96 tgeAmount = uint96((tierTokens * tier.vestingTGE) / 100);
-            uint96 vestingAmount = tierTokens - tgeAmount;
-
-            // Calculate next month's vesting amount
-            if (elapsedMonths < tier.vestingMonths) {
-                uint96 monthlyVesting = vestingAmount / tier.vestingMonths;
-                nextAmount = nextAmount + monthlyVesting;
-            }
-        }
-
-        return (nextMonthTimestamp, nextAmount);
-    }
-
+    
     /**
      * @dev Batch distribute tokens to multiple users
      * @param _users Array of user addresses
