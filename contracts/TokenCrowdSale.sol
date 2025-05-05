@@ -14,7 +14,7 @@ interface ITeachTokenVesting {
 
     function createLinearVestingSchedule(
         address _beneficiary,
-        uint96 _amount,
+        uint256 _amount,
         uint40 _cliffDuration,
         uint40 _duration,
         uint8 _tgePercentage,
@@ -22,8 +22,8 @@ interface ITeachTokenVesting {
         bool _revocable
     ) external returns (uint256);
 
-    function calculateClaimableAmount(uint256 _scheduleId) external view returns (uint96);
-    function claimTokens(uint256 _scheduleId) external returns (uint96) ;
+    function calculateClaimableAmount(uint256 _scheduleId) external view returns (uint256);
+    function claimTokens(uint256 _scheduleId) external returns (uint256) ;
     function getSchedulesForBeneficiary(address _beneficiary) external view returns (uint256[] memory);
 }
 
@@ -44,9 +44,9 @@ UUPSUpgradeable
     struct PresaleTier {
         uint96 price;         // Price in USD (scaled by 1e6)
         uint256 allocation;    // Total allocation for this tier
-        uint96 sold;          // Amount sold in this tier
-        uint96 minPurchase;   // Minimum purchase amount in USD
-        uint96 maxPurchase;   // Maximum purchase amount in USD
+        uint256 sold;          // Amount sold in this tier
+        uint256 minPurchase;   // Minimum purchase amount in USD
+        uint256 maxPurchase;   // Maximum purchase amount in USD
         uint8 vestingTGE;     // Percentage released at TGE (scaled by 100)
         uint16 vestingMonths; // Remaining vesting period in months
         bool isActive;        // Whether this tier is currently active
@@ -54,12 +54,12 @@ UUPSUpgradeable
 
     // User purchase tracking
     struct Purchase {
-        uint96 tokens;          // Total tokens purchased
-        uint96 bonusAmount;     // Amount of bonus tokens received
-        uint96 usdAmount;       // USD amount paid
-        uint96[] tierAmounts;   // Amount purchased in each tier
-        uint96 lastClaimTime;   // Last time user claimed tokens
-        uint96 vestingScheduleId; //Vesting Schedule ID
+        uint256 tokens;          // Total tokens purchased
+        uint256 bonusAmount;     // Amount of bonus tokens received
+        uint256 usdAmount;       // USD amount paid
+        uint256[] tierAmounts;   // Amount purchased in each tier
+        uint256 lastClaimTime;   // Last time user claimed tokens
+        uint256 vestingScheduleId; //Vesting Schedule ID
         bool vestingCreated;
     }
     
@@ -127,14 +127,14 @@ UUPSUpgradeable
     uint96 public maxTokensPerAddress;
 
     // Mapping to track total tokens purchased by each address
-    mapping(address => uint96) public addressTokensPurchased;
+    mapping(address => uint256) public addressTokensPurchased;
 
     // Timestamps for tier deadlines
     mapping(uint8 => uint64) public tierDeadlines;
 
     mapping(address => uint256) public lastPurchaseTime;
     uint32 public minTimeBetweenPurchases;
-    uint96 public maxPurchaseAmount;
+    uint256 public maxPurchaseAmount;
 
     // Add mapping to track claims history
     mapping(address => ClaimEvent[]) public claimHistory;
@@ -147,11 +147,11 @@ UUPSUpgradeable
     CachedAddresses private _cachedAddresses;
 
     // Events
-    event TierPurchase(address indexed buyer, uint8 tierId, uint96 tokenAmount, uint96 usdAmount);
+    event TierPurchase(address indexed buyer, uint8 tierId, uint256 tokenAmount, uint256 usdAmount);
     event TierConfigured(uint256 tierId, uint256 price, uint256 allocation);
     event BonusConfigured(uint256 tierId, uint256 bracketId, uint256 fillPercentage, uint8 bonusPercentage);
     event TierStatusChanged(uint8 tierId, bool isActive);
-    event TokensWithdrawn(address indexed user, uint96 amount);
+    event TokensWithdrawn(address indexed user, uint256 amount);
     event PresaleTimesUpdated(uint64 newStart, uint64 newEnd);
     event TierDeadlineUpdated(uint8 indexed tier, uint64 deadline);
     event TierAdvanced(uint8 indexed newTier);
@@ -162,11 +162,11 @@ UUPSUpgradeable
     event EmergencyRecoveryInitiated(address indexed recoveryAdmin, uint64 timestamp);
     event EmergencyRecoveryCompleted(address indexed recoveryAdmin, uint64 timestamp);
     event AutoCompoundUpdated(address indexed user, bool enabled);
-    event EmergencyWithdrawalProcessed(address indexed user, uint96 amount);
+    event EmergencyWithdrawalProcessed(address indexed user, uint256 amount);
     event EmergencyStateChanged(EmergencyState state);
     event StabilityFundRecordingFailed(address indexed user, string reason);
 
-    modifier purchaseRateLimit(uint96 _usdAmount) {
+    modifier purchaseRateLimit(uint256 _usdAmount) {
         uint16 deployer = 0;
         address msgr = msg.sender;
         uint256 userLastPurchase = uint256(lastPurchaseTime[msgr]);
@@ -214,7 +214,7 @@ UUPSUpgradeable
         // Tier 1:
         stdTiers[0] = PresaleTier({
             price: 40000, // $0.04
-            allocation: 250_000_000 * 10**6, // 250M tokens
+            allocation: uint256(250_000_000) * 10**6, // 250M tokens
             sold: 0,
             minPurchase: 100 * PRICE_DECIMALS, // $100 min
             maxPurchase: 50_000 * PRICE_DECIMALS, // $50,000 max
@@ -226,7 +226,7 @@ UUPSUpgradeable
         // Tier 2: 
         stdTiers[1] = PresaleTier({
             price: 60000, // $0.06
-            allocation: 375_000_000 * 10**6, // 375M tokens
+            allocation: uint256(375_000_000) * 10**6, // 375M tokens
             sold: 0,
             minPurchase: 100 * PRICE_DECIMALS, // $100 min
             maxPurchase: 50_000 * PRICE_DECIMALS, // $50,000 max
@@ -238,7 +238,7 @@ UUPSUpgradeable
         // Tier 3: 
         stdTiers[2] = PresaleTier({
             price: 80000, // $0.08
-            allocation: 375_000_000 * 10**6, // 375M tokens
+            allocation: uint256(375_000_000) * 10**6, // 375M tokens
             sold: 0,
             minPurchase: 100 * PRICE_DECIMALS, // $100 min
             maxPurchase: 50_000 * PRICE_DECIMALS, // $50,000 max
@@ -250,7 +250,7 @@ UUPSUpgradeable
         // Tier 4:
         stdTiers[3] = PresaleTier({
             price: 100000, // $0.10
-            allocation: 250_000_000 * 10**6, // 250M tokens
+            allocation: uint256(250_000_000) * 10**6, // 250M tokens
             sold: 0,
             minPurchase: 100 * PRICE_DECIMALS, // $100 min
             maxPurchase: 50_000 * PRICE_DECIMALS, // $50,000 max
@@ -284,16 +284,16 @@ UUPSUpgradeable
         if (tier.allocation <= tier.sold) {
             return 0;
         }
-        return uint96(tier.allocation) - tier.sold;
+        return uint96(tier.allocation - tier.sold);
     }
 
     /**
      * @dev Calculate total tokens sold across all tiers - moved from library to contract
      */
-    function totalTokensSold() public view returns (uint96 total) {
+    function totalTokensSold() public view returns (uint256 total) {
         total = 0;
         for (uint8 i = 0; i < tiers.length; i++) {
-            total += tiers[i].sold;
+            total += uint96(tiers[i].sold);
         }
         return total;
     }
@@ -423,8 +423,8 @@ UUPSUpgradeable
         uint8 _tierId,
         uint96 _price,
         uint256 _allocation,
-        uint96 _minPurchase,
-        uint96 _maxPurchase
+        uint256 _minPurchase,
+        uint256 _maxPurchase
     ) external onlyRole(Constants.ADMIN_ROLE) {
         require(_tierId < 4, "TieredTokenSale: invalid tier ID");
         require(_price > 0, "TieredTokenSale: zero price");
@@ -515,7 +515,7 @@ UUPSUpgradeable
      * @param _tierId Tier to purchase from
      * @param _usdAmount USD amount to spend (scaled by 1e6)
      */
-    function purchase(uint8 _tierId, uint96 _usdAmount) external nonReentrant whenNotPaused purchaseRateLimit(_usdAmount) {
+    function purchase(uint8 _tierId, uint256 _usdAmount) external nonReentrant whenNotPaused purchaseRateLimit(_usdAmount) {
         require(block.timestamp >= presaleStart && block.timestamp <= presaleEnd, "Presale not active");
         require(_tierId < tiers.length, "Invalid tier ID");
         PresaleTier storage tier = tiers[_tierId];
@@ -526,13 +526,13 @@ UUPSUpgradeable
         require(_usdAmount <= tier.maxPurchase, "Above maximum purchase");
 
         // Check if user's total purchase would exceed max
-        uint96 userTierTotal = purchases[msg.sender].tierAmounts.length > _tierId
+        uint256 userTierTotal = purchases[msg.sender].tierAmounts.length > _tierId
             ? purchases[msg.sender].tierAmounts[_tierId] + _usdAmount
             : _usdAmount;
         require(userTierTotal <= tier.maxPurchase, "Would exceed max tier purchase");
 
         // Calculate token amount
-        uint96 tokenAmount = uint96((_usdAmount * 10**18) / tier.price);
+        uint256 tokenAmount = (_usdAmount * 10**18) / tier.price;
 
         // Check total cap per address
         require(addressTokensPurchased[msg.sender] + tokenAmount <= maxTokensPerAddress, "Exceeds max tokens per address");
@@ -543,7 +543,7 @@ UUPSUpgradeable
         // Calculate bonus percentage
         uint8 bonusPercentage = getCurrentBonus(_tierId);
 
-        uint96 bonusTokenAmount = 0;
+        uint256 bonusTokenAmount = 0;
         
         // Calculate bonus token amount
         if(bonusPercentage > 0){
@@ -551,10 +551,10 @@ UUPSUpgradeable
         }
         
         // Total tokens to transfer
-        uint96 totalTokenAmount = tokenAmount + bonusTokenAmount;
+        uint256 totalTokenAmount = tokenAmount + bonusTokenAmount;
         
         // Update tier data
-        tier.sold = tier.sold + tokenAmount;
+        tier.sold += tokenAmount;
 
         // Update user purchase data
         Purchase storage userPurchase = purchases[msg.sender];
@@ -580,7 +580,7 @@ UUPSUpgradeable
         }
 
         if (!userPurchase.vestingCreated) { // Add this field to Purchase struct
-            uint96 totalTokens = userPurchase.tokens + userPurchase.bonusAmount;
+            uint256 totalTokens = userPurchase.tokens + userPurchase.bonusAmount;
             uint256 scheduleId = vestingContract.createLinearVestingSchedule(
                 msg.sender,
                 totalTokens,
@@ -649,15 +649,15 @@ UUPSUpgradeable
      * @param _user Address to check
      * @return claimable Amount of tokens claimable
      */
-    function claimableTokens(address _user) public view returns (uint96 claimable) {
+    function claimableTokens(address _user) public view returns (uint256 claimable) {
         if (!tgeCompleted) return 0;
 
         Purchase storage userPurchase = purchases[_user];
-        uint96 totalPurchased = userPurchase.tokens;
+        uint256 totalPurchased = userPurchase.tokens;
         if (totalPurchased == 0) return 0;
         
         uint256 scheduleId = userPurchase.vestingScheduleId; 
-        claimable = uint96(vestingContract.calculateClaimableAmount( scheduleId));
+        claimable = vestingContract.calculateClaimableAmount( scheduleId);
         claimable += userPurchase.bonusAmount;
     }
 
@@ -829,8 +829,8 @@ UUPSUpgradeable
      */
     function recordPurchaseInStabilityFund(
         address _user,
-        uint96 _tokenAmount,
-        uint96 _usdAmount
+        uint256 _tokenAmount,
+        uint256 _usdAmount
     ) external returns (bool success) {
         require(msg.sender == address(this), "CrowdSale: unauthorized");
 
@@ -864,7 +864,7 @@ UUPSUpgradeable
 
         // Calculate refundable amount
         Purchase storage userPurchase = purchases[msg.sender];
-        uint96 refundAmount = userPurchase.usdAmount;
+        uint256 refundAmount = userPurchase.usdAmount;
 
         if (refundAmount > 0) {
             // Mark as processed
@@ -902,7 +902,7 @@ UUPSUpgradeable
 
         for (uint8 i = 0; i < _users.length; i++) {
             address user = _users[i];
-            uint96 claimable = claimableTokens(user);
+            uint256 claimable = claimableTokens(user);
 
             if (claimable > 0) {
                 // Update user's token balance
@@ -947,7 +947,7 @@ UUPSUpgradeable
      */
     function emergencyUpdateLimits(
         uint32 _minTimeBetweenPurchases,
-        uint96 _maxPurchaseAmount
+        uint256 _maxPurchaseAmount
     ) external onlyFromRegistry(Constants.GOVERNANCE_NAME) {
         minTimeBetweenPurchases = _minTimeBetweenPurchases;
         maxPurchaseAmount = _maxPurchaseAmount;
