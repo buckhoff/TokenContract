@@ -8,6 +8,25 @@ import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import {Constants} from "./Libraries/Constants.sol";
 
+
+interface ITeachTokenVesting {
+    enum BeneficiaryGroup { TEAM, ADVISORS, PARTNERS, PUBLIC_SALE, ECOSYSTEM }
+
+    function createLinearVestingSchedule(
+        address _beneficiary,
+        uint96 _amount,
+        uint40 _cliffDuration,
+        uint40 _duration,
+        uint8 _tgePercentage,
+        BeneficiaryGroup _group,
+        bool _revocable
+    ) external returns (uint256);
+
+    function calculateClaimableAmount(uint256 _scheduleId) external view returns (uint96);
+    function claimTokens(uint256 _scheduleId) external returns (uint96) ;
+    function getSchedulesForBeneficiary(address _beneficiary) external view returns (uint256[] memory);
+}
+
 /**
  * @title TokenCrowdSale
  * @dev Multi-tier presale contract for token sales, with all tier functionality integrated directly
@@ -18,13 +37,18 @@ ReentrancyGuardUpgradeable,
 RegistryAwareUpgradeable,
 UUPSUpgradeable
 {
+
+    ITeachTokenVesting public vestingContract;
+    
     // Presale tiers structure - integrated directly into contract
     struct PresaleTier {
         uint96 price;         // Price in USD (scaled by 1e6)
-        uint96 allocation;    // Total allocation for this tier
+        uint256 allocation;    // Total allocation for this tier
         uint96 sold;          // Amount sold in this tier
         uint96 minPurchase;   // Minimum purchase amount in USD
         uint96 maxPurchase;   // Maximum purchase amount in USD
+        uint8 vestingTGE;     // Percentage released at TGE (scaled by 100)
+        uint16 vestingMonths; // Remaining vesting period in months
         bool isActive;        // Whether this tier is currently active
     }
 
@@ -35,6 +59,8 @@ UUPSUpgradeable
         uint96 usdAmount;       // USD amount paid
         uint96[] tierAmounts;   // Amount purchased in each tier
         uint96 lastClaimTime;   // Last time user claimed tokens
+        uint96 vestingScheduleId; //Vesting Schedule ID
+        bool vestingCreated;
     }
     
     // Bonus bracket information
@@ -76,7 +102,7 @@ UUPSUpgradeable
 
     uint8 public currentTier;
     uint8 public tierCount;
-    mapping(uint8 => uint96) public maxTokensForTier;
+    mapping(uint8 => uint256) public maxTokensForTier;
     
     // Presale tiers
     PresaleTier[] public tiers;
@@ -106,7 +132,7 @@ UUPSUpgradeable
     // Timestamps for tier deadlines
     mapping(uint8 => uint64) public tierDeadlines;
 
-    mapping(address => uint64) public lastPurchaseTime;
+    mapping(address => uint256) public lastPurchaseTime;
     uint32 public minTimeBetweenPurchases;
     uint96 public maxPurchaseAmount;
 
@@ -141,17 +167,26 @@ UUPSUpgradeable
     event StabilityFundRecordingFailed(address indexed user, string reason);
 
     modifier purchaseRateLimit(uint96 _usdAmount) {
-        require(
-            block.timestamp >= lastPurchaseTime[msg.sender] + minTimeBetweenPurchases,
-            "CrowdSale: purchase too soon after previous"
-        );
-
+        uint16 deployer = 0;
+        address msgr = msg.sender;
+        uint256 userLastPurchase = uint256(lastPurchaseTime[msgr]);
+        
+        if (userLastPurchase != 0) {
+            require(
+                block.timestamp >= userLastPurchase + minTimeBetweenPurchases,
+                "CrowdSale: purchase too soon after previous"
+            );
+        }
         require(
             _usdAmount <= maxPurchaseAmount,
             "CrowdSale: amount exceeds maximum purchase limit"
         );
 
-        lastPurchaseTime[msg.sender] = uint64(block.timestamp);
+        require(
+            deployer != 0,
+            "CrowdSale: deployer not 0"
+        );
+        lastPurchaseTime[msg.sender] = block.timestamp;
         _;
     }
 
@@ -174,51 +209,55 @@ UUPSUpgradeable
      * @dev Creates standard tier configurations for token presale
      */
     function _createStandardTiers() internal pure returns (PresaleTier[] memory) {
-        PresaleTier[] memory stdTiers = new PresaleTier[](5);
+        PresaleTier[] memory stdTiers = new PresaleTier[](4);
 
         // Tier 1:
         stdTiers[0] = PresaleTier({
             price: 40000, // $0.04
-            allocation: 250_000_000 * 10**18, // 250M tokens
+            allocation: 250_000_000 * 10**6, // 250M tokens
             sold: 0,
             minPurchase: 100 * PRICE_DECIMALS, // $100 min
             maxPurchase: 50_000 * PRICE_DECIMALS, // $50,000 max
+            vestingTGE: 20, // 20% at TGE
+            vestingMonths: 6, // 6 months vesting
             isActive: false
         });
 
         // Tier 2: 
         stdTiers[1] = PresaleTier({
             price: 60000, // $0.06
-            allocation: 375_000_000 * 10**18, // 375M tokens
+            allocation: 375_000_000 * 10**6, // 375M tokens
             sold: 0,
             minPurchase: 100 * PRICE_DECIMALS, // $100 min
             maxPurchase: 50_000 * PRICE_DECIMALS, // $50,000 max
+            vestingTGE: 20, // 20% at TGE
+            vestingMonths: 6, // 6 months vesting
             isActive: false
         });
 
         // Tier 3: 
         stdTiers[2] = PresaleTier({
             price: 80000, // $0.08
-            allocation: 375_000_000 * 10**18, // 375M tokens
+            allocation: 375_000_000 * 10**6, // 375M tokens
             sold: 0,
             minPurchase: 100 * PRICE_DECIMALS, // $100 min
             maxPurchase: 50_000 * PRICE_DECIMALS, // $50,000 max
+            vestingTGE: 20, // 20% at TGE
+            vestingMonths: 6, // 6 months vesting
             isActive: false
         });
 
         // Tier 4:
         stdTiers[3] = PresaleTier({
             price: 100000, // $0.10
-            allocation: 250_000_000 * 10**18, // 250M tokens
+            allocation: 250_000_000 * 10**6, // 250M tokens
             sold: 0,
             minPurchase: 100 * PRICE_DECIMALS, // $100 min
             maxPurchase: 50_000 * PRICE_DECIMALS, // $50,000 max
+            vestingTGE: 20, // 20% at TGE
+            vestingMonths: 6, // 6 months vesting
             isActive: false
         });
-
-        for (uint256 i = 0; i < 4; i++) {
-            emit TierConfigured(i, tiers[i].price, tiers[i].allocation);
-        }
         
         return stdTiers;
     }
@@ -228,7 +267,7 @@ UUPSUpgradeable
      */
     function _calculateTierMaximums() internal {
         for (uint8 i = 0; i < tiers.length; i++) {
-            uint96 tierTotal = 0;
+            uint256 tierTotal = 0;
             for (uint8 j = 0; j <= i; j++) {
                 tierTotal += tiers[j].allocation;
             }
@@ -245,7 +284,7 @@ UUPSUpgradeable
         if (tier.allocation <= tier.sold) {
             return 0;
         }
-        return tier.allocation - tier.sold;
+        return uint96(tier.allocation) - tier.sold;
     }
 
     /**
@@ -291,7 +330,7 @@ UUPSUpgradeable
         requiredRecoveryApprovals = 3;
         recoveryApprovalsCount = 0;
         minTimeBetweenPurchases = 1 hours;
-        maxPurchaseAmount = 50_000 * uint96(PRICE_DECIMALS); // $50,000 default max
+        maxPurchaseAmount = 50_000 * PRICE_DECIMALS; // $50,000 default max
 
         // Calculate tier maximums
         _calculateTierMaximums();
@@ -344,6 +383,11 @@ UUPSUpgradeable
         token = _token;
     }
 
+    function setVestingContract(address _vestingContract) external onlyRole(Constants.ADMIN_ROLE) {
+        require(_vestingContract != address(0), "CrowdSale: zero address");
+        vestingContract = ITeachTokenVesting(_vestingContract);
+    }
+    
     /**
      * @dev Set the presale start and end times
      * @param _start Start timestamp
@@ -376,11 +420,11 @@ UUPSUpgradeable
      * @param _maxPurchase New maximum purchase amount in USD
      */
     function configureTier(
-        uint256 _tierId,
-        uint256 _price,
+        uint8 _tierId,
+        uint96 _price,
         uint256 _allocation,
-        uint256 _minPurchase,
-        uint256 _maxPurchase
+        uint96 _minPurchase,
+        uint96 _maxPurchase
     ) external onlyRole(Constants.ADMIN_ROLE) {
         require(_tierId < 4, "TieredTokenSale: invalid tier ID");
         require(_price > 0, "TieredTokenSale: zero price");
@@ -403,9 +447,9 @@ UUPSUpgradeable
      * @param _bonusPercentage New bonus percentage
      */
     function configureBonusBracket(
-        uint256 _tierId,
-        uint256 _bracketId,
-        uint256 _fillPercentage,
+        uint8 _tierId,
+        uint8 _bracketId,
+        uint96 _fillPercentage,
         uint8 _bonusPercentage
     ) external onlyRole(Constants.ADMIN_ROLE) {
         require(_tierId < 4, "TieredTokenSale: invalid tier ID");
@@ -503,7 +547,7 @@ UUPSUpgradeable
         
         // Calculate bonus token amount
         if(bonusPercentage > 0){
-            uint96 bonusTokenAmount = (tokenAmount * bonusPercentage) / 100;
+            bonusTokenAmount = (tokenAmount * bonusPercentage) / 100;
         }
         
         // Total tokens to transfer
@@ -535,6 +579,20 @@ UUPSUpgradeable
             try this.recordPurchaseInStabilityFund(msg.sender, tokenAmount, _usdAmount) {} catch {}
         }
 
+        if (!userPurchase.vestingCreated) { // Add this field to Purchase struct
+            uint96 totalTokens = userPurchase.tokens + userPurchase.bonusAmount;
+            uint256 scheduleId = vestingContract.createLinearVestingSchedule(
+                msg.sender,
+                totalTokens,
+                0, // No cliff
+                tier.vestingMonths * 30 days, // Convert months to seconds
+                tier.vestingTGE, // TGE percentage
+                ITeachTokenVesting.BeneficiaryGroup.PUBLIC_SALE,
+                false // Not revocable
+            );
+            userPurchase.vestingScheduleId = uint32(scheduleId);
+            userPurchase.vestingCreated = true;
+        }
         emit TierPurchase(msg.sender, _tierId, tokenAmount, _usdAmount);
     }
 
@@ -597,46 +655,10 @@ UUPSUpgradeable
         Purchase storage userPurchase = purchases[_user];
         uint96 totalPurchased = userPurchase.tokens;
         if (totalPurchased == 0) return 0;
-
-        // Calculate tokens from each tier
-        uint96 totalClaimable = 0;
-
-        // Only loop through tiers where the user has invested
-        uint96[] storage tierAmounts = userPurchase.tierAmounts;
-        uint8 userTierCount = uint8(tierAmounts.length);
-
-        for (uint8 tierId = 0; tierId < userTierCount; tierId++) {
-            // Skip tiers where user hasn't purchased
-            if (tierAmounts[tierId] == 0) continue;
-
-            PresaleTier storage tier = tiers[tierId];
-            uint96 tierTokens = uint96((tierAmounts[tierId] * 10**18) / tier.price);
-
-            uint96 tierClaimable = VestingCalculations.calculateVestedAmount(
-                tierTokens,
-                tier.vestingTGE,
-                tier.vestingMonths,
-                userPurchase.lastClaimTime > 0 ? userPurchase.lastClaimTime : presaleEnd,
-                uint96(block.timestamp)
-            );
-
-            totalClaimable = totalClaimable + tierClaimable;
-
-            // Add auto-compound bonus if enabled
-            if (autoCompoundEnabled[_user] && totalClaimable > 0 && userPurchase.lastClaimTime > 0) {
-                // Calculate bonus based on how long tokens were unclaimed (up to 5% annual bonus)
-                uint96 maxAnnualBonus = (totalClaimable * 5) / 100;
-                uint96 timeUnclaimed = uint96(block.timestamp) - userPurchase.lastClaimTime;
-                uint96 bonus = uint96((maxAnnualBonus * timeUnclaimed) / 365 days);
-
-                totalClaimable = totalClaimable + bonus;
-            }
-        }
-
-        // Subtract already claimed tokens
-        uint96 alreadyClaimed = totalPurchased - userPurchase.tokens;
-
-        return totalClaimable > alreadyClaimed ? totalClaimable - alreadyClaimed : 0;
+        
+        uint256 scheduleId = userPurchase.vestingScheduleId; 
+        claimable = uint96(vestingContract.calculateClaimableAmount( scheduleId));
+        claimable += userPurchase.bonusAmount;
     }
 
     /**
@@ -645,25 +667,14 @@ UUPSUpgradeable
     function withdrawTokens() external nonReentrant whenNotPaused {
         require(tgeCompleted, "TGE not completed yet");
 
-        uint96 claimable = claimableTokens(msg.sender);
-        require(claimable > 0, "No tokens available to claim");
+        Purchase storage userPurchase = purchases[msg.sender];
+        uint256 scheduleId = userPurchase.vestingScheduleId;
 
-        // Update user's last claim time
-        purchases[msg.sender].lastClaimTime = uint96(block.timestamp);
+        // Claim tokens through vesting contract
+        uint256 claimed = vestingContract.claimTokens(scheduleId);
+        require(claimed > 0, "No tokens available to claim");
 
-        // Update user's token balance
-        purchases[msg.sender].tokens = purchases[msg.sender].tokens - claimable;
-
-        // Record this claim event
-        claimHistory[msg.sender].push(ClaimEvent({
-            amount: uint128(claimable),
-            timestamp: uint64(block.timestamp)
-        }));
-
-        // Transfer tokens to user
-        require(token.transfer(msg.sender, claimable), "Token transfer failed");
-
-        emit TokensWithdrawn(msg.sender, claimable);
+        emit TokensWithdrawn(msg.sender, uint96(claimed));
     }
 
     /**
@@ -709,7 +720,7 @@ UUPSUpgradeable
         }
 
         // Then check token sales
-        uint96 tokensSold = totalTokensSold();
+        uint256 tokensSold = totalTokensSold();
         for (uint8 i = uint8(tierCount - 1); i > 0; i--) {
             if (tokensSold >= maxTokensForTier[i-1]) {
                 return i;
@@ -842,15 +853,6 @@ UUPSUpgradeable
         );
 
         return success;
-    }
-
-    /**
-     * @dev Enable or disable auto-compound for rewards
-     * @param _enabled Whether to enable auto-compound
-     */
-    function setAutoCompound(bool _enabled) external {
-        autoCompoundEnabled[msg.sender] = _enabled;
-        emit AutoCompoundUpdated(msg.sender, _enabled);
     }
 
     /**

@@ -16,34 +16,34 @@ interface IUniswapV2Router {
     function addLiquidity(
         address tokenA,
         address tokenB,
-        uint amountADesired,
-        uint amountBDesired,
-        uint amountAMin,
-        uint amountBMin,
+        uint96 amountADesired,
+        uint96 amountBDesired,
+        uint96 amountAMin,
+        uint96 amountBMin,
         address to,
-        uint deadline
-    ) external returns (uint amountA, uint amountB, uint liquidity);
+        uint40 deadline
+    ) external returns (uint96 amountA, uint96 amountB, uint96 liquidity);
 
     function removeLiquidity(
         address tokenA,
         address tokenB,
-        uint liquidity,
-        uint amountAMin,
-        uint amountBMin,
+        uint96 liquidity,
+        uint96 amountAMin,
+        uint96 amountBMin,
         address to,
-        uint deadline
-    ) external returns (uint amountA, uint amountB);
+        uint96 deadline
+    ) external returns (uint96 amountA, uint96 amountB);
 
     function swapExactTokensForTokens(
-        uint amountIn,
-        uint amountOutMin,
+        uint96 amountIn,
+        uint96 amountOutMin,
         address[] calldata path,
         address to,
-        uint deadline
-    ) external returns (uint[] memory amounts);
+        uint40 deadline
+    ) external returns (uint96[] memory amounts);
 
-    function getAmountsOut(uint amountIn, address[] calldata path)
-    external view returns (uint[] memory amounts);
+    function getAmountsOut(uint96 amountIn, address[] calldata path)
+    external view returns (uint96[] memory amounts);
 }
 
 interface IUniswapV2Factory {
@@ -55,17 +55,17 @@ interface IUniswapV2Pair {
     function token0() external view returns (address);
     function token1() external view returns (address);
     function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
-    function totalSupply() external view returns (uint);
-    function balanceOf(address owner) external view returns (uint);
+    function totalSupply() external view returns (uint96);
+    function balanceOf(address owner) external view returns (uint96);
     function approve(address spender, uint value) external returns (bool);
     function transfer(address to, uint value) external returns (bool);
 }
 
 interface IStakingRewards {
-    function stake(uint256 amount) external;
-    function withdraw(uint256 amount) external;
+    function stake(uint96 amount) external;
+    function withdraw(uint96 amount) external;
     function getReward() external;
-    function earned(address account) external view returns (uint256);
+    function earned(address account) external view returns (uint96);
 }
 
     error ZeroAddress();
@@ -86,20 +86,22 @@ UUPSUpgradeable
         address factory;
         address pair;
         address stakingRewards; // For LP token staking
-        uint256 allocationPercentage; // Percentage allocation (100 = 1%)
+        uint8 allocationPercentage; // Percentage allocation (100 = 1%)
         bool active;
-        uint256 dexId;
-        uint256 price;
-        uint256 tokenReserve;
-        uint256 stableReserve;
     }
-
+    struct DexPriceInfo {
+        uint16 dexId;
+        uint96 price;
+        uint96 tokenReserve;
+        uint96 stableReserve;
+    }
+    
     // Liquidity phase details
     struct LiquidityPhase {
-        uint256 tokenAmount;
-        uint256 stablecoinAmount;
-        uint256 targetPrice; // Target price in USD (scaled by 1e6)
-        uint256 deadline;
+        uint96 tokenAmount;
+        uint96 stablecoinAmount;
+        uint96 targetPrice; // Target price in USD (scaled by 1e6)
+        uint96 deadline;
         bool executed;
     }
     
@@ -108,10 +110,10 @@ UUPSUpgradeable
     ERC20Upgradeable public stablecoin;
 
     // Target price for token in USD (scaled by 1e6)
-    uint256 public targetTokenPrice;
+    uint96 public targetTokenPrice;
 
     // Price floor for swaps (scaled by 1e6)
-    uint256 public priceFloor;
+    uint96 public priceFloor;
 
     // DEX configurations
     DexInfo[] public dexes;
@@ -127,32 +129,32 @@ UUPSUpgradeable
     mapping(address => bool) public supportedRouters;
 
     // Price monitoring
-    uint256 public lastPriceUpdateTime;
-    uint256 public currentPrice; // Current token price in stablecoin
+    uint40 public lastPriceUpdateTime;
+    //uint256 public currentPrice; // Current token price in stablecoin
 
     // Rebalancing parameters
-    uint256 public maxPriceDivergence; // Maximum allowed price divergence between DEXes (100 = 1%)
-    uint256 public maxReserveImbalance; // Maximum allowed reserve imbalance (100 = 1%)
-    uint256 public rebalanceCooldown; // Cooldown period between rebalancing operations
-    uint256 public lastRebalanceTime;
+    uint16 public maxPriceDivergence; // Maximum allowed price divergence between DEXes (100 = 1%)
+    uint16 public maxReserveImbalance; // Maximum allowed reserve imbalance (100 = 1%)
+    uint40 public rebalanceCooldown; // Cooldown period between rebalancing operations
+    uint40 public lastRebalanceTime;
 
     // Events
-    event DexAdded(uint256 indexed dexId, string name, address router, uint256 allocationPercentage);
-    event DexActivated(uint256 indexed dexId);
-    event DexDeactivated(uint256 indexed dexId);
-    event LiquidityPhaseAdded(uint256 indexed phaseId, uint256 tokenAmount, uint256 stablecoinAmount, uint256 targetPrice);
-    event LiquidityPhaseExecuted(uint256 indexed phaseId, uint256 tokenAmount, uint256 stablecoinAmount);
-    event LiquidityProvided(uint256 indexed dexId, uint256 tokenAmount, uint256 stablecoinAmount, uint256 lpTokens);
-    event LiquidityRemoved(uint256 indexed dexId, uint256 tokenAmount, uint256 stablecoinAmount, uint256 lpTokens);
-    event OwnershipRenounced(uint256 indexed dexId);
-    event LpTokensStaked(uint256 indexed dexId, uint256 amount);
-    event LpRewardsClaimed(uint256 indexed dexId, uint256 amount);
-    event SwapExecuted(uint256 indexed dexId, uint256 amountIn, uint256 amountOut, bool isTokenToStable);
-    event PriceUpdated(uint256 newPrice);
-    event TargetPriceUpdated(uint256 newTargetPrice);
-    event PriceFloorUpdated(uint256 newPriceFloor);
-    event RebalancingPerformed(uint256 timestamp);
-    event LiquidityHealthWarning(uint256 indexed dexId, string reason);
+    event DexAdded(uint16 indexed dexId, string name, address router, uint8 allocationPercentage);
+    event DexActivated(uint16 indexed dexId);
+    event DexDeactivated(uint16 indexed dexId);
+    event LiquidityPhaseAdded(uint96 indexed phaseId, uint96 tokenAmount, uint96 stablecoinAmount, uint96 targetPrice);
+    event LiquidityPhaseExecuted(uint96 indexed phaseId, uint96 tokenAmount, uint96 stablecoinAmount);
+    event LiquidityProvided(uint16 indexed dexId, uint96 tokenAmount, uint96 stablecoinAmount, uint96 lpTokens);
+    event LiquidityRemoved(uint16 indexed dexId, uint96 tokenAmount, uint96 stablecoinAmount, uint96 lpTokens);
+    event OwnershipRenounced(uint16 indexed dexId);
+    event LpTokensStaked(uint16 indexed dexId, uint96 amount);
+    event LpRewardsClaimed(uint16 indexed dexId, uint96 amount);
+    event SwapExecuted(uint16 indexed dexId, uint96 amountIn, uint96 amountOut, bool isTokenToStable);
+    event PriceUpdated(uint96 newPrice);
+    event TargetPriceUpdated(uint96 newTargetPrice);
+    event PriceFloorUpdated(uint96 newPriceFloor);
+    event RebalancingPerformed(uint40 timestamp);
+    event LiquidityHealthWarning(uint16 indexed dexId, string reason);
 
     /**
      * @dev Initializes the contract with initial parameters
@@ -163,7 +165,7 @@ UUPSUpgradeable
     function initialize(
         address _token,
         address _stablecoin,
-        uint256 _targetPrice
+        uint96 _targetPrice
     ) initializer public {
         __Ownable_init(msg.sender);
         __ReentrancyGuard_init();
@@ -208,15 +210,15 @@ UUPSUpgradeable
         address _router,
         address _factory,
         address _stakingRewards,
-        uint256 _allocationPercentage
-    ) external onlyRole(Constants.ADMIN_ROLE) returns (uint256) {
+        uint8 _allocationPercentage
+    ) external onlyRole(Constants.ADMIN_ROLE) returns (uint16) {
         require(_router != address(0), "MultiDexLiquidityManager: zero router address");
         require(_factory != address(0), "MultiDexLiquidityManager: zero factory address");
         require(bytes(_name).length > 0, "MultiDexLiquidityManager: empty name");
 
         // Validate allocation percentage
-        uint256 totalAllocation = _allocationPercentage;
-        for (uint256 i = 0; i < dexes.length; i++) {
+        uint8 totalAllocation = _allocationPercentage;
+        for (uint16 i = 0; i < dexes.length; i++) {
             if (dexes[i].active) {
                 totalAllocation += dexes[i].allocationPercentage;
             }
@@ -234,7 +236,7 @@ UUPSUpgradeable
         supportedRouters[_router] = true;
 
         // Add the DEX
-        uint256 dexId = dexes.length;
+        uint16 dexId = uint16(dexes.length);
         dexes.push(DexInfo({
             name: _name,
             router: _router,
@@ -254,7 +256,7 @@ UUPSUpgradeable
      * @dev Activates a DEX
      * @param _dexId ID of the DEX to activate
      */
-    function activateDex(uint256 _dexId) external onlyRole(Constants.ADMIN_ROLE) {
+    function activateDex(uint16 _dexId) external onlyRole(Constants.ADMIN_ROLE) {
         require(_dexId < dexes.length, "MultiDexLiquidityManager: invalid DEX ID");
         require(!dexes[_dexId].active, "MultiDexLiquidityManager: DEX already active");
 
@@ -267,7 +269,7 @@ UUPSUpgradeable
      * @dev Deactivates a DEX
      * @param _dexId ID of the DEX to deactivate
      */
-    function deactivateDex(uint256 _dexId) external onlyRole(Constants.ADMIN_ROLE) {
+    function deactivateDex(uint16 _dexId) external onlyRole(Constants.ADMIN_ROLE) {
         require(_dexId < dexes.length, "MultiDexLiquidityManager: invalid DEX ID");
         require(dexes[_dexId].active, "MultiDexLiquidityManager: DEX not active");
 
@@ -285,17 +287,17 @@ UUPSUpgradeable
      * @return phaseId ID of the added phase
      */
     function addLiquidityPhase(
-        uint256 _tokenAmount,
-        uint256 _stablecoinAmount,
-        uint256 _targetPrice,
-        uint256 _deadline
-    ) external onlyRole(Constants.ADMIN_ROLE) returns (uint256) {
+        uint96 _tokenAmount,
+        uint96 _stablecoinAmount,
+        uint96 _targetPrice,
+        uint40 _deadline
+    ) external onlyRole(Constants.ADMIN_ROLE) returns (uint96) {
         require(_tokenAmount > 0, "MultiDexLiquidityManager: zero token amount");
         require(_stablecoinAmount > 0, "MultiDexLiquidityManager: zero stablecoin amount");
         require(_targetPrice > 0, "MultiDexLiquidityManager: zero target price");
         require(_deadline > block.timestamp, "MultiDexLiquidityManager: deadline in the past");
 
-        uint256 phaseId = liquidityPhases.length;
+        uint96 phaseId = uint96(liquidityPhases.length);
         liquidityPhases.push(LiquidityPhase({
             tokenAmount: _tokenAmount,
             stablecoinAmount: _stablecoinAmount,
@@ -315,9 +317,9 @@ UUPSUpgradeable
      * @param _stablecoinAmount Amount of stablecoin to add
      */
     function createLiquidityAtTargetPrice(
-        uint256 _tokenAmount,
-        uint256 _stablecoinAmount
-    ) external onlyRole(Constants.ADMIN_ROLE) nonReentrant {
+        uint96 _tokenAmount,
+        uint96 _stablecoinAmount
+    ) public onlyRole(Constants.ADMIN_ROLE) nonReentrant {
         require(_tokenAmount > 0, "MultiDexLiquidityManager: zero token amount");
         require(_stablecoinAmount > 0, "MultiDexLiquidityManager: zero stablecoin amount");
 
@@ -326,11 +328,11 @@ UUPSUpgradeable
         require(stablecoin.balanceOf(address(this)) >= _stablecoinAmount, "MultiDexLiquidityManager: insufficient stablecoin balance");
 
         // Distribute liquidity across DEXes according to allocation percentages
-        for (uint256 i = 0; i < dexes.length; i++) {
+        for (uint16 i = 0; i < dexes.length; i++) {
             if (dexes[i].active) {
                 // Calculate allocation for this DEX
-                uint256 dexTokenAmount = (_tokenAmount * dexes[i].allocationPercentage) / 10000;
-                uint256 dexStablecoinAmount = (_stablecoinAmount * dexes[i].allocationPercentage) / 10000;
+                uint96 dexTokenAmount = uint96((_tokenAmount * dexes[i].allocationPercentage) / 10000);
+                uint96 dexStablecoinAmount = uint96((_stablecoinAmount * dexes[i].allocationPercentage) / 10000);
 
                 if (dexTokenAmount > 0 && dexStablecoinAmount > 0) {
                     _addLiquidityToDex(i, dexTokenAmount, dexStablecoinAmount);
@@ -344,7 +346,7 @@ UUPSUpgradeable
      */
     function executeNextLiquidityPhase() external onlyRole(Constants.ADMIN_ROLE) nonReentrant {
         // Find the next unexecuted phase
-        uint256 phaseId = _findNextPendingPhase();
+        uint96 phaseId = _findNextPendingPhase();
         require(phaseId < liquidityPhases.length, "MultiDexLiquidityManager: no pending phases");
 
         LiquidityPhase storage phase = liquidityPhases[phaseId];
@@ -368,9 +370,9 @@ UUPSUpgradeable
      * @dev Deploys liquidity in phases
      * @param _phaseIds Array of phase IDs to execute
      */
-    function deployLiquidityInPhases(uint256[] calldata _phaseIds) external onlyRole(Constants.ADMIN_ROLE) nonReentrant {
-        for (uint256 i = 0; i < _phaseIds.length; i++) {
-            uint256 phaseId = _phaseIds[i];
+    function deployLiquidityInPhases(uint96[] calldata _phaseIds) external onlyRole(Constants.ADMIN_ROLE) nonReentrant {
+        for (uint96 i = 0; i < _phaseIds.length; i++) {
+            uint96 phaseId = _phaseIds[i];
             require(phaseId < liquidityPhases.length, "MultiDexLiquidityManager: invalid phase ID");
 
             LiquidityPhase storage phase = liquidityPhases[phaseId];
@@ -398,8 +400,8 @@ UUPSUpgradeable
      * @param _deadAddress Address to renounce to (typically 0xdead)
      */
     function createAndRenounceLiquidity(
-        uint256 _tokenAmount,
-        uint256 _stablecoinAmount,
+        uint96 _tokenAmount,
+        uint96 _stablecoinAmount,
         address _deadAddress
     ) external onlyRole(Constants.ADMIN_ROLE) nonReentrant {
         require(_tokenAmount > 0, "MultiDexLiquidityManager: zero token amount");
@@ -410,7 +412,7 @@ UUPSUpgradeable
         createLiquidityAtTargetPrice(_tokenAmount, _stablecoinAmount);
 
         // Then renounce ownership for each DEX
-        for (uint256 i = 0; i < dexes.length; i++) {
+        for (uint16 i = 0; i < dexes.length; i++) {
             if (dexes[i].active && !dexLpOwnershipRenounced[i]) {
                 _renounceLpOwnership(i, _deadAddress);
             }
@@ -426,11 +428,11 @@ UUPSUpgradeable
      * @return amountOut Amount of tokens received
      */
     function swapWithPriceFloor(
-        uint256 _dexId,
-        uint256 _amountIn,
-        uint256 _minAmountOut,
+        uint16 _dexId,
+        uint96 _amountIn,
+        uint96 _minAmountOut,
         bool _isTokenToStable
-    ) external nonReentrant returns (uint256 amountOut) {
+    ) external nonReentrant returns (uint96 amountOut) {
         require(_dexId < dexes.length, "MultiDexLiquidityManager: invalid DEX ID");
         require(dexes[_dexId].active, "MultiDexLiquidityManager: DEX not active");
         require(_amountIn > 0, "MultiDexLiquidityManager: zero input amount");
@@ -441,17 +443,17 @@ UUPSUpgradeable
         require(dex.pair != address(0), "MultiDexLiquidityManager: pair not created");
 
         // Get current reserves
-        (uint256 reserve0, uint256 reserve1, ) = _getReserves(dex.pair);
+        (uint112 reserve0, uint112 reserve1, ) = _getReserves(dex.pair);
 
         // Determine token order in the pair
         address token0 = IUniswapV2Pair(dex.pair).token0();
         bool isToken0 = address(token) == token0;
 
-        uint256 tokenReserve = isToken0 ? reserve0 : reserve1;
-        uint256 stablecoinReserve = isToken0 ? reserve1 : reserve0;
+        uint96 tokenReserve = uint96(isToken0 ? reserve0 : reserve1);
+        uint96 stablecoinReserve = uint96(isToken0 ? reserve1 : reserve0);
 
         // Calculate current price
-        uint256 currentPrice = (stablecoinReserve * 1e18) / tokenReserve;
+        uint96 currentPrice = (stablecoinReserve * 1e18) / tokenReserve;
 
         // If swapping token to stablecoin, check price floor
         if (_isTokenToStable) {
@@ -469,12 +471,12 @@ UUPSUpgradeable
             path[1] = address(stablecoin);
 
             // Execute swap
-            uint256[] memory amounts = IUniswapV2Router(dex.router).swapExactTokensForTokens(
+            uint96[] memory amounts = IUniswapV2Router(dex.router).swapExactTokensForTokens(
                 _amountIn,
                 _minAmountOut,
                 path,
                 msg.sender,
-                block.timestamp + 1800 // 30 minutes
+            uint40(block.timestamp + 1800) // 30 minutes
             );
 
             amountOut = amounts[1];
@@ -493,12 +495,12 @@ UUPSUpgradeable
             path[1] = address(token);
 
             // Execute swap
-            uint256[] memory amounts = IUniswapV2Router(dex.router).swapExactTokensForTokens(
+            uint96[] memory amounts = IUniswapV2Router(dex.router).swapExactTokensForTokens(
                 _amountIn,
                 _minAmountOut,
                 path,
                 msg.sender,
-                block.timestamp + 1800 // 30 minutes
+            uint40(block.timestamp + 1800) // 30 minutes
             );
 
             amountOut = amounts[1];
@@ -514,7 +516,7 @@ UUPSUpgradeable
      * @param _dexId ID of the DEX
      * @param _amount Amount of LP tokens to stake
      */
-    function stakeLPTokens(uint256 _dexId, uint256 _amount) external onlyRole(Constants.ADMIN_ROLE) nonReentrant {
+    function stakeLPTokens(uint16 _dexId, uint96 _amount) external onlyRole(Constants.ADMIN_ROLE) nonReentrant {
         require(_dexId < dexes.length, "MultiDexLiquidityManager: invalid DEX ID");
         require(dexes[_dexId].active, "MultiDexLiquidityManager: DEX not active");
         require(dexes[_dexId].stakingRewards != address(0), "MultiDexLiquidityManager: no staking rewards");
@@ -527,7 +529,7 @@ UUPSUpgradeable
 
         // Check LP token balance
         IUniswapV2Pair pair = IUniswapV2Pair(dex.pair);
-        uint256 lpBalance = pair.balanceOf(address(this));
+        uint96 lpBalance = uint96(pair.balanceOf(address(this)));
         require(lpBalance >= _amount, "MultiDexLiquidityManager: insufficient LP balance");
 
         // Approve staking contract
@@ -546,14 +548,14 @@ UUPSUpgradeable
      * @dev Claims rewards from staking LP tokens
      * @param _dexId ID of the DEX
      */
-    function claimLPRewards(uint256 _dexId) external onlyRole(Constants.ADMIN_ROLE) nonReentrant {
+    function claimLPRewards(uint16 _dexId) external onlyRole(Constants.ADMIN_ROLE) nonReentrant {
         require(_dexId < dexes.length, "MultiDexLiquidityManager: invalid DEX ID");
         require(dexes[_dexId].stakingRewards != address(0), "MultiDexLiquidityManager: no staking rewards");
 
         DexInfo storage dex = dexes[_dexId];
 
         // Check earned rewards
-        uint256 earned = IStakingRewards(dex.stakingRewards).earned(address(this));
+        uint96 earned = IStakingRewards(dex.stakingRewards).earned(address(this));
         require(earned > 0, "MultiDexLiquidityManager: no rewards to claim");
 
         // Claim rewards
@@ -567,7 +569,7 @@ UUPSUpgradeable
      * @param _dexId ID of the DEX
      * @param _deadAddress Address to send LP tokens to
      */
-    function renounceLpOwnership(uint256 _dexId, address _deadAddress) external onlyRole(Constants.ADMIN_ROLE) nonReentrant {
+    function renounceLpOwnership(uint16 _dexId, address _deadAddress) external onlyRole(Constants.ADMIN_ROLE) nonReentrant {
         require(_dexId < dexes.length, "MultiDexLiquidityManager: invalid DEX ID");
         require(dexes[_dexId].active, "MultiDexLiquidityManager: DEX not active");
         require(!dexLpOwnershipRenounced[_dexId], "MultiDexLiquidityManager: ownership already renounced");
@@ -581,7 +583,7 @@ UUPSUpgradeable
      * @param _dexId ID of the DEX
      * @param _deadAddress Address to send LP tokens to
      */
-    function _renounceLpOwnership(uint256 _dexId, address _deadAddress) internal {
+    function _renounceLpOwnership(uint16 _dexId, address _deadAddress) internal {
         DexInfo storage dex = dexes[_dexId];
 
         // Ensure the pair exists
@@ -589,7 +591,7 @@ UUPSUpgradeable
 
         // Get LP token balance
         IUniswapV2Pair pair = IUniswapV2Pair(dex.pair);
-        uint256 lpBalance = pair.balanceOf(address(this));
+        uint96 lpBalance = pair.balanceOf(address(this));
 
         if (lpBalance > 0) {
             // Send LP tokens to dead address
@@ -608,7 +610,7 @@ UUPSUpgradeable
      * @dev Updates the target token price
      * @param _newTargetPrice New target price in USD (scaled by 1e6)
      */
-    function updateTargetPrice(uint256 _newTargetPrice) external onlyRole(Constants.ADMIN_ROLE) {
+    function updateTargetPrice(uint96 _newTargetPrice) external onlyRole(Constants.ADMIN_ROLE) {
         require(_newTargetPrice > 0, "MultiDexLiquidityManager: zero target price");
 
         targetTokenPrice = _newTargetPrice;
@@ -620,7 +622,7 @@ UUPSUpgradeable
      * @dev Updates the price floor for swaps
      * @param _newPriceFloor New price floor in USD (scaled by 1e6)
      */
-    function updatePriceFloor(uint256 _newPriceFloor) external onlyRole(Constants.ADMIN_ROLE) {
+    function updatePriceFloor(uint96 _newPriceFloor) external onlyRole(Constants.ADMIN_ROLE) {
         require(_newPriceFloor > 0, "MultiDexLiquidityManager: zero price floor");
         require(_newPriceFloor <= targetTokenPrice, "MultiDexLiquidityManager: price floor above target");
 
@@ -636,9 +638,9 @@ UUPSUpgradeable
      * @param _rebalanceCooldown Cooldown period between rebalancing operations
      */
     function updateRebalancingParameters(
-        uint256 _maxPriceDivergence,
-        uint256 _maxReserveImbalance,
-        uint256 _rebalanceCooldown
+        uint16 _maxPriceDivergence,
+        uint16 _maxReserveImbalance,
+        uint40 _rebalanceCooldown
     ) external onlyRole(Constants.ADMIN_ROLE) {
         require(_maxPriceDivergence > 0, "MultiDexLiquidityManager: zero price divergence");
         require(_maxReserveImbalance > 0, "MultiDexLiquidityManager: zero reserve imbalance");
@@ -652,16 +654,16 @@ UUPSUpgradeable
      * @dev Returns the count of DEXes
      * @return dexCount Number of configured DEXes
      */
-    function getDexCount() external view returns (uint256 dexCount) {
-        return dexes.length;
+    function getDexCount() external view returns (uint16 dexCount) {
+        return uint16(dexes.length);
     }
 
     /**
      * @dev Returns the count of liquidity phases
      * @return phaseCount Number of configured liquidity phases
      */
-    function getLiquidityPhaseCount() external view returns (uint256 phaseCount) {
-        return liquidityPhases.length;
+    function getLiquidityPhaseCount() external view returns (uint96 phaseCount) {
+        return uint96(liquidityPhases.length);
     }
 
     /**
@@ -669,7 +671,7 @@ UUPSUpgradeable
      * @param _dexId ID of the DEX
      * @return balance LP token balance
      */
-    function getLpTokenBalance(uint256 _dexId) external view returns (uint256 balance) {
+    function getLpTokenBalance(uint16 _dexId) external view returns (uint96 balance) {
         require(_dexId < dexes.length, "MultiDexLiquidityManager: invalid DEX ID");
 
         DexInfo storage dex = dexes[_dexId];
@@ -689,11 +691,11 @@ UUPSUpgradeable
      * @return currentPrice Current token price
      * @return lpSupply Total LP token supply
      */
-    function getDexReserves(uint256 _dexId) external view returns (
-        uint256 tokenReserve,
-        uint256 stableReserve,
-        uint256 currentPrice,
-        uint256 lpSupply
+    function getDexReserves(uint16 _dexId) external view returns (
+        uint96 tokenReserve,
+        uint96 stableReserve,
+        uint96 currentPrice,
+        uint96 lpSupply
     ) {
         require(_dexId < dexes.length, "MultiDexLiquidityManager: invalid DEX ID");
 
@@ -706,18 +708,18 @@ UUPSUpgradeable
 
         if (dex.pair != address(0)) {
             IUniswapV2Pair pair = IUniswapV2Pair(dex.pair);
-            (uint256 reserve0, uint256 reserve1, ) = _getReserves(dex.pair);
+            (uint112 reserve0, uint112 reserve1, ) = _getReserves(dex.pair);
 
             // Determine token order in the pair
             address token0 = pair.token0();
             bool isToken0 = address(token) == token0;
 
-            tokenReserve = isToken0 ? reserve0 : reserve1;
-            stableReserve = isToken0 ? reserve1 : reserve0;
+            tokenReserve = uint96(isToken0 ? reserve0 : reserve1);
+            stableReserve = uint96(isToken0 ? reserve1 : reserve0);
 
             // Calculate current price
             if (tokenReserve > 0) {
-                currentPrice = (stableReserve * 1e18) / tokenReserve;
+                currentPrice = uint96((stableReserve * 1e18) / tokenReserve);
             }
 
             lpSupply = pair.totalSupply();
@@ -736,11 +738,11 @@ UUPSUpgradeable
     function checkLiquidityHealth() external view returns (
         bool isHealthy,
         string[] memory warnings,
-        uint256[] memory dexIds
+        uint16[] memory dexIds
     ) {
         // Count active DEXes with pairs
-        uint256 activeDexCount = 0;
-        for (uint256 i = 0; i < dexes.length; i++) {
+        uint16 activeDexCount = 0;
+        for (uint16 i = 0; i < dexes.length; i++) {
             if (dexes[i].active && dexes[i].pair != address(0)) {
                 activeDexCount++;
             }
@@ -750,31 +752,31 @@ UUPSUpgradeable
         if (activeDexCount == 0) {
             warnings = new string[](1);
             warnings[0] = "No active DEXes with pairs";
-            return (false, warnings, new uint256[](0));
+            return (false, warnings, new uint16[](0));
         }
 
         // Initialize arrays for warnings
         warnings = new string[](activeDexCount * 3); // Max 3 warnings per DEX
-        dexIds = new uint256[](activeDexCount * 3);
+        dexIds = new uint16[](activeDexCount * 3);
 
-        uint256 warningCount = 0;
+        uint16 warningCount = 0;
         isHealthy = true;
 
         // Check each active DEX
-        for (uint256 i = 0; i < dexes.length; i++) {
+        for (uint16 i = 0; i < dexes.length; i++) {
             if (dexes[i].active && dexes[i].pair != address(0)) {
                 DexInfo storage dex = dexes[i];
                 IUniswapV2Pair pair = IUniswapV2Pair(dex.pair);
 
                 // Get reserves
-                (uint256 reserve0, uint256 reserve1, ) = _getReserves(dex.pair);
+                (uint112 reserve0, uint112 reserve1, ) = _getReserves(dex.pair);
 
                 // Determine token order
                 address token0 = pair.token0();
                 bool isToken0 = address(token) == token0;
 
-                uint256 tokenReserve = isToken0 ? reserve0 : reserve1;
-                uint256 stableReserve = isToken0 ? reserve1 : reserve0;
+                uint96 tokenReserve = uint96(isToken0 ? reserve0 : reserve1);
+                uint96 stableReserve = uint96(isToken0 ? reserve1 : reserve0);
 
                 // Check reserve sizes
                 if (tokenReserve == 0 || stableReserve == 0) {
@@ -786,14 +788,14 @@ UUPSUpgradeable
                 }
 
                 // Calculate current price
-                uint256 currentPrice = (stableReserve * 1e18) / tokenReserve;
+                uint96 currentPrice = uint96((stableReserve * 1e18) / tokenReserve);
 
                 // Check price deviation from target
-                uint256 priceDeviation;
+                uint16 priceDeviation;
                 if (currentPrice > targetTokenPrice) {
-                    priceDeviation = ((currentPrice - targetTokenPrice) * 10000) / targetTokenPrice;
+                    priceDeviation = uint16(((currentPrice - targetTokenPrice) * 10000) / targetTokenPrice);
                 } else {
-                    priceDeviation = ((targetTokenPrice - currentPrice) * 10000) / targetTokenPrice;
+                    priceDeviation = uint16(((targetTokenPrice - currentPrice) * 10000) / targetTokenPrice);
                 }
 
                 if (priceDeviation > maxPriceDivergence) {
@@ -804,13 +806,13 @@ UUPSUpgradeable
                 }
 
                 // Check token reserve imbalance (if tokenReserve value is significantly different from stableReserve value)
-                uint256 tokenValue = (tokenReserve * currentPrice) / 1e18;
-                uint256 imbalance;
+                uint96 tokenValue = uint96((tokenReserve * currentPrice) / 1e18);
+                uint96 imbalance;
 
                 if (tokenValue > stableReserve) {
-                    imbalance = ((tokenValue - stableReserve) * 10000) / tokenValue;
+                    imbalance = uint96(((tokenValue - stableReserve) * 10000) / tokenValue);
                 } else {
-                    imbalance = ((stableReserve - tokenValue) * 10000) / stableReserve;
+                    imbalance = uint96(((stableReserve - tokenValue) * 10000) / stableReserve);
                 }
 
                 if (imbalance > maxReserveImbalance) {
@@ -833,14 +835,14 @@ UUPSUpgradeable
      * @dev Returns the next pending liquidity phase
      * @return phaseId ID of the next pending phase, or the total count if none
      */
-    function _findNextPendingPhase() internal view returns (uint256) {
-        for (uint256 i = 0; i < liquidityPhases.length; i++) {
+    function _findNextPendingPhase() internal view returns (uint96) {
+        for (uint96 i = 0; i < liquidityPhases.length; i++) {
             if (!liquidityPhases[i].executed && block.timestamp <= liquidityPhases[i].deadline) {
                 return i;
             }
         }
 
-        return liquidityPhases.length;
+        return uint96(liquidityPhases.length);
     }
 
     /**
@@ -850,85 +852,133 @@ UUPSUpgradeable
     function performRebalancing() external onlyRole(Constants.ADMIN_ROLE) nonReentrant {
         require(block.timestamp >= lastRebalanceTime + rebalanceCooldown, "MultiDexLiquidityManager: rebalancing on cooldown");
 
-        uint256 activeDexCount = 0;
-        for (uint256 i = 0; i < dexes.length; i++) {
-        if (dexes[i].active && dexes[i].pair != address(0)) {
-        activeDexCount++;
-        }
+        uint16 activeDexCount = 0;
+        for (uint16 i = 0; i < dexes.length; i++) {
+            if (dexes[i].active && dexes[i].pair != address(0)) {
+                activeDexCount++;
+            }
         }
 
         if (activeDexCount < 2) {
         revert("MultiDexLiquidityManager: at least 2 active DEXes required");
         }
 
-        DexInfo[] memory dexInfos = new DexInfo[](activeDexCount);
-        uint256 infoIndex = 0;
+        // Use the new struct name
+        DexPriceInfo[] memory dexInfos = new DexPriceInfo[](activeDexCount);
+        uint16 infoIndex = 0;
 
         // Collect price and reserve info
-        for (uint256 i = 0; i < dexes.length; i++) {
-    if (dexes[i].active && dexes[i].pair != address(0)) {
-    (uint256 reserve0, uint256 reserve1, ) = _getReserves(dexes[i].pair);
-
-    // Determine token order
-    address token0 = IUniswapV2Pair(dexes[i].pair).token0();
-    bool isToken0 = address(token) == token0;
-
-    uint256 tokenReserve = isToken0 ? reserve0 : reserve1;
-    uint256 stableReserve = isToken0 ? reserve1 : reserve0;
-
-    // Calculate price
-    uint256 price = tokenReserve > 0 ? (stableReserve * 1e18) / tokenReserve : 0;
-
-    dexInfos[infoIndex] = DexInfo({
-    dexId: i,
-    price: price,
-    tokenReserve: tokenReserve,
-    stableReserve: stableReserve
-    });
-
-    infoIndex++;
-    }
-    }
-
+        for (uint16 i = 0; i < dexes.length; i++) {
+            if (dexes[i].active && dexes[i].pair != address(0)) {
+                (uint112 reserve0, uint112 reserve1, ) = _getReserves(dexes[i].pair);
+            
+                // Determine token order
+                address token0 = IUniswapV2Pair(dexes[i].pair).token0();
+                bool isToken0 = address(token) == token0;
+            
+                uint96 tokenReserve = uint96(isToken0 ? reserve0 : reserve1);
+                uint96 stableReserve = uint96(isToken0 ? reserve1 : reserve0);
+            
+                // Calculate price
+                uint96 price = uint96(tokenReserve > 0 ? (stableReserve * 1e18) / tokenReserve : 0);
+            
+                // Use the new struct name
+                dexInfos[infoIndex] = DexPriceInfo({
+                    dexId: i,
+                    price: price,
+                    tokenReserve: tokenReserve,
+                    stableReserve: stableReserve
+                });
+            
+                infoIndex++;
+            }
+        }
+        
         // Find DEX with price furthest below target and DEX with price furthest above target
-        uint256 lowestPriceDexIndex = 0;
-        uint256 highestPriceDexIndex = 0;
-        uint256 lowestDelta = type(uint256).max;
-        uint256 highestDelta = type(uint256).max;
+        uint16 lowestPriceDexIndex = 0;
+        uint16 highestPriceDexIndex = 0;
+        uint96 lowestDelta = type(uint96).max;
+        uint96 highestDelta = type(uint96).max;
 
-        for (uint256 i = 0; i < dexInfos.length; i++) {
-        if (dexInfos[i].price < targetTokenPrice) {
-        uint256 delta = targetTokenPrice - dexInfos[i].price;
-        if (delta < lowestDelta) {
-        lowestDelta = delta;
-        lowestPriceDexIndex = i;
-        }
-        } else {
-        uint256 delta = dexInfos[i].price - targetTokenPrice;
-        if (delta < highestDelta) {
-        highestDelta = delta;
-        highestPriceDexIndex = i;
-        }
-        }
+        for (uint16 i = 0; i < dexInfos.length; i++) {
+            if (dexInfos[i].price < targetTokenPrice) {
+                uint96 delta = targetTokenPrice - dexInfos[i].price;
+                if (delta < lowestDelta) {
+                    lowestDelta = delta;
+                    lowestPriceDexIndex = i;
+                }
+            } else {
+                uint96 delta = dexInfos[i].price - targetTokenPrice;
+                if (delta < highestDelta) {
+                    highestDelta = delta;
+                    highestPriceDexIndex = i;
+                }
+            }
         }
 
         // Calculate divergence
-        uint256 divergence;
+        uint16 divergence;
         if (dexInfos[highestPriceDexIndex].price > dexInfos[lowestPriceDexIndex].price) {
-        divergence = ((dexInfos[highestPriceDexIndex].price - dexInfos[lowestPriceDexIndex].price) * 10000) /
-        dexInfos[lowestPriceDexIndex].price;
+            divergence = uint16(((dexInfos[highestPriceDexIndex].price - dexInfos[lowestPriceDexIndex].price) * 10000) /
+            dexInfos[lowestPriceDexIndex].price);
         } else {
-        divergence = 0;
+            divergence = 0;
         }
 
         // Only rebalance if divergence exceeds threshold
         if (divergence > maxPriceDivergence) {
-        // Rebalancing strategy: move liquidity from high price DEX to low price DEX
-        // Implementation depends on whether we want to actually move liquidity or just perform swaps
+            // Rebalancing strategy: Perform swaps to balance prices between DEXes
 
-        // For now, we'll log the rebalancing need
-        lastRebalanceTime = block.timestamp;
-        emit RebalancingPerformed(block.timestamp);
+            // DEX with higher price - we want to sell tokens here to reduce price
+            DexPriceInfo memory highPriceDex = dexInfos[highestPriceDexIndex];
+            // DEX with lower price - we want to buy tokens here to increase price
+            DexPriceInfo memory lowPriceDex = dexInfos[lowestPriceDexIndex];
+
+            // Calculate optimal swap amount (simplified)
+            uint96 priceGap = uint96(highPriceDex.price - lowPriceDex.price);
+            uint96 swapAmount = uint96((priceGap * highPriceDex.tokenReserve) / (highPriceDex.price * 4)); // 25% impact
+
+            // Cap swap amount
+            uint96 maxSwap = uint96(highPriceDex.tokenReserve / 10); // Max 10% of reserves
+            if (swapAmount > maxSwap) {
+                swapAmount = maxSwap;
+            }
+
+            // Execute swaps if amount is significant
+            if (swapAmount > 1e18) { // At least 1 token
+                // 1. Swap tokens to stablecoin on high price DEX
+                token.approve(dexes[highPriceDex.dexId].router, swapAmount);
+
+                address[] memory path1 = new address[](2);
+                path1[0] = address(token);
+                path1[1] = address(stablecoin);
+
+                uint96[] memory amounts1 = IUniswapV2Router(dexes[highPriceDex.dexId].router).swapExactTokensForTokens(
+                    swapAmount,
+                    0, // Accept any output amount
+                    path1,
+                    address(this),
+                uint40(block.timestamp + 300) // 5 minute deadline
+                );
+
+                // 2. Swap stablecoin back to tokens on low price DEX
+                stablecoin.approve(dexes[lowPriceDex.dexId].router, amounts1[1]);
+
+                address[] memory path2 = new address[](2);
+                path2[0] = address(stablecoin);
+                path2[1] = address(token);
+
+                IUniswapV2Router(dexes[lowPriceDex.dexId].router).swapExactTokensForTokens(
+                    amounts1[1],
+                    0, // Accept any output amount
+                    path2,
+                    address(this),
+                uint40(block.timestamp + 300) // 5 minute deadline
+                );
+            }
+
+            lastRebalanceTime = uint40(block.timestamp);
+            emit RebalancingPerformed(uint40(block.timestamp));
         }
     }
 
@@ -939,9 +989,9 @@ UUPSUpgradeable
      * @param _stablecoinAmount Amount of stablecoin to add
      */
     function _addLiquidityToDex(
-        uint256 _dexId,
-        uint256 _tokenAmount,
-        uint256 _stablecoinAmount
+        uint16 _dexId,
+        uint96 _tokenAmount,
+        uint96 _stablecoinAmount
     ) internal {
         DexInfo storage dex = dexes[_dexId];
 
@@ -950,7 +1000,7 @@ UUPSUpgradeable
         stablecoin.approve(dex.router, _stablecoinAmount);
 
         // Add liquidity
-        (uint256 tokenAmountAdded, uint256 stablecoinAmountAdded, uint256 liquidity) =
+        (uint96 tokenAmountAdded, uint96 stablecoinAmountAdded, uint96 liquidity) =
                                 IUniswapV2Router(dex.router).addLiquidity(
                 address(token),
                 address(stablecoin),
@@ -959,7 +1009,7 @@ UUPSUpgradeable
                 0, // Accept any amount of tokens
                 0, // Accept any amount of stablecoin
                 address(this),
-                block.timestamp + 1800 // 30 minutes deadline
+        uint40(block.timestamp + 1800) // 30 minutes deadline
             );
 
         // Update pair address if it's not set yet
@@ -980,10 +1030,10 @@ UUPSUpgradeable
      * @return reserve1 Reserve of token1
      * @return blockTimestampLast Timestamp of last update
      */
-    function _getReserves(address _pair) internal view returns (uint256 reserve0, uint256 reserve1, uint32 blockTimestampLast) {
-        (uint112 _reserve0, uint112 _reserve1, uint32 _blockTimestampLast) =
+    function _getReserves(address _pair) internal view returns (uint112 reserve0, uint112 reserve1, uint40 blockTimestampLast) {
+        (uint112 _reserve0, uint112 _reserve1, uint40 _blockTimestampLast) =
                                 IUniswapV2Pair(_pair).getReserves();
-        return (uint256(_reserve0), uint256(_reserve1), _blockTimestampLast);
+        return (uint112(_reserve0), uint112(_reserve1), _blockTimestampLast);
     }
 
     /**
@@ -1002,13 +1052,13 @@ UUPSUpgradeable
         require(_token != address(token) && _token != address(stablecoin), "MultiDexLiquidityManager: cannot recover core tokens");
 
         // Also prevent recovering any LP tokens
-        for (uint256 i = 0; i < dexes.length; i++) {
+        for (uint16 i = 0; i < dexes.length; i++) {
             if (dexes[i].pair != address(0)) {
                 require(_token != dexes[i].pair, "MultiDexLiquidityManager: cannot recover LP tokens");
             }
         }
 
-        uint256 balance = ERC20Upgradeable(_token).balanceOf(address(this));
+        uint96 balance = uint96(ERC20Upgradeable(_token).balanceOf(address(this)));
         require(balance > 0, "MultiDexLiquidityManager: no tokens to recover");
 
         ERC20Upgradeable(_token).transfer(msg.sender, balance);

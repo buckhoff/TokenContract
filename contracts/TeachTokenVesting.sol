@@ -41,11 +41,11 @@ UUPSUpgradeable
     // Vesting schedule structure
     struct VestingSchedule {
         address beneficiary;         // Address of beneficiary
-        uint256 totalAmount;         // Total amount of tokens to be vested
-        uint256 claimedAmount;       // Amount of tokens already claimed
-        uint256 startTime;           // Start time of the vesting
-        uint256 cliffDuration;       // Cliff duration in seconds
-        uint256 duration;            // Duration of the vesting in seconds after cliff
+        uint96 totalAmount;         // Total amount of tokens to be vested
+        uint96 claimedAmount;       // Amount of tokens already claimed
+        uint40 startTime;           // Start time of the vesting
+        uint40 cliffDuration;       // Cliff duration in seconds
+        uint40 duration;            // Duration of the vesting in seconds after cliff
         uint8 tgePercentage;         // Percentage unlocked at TGE (scaled by 100)
         VestingType vestingType;     // Type of vesting schedule
         BeneficiaryGroup group;      // Beneficiary group
@@ -74,8 +74,8 @@ UUPSUpgradeable
 
     // Quarterly release tracking
     struct QuarterlyRelease {
-        uint256 releaseTime;         // Time when the quarterly release is available
-        uint256 amount;              // Amount to release
+        uint40 releaseTime;         // Time when the quarterly release is available
+        uint96 amount;              // Amount to release
         bool released;               // Whether it has been released
     }
 
@@ -83,7 +83,7 @@ UUPSUpgradeable
     mapping(uint256 => QuarterlyRelease[]) public scheduleQuarterlyReleases;
 
     // TGE timestamp
-    uint256 public tgeTime;
+    uint40 public tgeTime;
 
     // Whether TGE has occurred
     bool public tgeOccurred;
@@ -92,13 +92,13 @@ UUPSUpgradeable
     bool public paused;
 
     // Events
-    event ScheduleCreated(uint256 indexed scheduleId, address indexed beneficiary, BeneficiaryGroup group, uint256 amount);
-    event TokensClaimed(uint256 indexed scheduleId, address indexed beneficiary, uint256 amount);
-    event ScheduleRevoked(uint256 indexed scheduleId, address indexed beneficiary, uint256 unclaimedAmount);
+    event ScheduleCreated(uint256 indexed scheduleId, address indexed beneficiary, BeneficiaryGroup group, uint96 amount);
+    event TokensClaimed(uint256 indexed scheduleId, address indexed beneficiary, uint96 amount);
+    event ScheduleRevoked(uint256 indexed scheduleId, address indexed beneficiary, uint96 unclaimedAmount);
     event MilestoneAdded(uint256 indexed scheduleId, string description, uint8 percentage);
     event MilestoneAchieved(uint256 indexed scheduleId, uint256 milestoneIndex, string description);
-    event QuarterlyReleaseAdded(uint256 indexed scheduleId, uint256 releaseTime, uint256 amount);
-    event TGESet(uint256 timestamp);
+    event QuarterlyReleaseAdded(uint256 indexed scheduleId, uint40 releaseTime, uint96 amount);
+    event TGESet(uint40 timestamp);
     event Paused(address account);
     event Unpaused(address account);
     event BatchScheduleCreated(uint256 count, BeneficiaryGroup group);
@@ -148,7 +148,7 @@ UUPSUpgradeable
      * @dev Sets the TGE time, enabling token claim
      * @param _tgeTime Timestamp of the TGE
      */
-    function setTGE(uint256 _tgeTime) external onlyRole(Constants.ADMIN_ROLE) {
+    function setTGE(uint40 _tgeTime) external onlyRole(Constants.ADMIN_ROLE) {
         require(!tgeOccurred, "TeachTokenVesting: TGE already set");
         require(_tgeTime > 0, "TeachTokenVesting: invalid TGE time");
 
@@ -171,13 +171,13 @@ UUPSUpgradeable
      */
     function createLinearVestingSchedule(
         address _beneficiary,
-        uint256 _amount,
-        uint256 _cliffDuration,
-        uint256 _duration,
+        uint96 _amount,
+        uint40 _cliffDuration,
+        uint40 _duration,
         uint8 _tgePercentage,
         BeneficiaryGroup _group,
         bool _revocable
-    ) external onlyRole(Constants.ADMIN_ROLE) returns (uint256) {
+    ) public onlyRole(Constants.ADMIN_ROLE) returns (uint256) {
         require(_beneficiary != address(0), "TeachTokenVesting: zero beneficiary address");
         require(_amount > 0, "TeachTokenVesting: zero amount");
         require(_duration > 0, "TeachTokenVesting: zero duration");
@@ -189,7 +189,7 @@ UUPSUpgradeable
             beneficiary: _beneficiary,
             totalAmount: _amount,
             claimedAmount: 0,
-            startTime: block.timestamp,
+            startTime: uint40(block.timestamp),
             cliffDuration: _cliffDuration,
             duration: _duration,
             tgePercentage: _tgePercentage,
@@ -222,13 +222,13 @@ UUPSUpgradeable
      */
     function createQuarterlyVestingSchedule(
         address _beneficiary,
-        uint256 _totalAmount,
-        uint256 _initialAmount,
+        uint96 _totalAmount,
+        uint96 _initialAmount,
         uint8 _releasesCount,
-        uint256 _firstReleaseTime,
+        uint40 _firstReleaseTime,
         BeneficiaryGroup _group,
         bool _revocable
-    ) external onlyRole(Constants.ADMIN_ROLE) returns (uint256) {
+    ) public onlyRole(Constants.ADMIN_ROLE) returns (uint256) {
         require(_beneficiary != address(0), "TeachTokenVesting: zero beneficiary address");
         require(_totalAmount > 0, "TeachTokenVesting: zero amount");
         require(_initialAmount < _totalAmount, "TeachTokenVesting: initial amount too high");
@@ -244,8 +244,8 @@ UUPSUpgradeable
             beneficiary: _beneficiary,
             totalAmount: _totalAmount,
             claimedAmount: 0,
-            startTime: block.timestamp,
-            cliffDuration: _firstReleaseTime - block.timestamp,
+            startTime: uint40(block.timestamp),
+            cliffDuration: _firstReleaseTime - uint40(block.timestamp),
             duration: 0, // Not used for quarterly releases
             tgePercentage: tgePercentage,
             vestingType: VestingType.QUARTERLY,
@@ -257,13 +257,13 @@ UUPSUpgradeable
         beneficiarySchedules[_beneficiary].push(scheduleId);
 
         // Setup quarterly releases
-        uint256 remainingAmount = _totalAmount - _initialAmount;
-        uint256 quarterlyAmount = remainingAmount / _releasesCount;
-        uint256 lastRelease = remainingAmount - (quarterlyAmount * (_releasesCount - 1));
+        uint96 remainingAmount = _totalAmount - _initialAmount;
+        uint96 quarterlyAmount = remainingAmount / _releasesCount;
+        uint96 lastRelease = remainingAmount - (quarterlyAmount * (_releasesCount - 1));
 
         for (uint8 i = 0; i < _releasesCount; i++) {
-            uint256 releaseTime = _firstReleaseTime + (i * 90 days);
-            uint256 amount = (i == _releasesCount - 1) ? lastRelease : quarterlyAmount;
+            uint40 releaseTime = _firstReleaseTime + (i * 90 days);
+            uint96 amount = (i == _releasesCount - 1) ? lastRelease : quarterlyAmount;
 
             scheduleQuarterlyReleases[scheduleId].push(QuarterlyRelease({
                 releaseTime: releaseTime,
@@ -293,7 +293,7 @@ UUPSUpgradeable
      */
     function createMilestoneVestingSchedule(
         address _beneficiary,
-        uint256 _totalAmount,
+        uint96 _totalAmount,
         uint8 _tgePercentage,
         BeneficiaryGroup _group,
         bool _revocable
@@ -308,7 +308,7 @@ UUPSUpgradeable
             beneficiary: _beneficiary,
             totalAmount: _totalAmount,
             claimedAmount: 0,
-            startTime: block.timestamp,
+            startTime: uint40(block.timestamp),
             cliffDuration: 0, // Not used for milestone-based
             duration: 0, // Not used for milestone-based
             tgePercentage: _tgePercentage,
@@ -388,7 +388,7 @@ UUPSUpgradeable
      * @param _schedule The vesting schedule
      * @return The claimable token amount
      */
-    function _calculateClaimableLinear(VestingSchedule memory _schedule) internal view returns (uint256) {
+    function _calculateClaimableLinear(VestingSchedule memory _schedule) internal view returns (uint96) {
         if (_schedule.revoked) {
             return 0;
         }
@@ -399,10 +399,10 @@ UUPSUpgradeable
         }
 
         // Calculate total vested amount
-        uint256 totalVestedAmount;
+        uint96 totalVestedAmount;
 
         // If we're before cliff, only TGE amount is available
-        uint256 tgeAmount = (_schedule.totalAmount * _schedule.tgePercentage) / 100;
+        uint96 tgeAmount = (_schedule.totalAmount * _schedule.tgePercentage) / 100;
 
         if (block.timestamp < _schedule.startTime + _schedule.cliffDuration) {
             return tgeAmount > _schedule.claimedAmount ? tgeAmount - _schedule.claimedAmount : 0;
@@ -410,10 +410,10 @@ UUPSUpgradeable
 
         // If we're after cliff but before end of vesting
         if (block.timestamp < _schedule.startTime + _schedule.cliffDuration + _schedule.duration) {
-            uint256 timeFromCliff = block.timestamp - (_schedule.startTime + _schedule.cliffDuration);
-            uint256 vestingAmount = _schedule.totalAmount - tgeAmount;
+            uint40 timeFromCliff = uint40(block.timestamp - (_schedule.startTime + _schedule.cliffDuration));
+            uint96 vestingAmount = _schedule.totalAmount - tgeAmount;
 
-            uint256 vestedAmount = (vestingAmount * timeFromCliff) / _schedule.duration;
+            uint96 vestedAmount = (vestingAmount * timeFromCliff) / _schedule.duration;
             totalVestedAmount = tgeAmount + vestedAmount;
         } else {
             // After vesting is complete
@@ -421,7 +421,7 @@ UUPSUpgradeable
         }
 
         // Return claimable amount
-        uint256 claimable = totalVestedAmount > _schedule.claimedAmount ?
+        uint96 claimable = totalVestedAmount > _schedule.claimedAmount ?
             totalVestedAmount - _schedule.claimedAmount : 0;
 
         return claimable;
@@ -433,7 +433,7 @@ UUPSUpgradeable
      * @param _scheduleId The schedule ID
      * @return The claimable token amount
      */
-    function _calculateClaimableQuarterly(VestingSchedule memory _schedule, uint256 _scheduleId) internal view returns (uint256) {
+    function _calculateClaimableQuarterly(VestingSchedule memory _schedule, uint256 _scheduleId) internal view returns (uint96) {
         if (_schedule.revoked) {
             return 0;
         }
@@ -444,10 +444,10 @@ UUPSUpgradeable
         }
 
         // Calculate TGE amount
-        uint256 tgeAmount = (_schedule.totalAmount * _schedule.tgePercentage) / 100;
+        uint96 tgeAmount = (_schedule.totalAmount * _schedule.tgePercentage) / 100;
 
         // Check if TGE amount is already claimed
-        uint256 claimable = 0;
+        uint96 claimable = 0;
 
         if (_schedule.claimedAmount < tgeAmount) {
             claimable = tgeAmount - _schedule.claimedAmount;
@@ -471,7 +471,7 @@ UUPSUpgradeable
      * @param _scheduleId The schedule ID
      * @return The claimable token amount
      */
-    function _calculateClaimableMilestone(VestingSchedule memory _schedule, uint256 _scheduleId) internal view returns (uint256) {
+    function _calculateClaimableMilestone(VestingSchedule memory _schedule, uint256 _scheduleId) internal view returns (uint96) {
         if (_schedule.revoked) {
             return 0;
         }
@@ -482,10 +482,10 @@ UUPSUpgradeable
         }
 
         // Calculate TGE amount
-        uint256 tgeAmount = (_schedule.totalAmount * _schedule.tgePercentage) / 100;
+        uint96 tgeAmount = (_schedule.totalAmount * _schedule.tgePercentage) / 100;
 
         // Check if TGE amount is already claimed
-        uint256 claimable = 0;
+        uint96 claimable = 0;
 
         if (_schedule.claimedAmount < tgeAmount) {
             claimable = tgeAmount - _schedule.claimedAmount;
@@ -496,8 +496,8 @@ UUPSUpgradeable
 
         for (uint8 i = 0; i < milestones.length; i++) {
             if (milestones[i].achieved) {
-                uint256 milestoneAmount = (_schedule.totalAmount * milestones[i].percentage) / 100;
-                uint256 alreadyClaimed = (i == 0) ?
+                uint96 milestoneAmount = (_schedule.totalAmount * milestones[i].percentage) / 100;
+                uint96 alreadyClaimed = (i == 0) ?
                     (_schedule.claimedAmount > tgeAmount ? _schedule.claimedAmount - tgeAmount : 0) :
                     _schedule.claimedAmount;
 
@@ -515,7 +515,7 @@ UUPSUpgradeable
      * @param _scheduleId ID of the vesting schedule
      * @return The claimable token amount
      */
-    function calculateClaimableAmount(uint256 _scheduleId) public view returns (uint256) {
+    function calculateClaimableAmount(uint256 _scheduleId) public view returns (uint96) {
         VestingSchedule memory schedule = vestingSchedules[_scheduleId];
 
         if (schedule.beneficiary == address(0)) {
@@ -537,8 +537,8 @@ UUPSUpgradeable
      * @dev Claims tokens from a vesting schedule
      * @param _scheduleId ID of the vesting schedule
      */
-    function claimTokens(uint256 _scheduleId) external nonReentrant whenNotPaused onlyAfterTGE onlyScheduleOwner(_scheduleId) {
-        uint256 claimable = calculateClaimableAmount(_scheduleId);
+    function claimTokens(uint256 _scheduleId) external nonReentrant whenNotPaused onlyAfterTGE onlyScheduleOwner(_scheduleId) returns (uint96 claimable) {
+         claimable = calculateClaimableAmount(_scheduleId);
         require(claimable > 0, "TeachTokenVesting: no tokens claimable");
 
         VestingSchedule storage schedule = vestingSchedules[_scheduleId];
@@ -561,6 +561,7 @@ UUPSUpgradeable
         // Transfer tokens to beneficiary
         require(token.transfer(schedule.beneficiary, claimable), "TeachTokenVesting: transfer failed");
 
+        
         emit TokensClaimed(_scheduleId, schedule.beneficiary, claimable);
     }
 
@@ -577,7 +578,7 @@ UUPSUpgradeable
         require(!schedule.revoked, "TeachTokenVesting: already revoked");
 
         // Calculate vested amount
-        uint256 vestedAmount;
+        uint96 vestedAmount;
 
         if (schedule.vestingType == VestingType.LINEAR) {
             vestedAmount = _calculateClaimableLinear(schedule) + schedule.claimedAmount;
@@ -588,7 +589,7 @@ UUPSUpgradeable
         }
 
         // Calculate amount to return to owner
-        uint256 unclaimedAmount = schedule.totalAmount - vestedAmount;
+        uint96 unclaimedAmount = schedule.totalAmount - vestedAmount;
 
         if (unclaimedAmount > 0) {
             // Transfer unclaimed tokens back to owner
@@ -613,17 +614,17 @@ UUPSUpgradeable
      */
     function batchCreateLinearVestingSchedules(
         address[] calldata _beneficiaries,
-        uint256[] calldata _amounts,
-        uint256 _cliffDuration,
-        uint256 _duration,
+        uint96[] calldata _amounts,
+        uint40 _cliffDuration,
+        uint40 _duration,
         uint8 _tgePercentage,
         BeneficiaryGroup _group,
         bool _revocable
     ) external onlyRole(Constants.ADMIN_ROLE) {
         require(_beneficiaries.length == _amounts.length, "TeachTokenVesting: arrays length mismatch");
 
-        uint256 totalAmount = 0;
-        for (uint256 i = 0; i < _amounts.length; i++) {
+        uint96 totalAmount = 0;
+        for (uint96 i = 0; i < _amounts.length; i++) {
             totalAmount += _amounts[i];
         }
 
@@ -652,12 +653,12 @@ UUPSUpgradeable
      */
     function batchCreatePublicSaleVestingSchedules(
         address[] calldata _beneficiaries,
-        uint256[] calldata _amounts
+        uint96[] calldata _amounts
     ) external onlyRole(Constants.ADMIN_ROLE) {
         require(_beneficiaries.length == _amounts.length, "TeachTokenVesting: arrays length mismatch");
 
-        uint256 totalAmount = 0;
-        for (uint256 i = 0; i < _amounts.length; i++) {
+        uint96 totalAmount = 0;
+        for (uint96 i = 0; i < _amounts.length; i++) {
             totalAmount += _amounts[i];
         }
 
@@ -687,12 +688,12 @@ UUPSUpgradeable
      */
     function batchCreateTeamVestingSchedules(
         address[] calldata _beneficiaries,
-        uint256[] calldata _amounts
+        uint96[] calldata _amounts
     ) external onlyRole(Constants.ADMIN_ROLE) {
         require(_beneficiaries.length == _amounts.length, "TeachTokenVesting: arrays length mismatch");
 
-        uint256 totalAmount = 0;
-        for (uint256 i = 0; i < _amounts.length; i++) {
+        uint96 totalAmount = 0;
+        for (uint96 i = 0; i < _amounts.length; i++) {
             totalAmount += _amounts[i];
         }
 
@@ -702,7 +703,7 @@ UUPSUpgradeable
         // Standard dev team parameters: quarterly release with 2-3M tokens at TGE
         for (uint256 i = 0; i < _beneficiaries.length; i++) {
             // Calculate appropriate initial release (~2-3M tokens collectively for the team)
-            uint256 initialRelease = _amounts[i] / 8; // Approximately 12.5% at TGE
+            uint96 initialRelease = _amounts[i] / 8; // Approximately 12.5% at TGE
 
             // Create a quarterly vesting schedule with 8 releases
             createQuarterlyVestingSchedule(
@@ -710,7 +711,7 @@ UUPSUpgradeable
                 _amounts[i],
                 initialRelease,
                 8, // 8 quarterly releases (2 years)
-                block.timestamp + 90 days, // First release in 3 months
+                uint40(block.timestamp) + 90 days, // First release in 3 months
                 BeneficiaryGroup.TEAM,
                 true // Revocable
             );
@@ -726,12 +727,12 @@ UUPSUpgradeable
      */
     function batchCreateAdvisorVestingSchedules(
         address[] calldata _beneficiaries,
-        uint256[] calldata _amounts
+        uint96[] calldata _amounts
     ) external onlyRole(Constants.ADMIN_ROLE) {
         require(_beneficiaries.length == _amounts.length, "TeachTokenVesting: arrays length mismatch");
 
-        uint256 totalAmount = 0;
-        for (uint256 i = 0; i < _amounts.length; i++) {
+        uint96 totalAmount = 0;
+        for (uint96 i = 0; i < _amounts.length; i++) {
             totalAmount += _amounts[i];
         }
 
@@ -761,12 +762,12 @@ UUPSUpgradeable
      */
     function batchCreatePartnerVestingSchedules(
         address[] calldata _beneficiaries,
-        uint256[] calldata _amounts
+        uint96[] calldata _amounts
     ) external onlyRole(Constants.ADMIN_ROLE) {
         require(_beneficiaries.length == _amounts.length, "TeachTokenVesting: arrays length mismatch");
 
-        uint256 totalAmount = 0;
-        for (uint256 i = 0; i < _amounts.length; i++) {
+        uint96 totalAmount = 0;
+        for (uint96 i = 0; i < _amounts.length; i++) {
             totalAmount += _amounts[i];
         }
 
@@ -798,11 +799,11 @@ UUPSUpgradeable
      * @return ecosystem Total tokens allocated to ecosystem
      */
     function getTotalAllocationsByGroup() external view returns (
-        uint256 team,
-        uint256 advisors,
-        uint256 partners,
-        uint256 publicSale,
-        uint256 ecosystem
+        uint96 team,
+        uint96 advisors,
+        uint96 partners,
+        uint96 publicSale,
+        uint96 ecosystem
     ) {
         for (uint256 i = 1; i < _scheduleIdCounter; i++) {
             VestingSchedule memory schedule = vestingSchedules[i];
@@ -852,17 +853,17 @@ UUPSUpgradeable
      */
     function getScheduleDetails(uint256 _scheduleId) external view returns (
         address beneficiary,
-        uint256 totalAmount,
-        uint256 claimedAmount,
-        uint256 startTime,
-        uint256 cliffDuration,
-        uint256 duration,
+        uint96 totalAmount,
+        uint96 claimedAmount,
+        uint40 startTime,
+        uint40 cliffDuration,
+        uint40 duration,
         uint8 tgePercentage,
         VestingType vestingType,
         BeneficiaryGroup group,
         bool revocable,
         bool revoked,
-        uint256 claimableAmount
+        uint96 claimableAmount
     ) {
         VestingSchedule memory schedule = vestingSchedules[_scheduleId];
         claimableAmount = calculateClaimableAmount(_scheduleId);
@@ -914,7 +915,7 @@ UUPSUpgradeable
      */
     function recoverTokens(address _token) external onlyRole(Constants.ADMIN_ROLE) {
         require(_token != address(token), "TeachTokenVesting: cannot recover vesting token");
-        uint256 balance = ERC20Upgradeable(_token).balanceOf(address(this));
+        uint96 balance = uint96(ERC20Upgradeable(_token).balanceOf(address(this)));
         require(balance > 0, "TeachTokenVesting: no tokens to recover");
         require(ERC20Upgradeable(_token).transfer(owner(), balance), "TeachTokenVesting: transfer failed");
     }
