@@ -15,6 +15,8 @@ async function main() {
     const teachToken = await upgrades.deployProxy(TeachToken,[],{ initializer: 'initialize' });
 
     await teachToken.waitForDeployment();
+    const deploymentTx = await ethers.provider.getTransactionReceipt(teachToken.deploymentTransaction().hash);
+    console.log("Gas used:", deploymentTx.gasUsed.toString());
     const teachTokenAddress = await teachToken.getAddress();
     console.log("TeachToken deployed to:", teachTokenAddress);
 

@@ -24,6 +24,8 @@ async function main() {
         deployer.address], { initializer: 'initialize' });
 
     await marketplace.waitForDeployment();
+    const deploymentTx = await ethers.provider.getTransactionReceipt(marketplace.deploymentTransaction().hash);
+    console.log("Gas used:", deploymentTx.gasUsed.toString());
     const marketplaceAddress = await marketplace.getAddress();
     console.log("PlatformMarketplace deployed to:", marketplaceAddress);
 

@@ -36,6 +36,8 @@ async function main() {
         valueThreshold], {initializer: 'initialize'});
 
     await stabilityFund.waitForDeployment();
+    const deploymentTx = await ethers.provider.getTransactionReceipt(stabilityFund.deploymentTransaction().hash);
+    console.log("Gas used:", deploymentTx.gasUsed.toString());
     const stabilityFundAddress = await stabilityFund.getAddress();
     console.log("PlatformStabilityFund deployed to:", stabilityFundAddress);
 

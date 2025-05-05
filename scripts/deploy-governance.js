@@ -13,15 +13,6 @@ async function main() {
         console.error("Please set TOKEN_ADDRESS in your .env file");
         return;
     }
-
-    // Deploy the PlatformGovernance contract
-    const PlatformGovernance = await ethers.getContractFactory("PlatformGovernance");
-    const governance = await upgrades.deployProxy(PlatformGovernance,[teachTokenAddress, proposalThreshold, minVotingPeriod, maxVotingPeriod, quorumThreshold, executionDelay, executionPeriod], { initializer: 'initialize' });
-
-    await governance.waitForDeployment();
-    const governanceAddress = await governance.getAddress();
-    console.log("PlatformGovernance deployed to:", governanceAddress);
-
     // Initialize the governance contract with parameters
     const proposalThreshold = ethers.parseEther("100000"); // 100k tokens to create proposal
     const minVotingPeriod = 3 * 24 * 60 * 60; // 3 days in seconds
@@ -29,6 +20,18 @@ async function main() {
     const quorumThreshold = 400; // 4% of total supply
     const executionDelay = 2 * 24 * 60 * 60; // 2 days in seconds
     const executionPeriod = 3 * 24 * 60 * 60; // 3 days in seconds
+    
+    // Deploy the PlatformGovernance contract
+    const PlatformGovernance = await ethers.getContractFactory("PlatformGovernance");
+    const governance = await upgrades.deployProxy(PlatformGovernance,[teachTokenAddress, proposalThreshold, minVotingPeriod, maxVotingPeriod, quorumThreshold, executionDelay, executionPeriod], { initializer: 'initialize' });
+
+    await governance.waitForDeployment();
+    const deploymentTx = await ethers.provider.getTransactionReceipt(governance.deploymentTransaction().hash);
+    console.log("Gas used:", deploymentTx.gasUsed.toString());
+    const governanceAddress = await governance.getAddress();
+    console.log("PlatformGovernance deployed to:", governanceAddress);
+
+
 
    // console.log("Initializing PlatformGovernance...");
     //const initTx = await governance.initialize(

@@ -102,7 +102,8 @@ UUPSUpgradeable
     event Paused(address account);
     event Unpaused(address account);
     event BatchScheduleCreated(uint256 count, BeneficiaryGroup group);
-
+    event RegistrySet(address indexed registry);
+    
     // Modifiers
     modifier whenNotPaused() {
         require(!paused, "TeachTokenVesting: paused");
@@ -898,6 +899,15 @@ UUPSUpgradeable
     function unpause() external onlyRole(Constants.ADMIN_ROLE) {
         paused = false;
         emit Unpaused(msg.sender);
+    }
+
+    /**
+     * @dev Sets the registry contract address
+     * @param _registry Address of the registry contract
+     */
+    function setRegistry(address _registry) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _setRegistry(_registry, Constants.TOKEN_NAME);
+        emit RegistrySet(_registry);
     }
 
     /**

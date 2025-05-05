@@ -121,7 +121,7 @@ UUPSUpgradeable
     bool public tgeCompleted;
 
     // USD price scaling factor (6 decimal places)
-    uint32 public constant PRICE_DECIMALS = 1e6;
+    uint256 public constant PRICE_DECIMALS = 1e6;
 
     // Maximum tokens purchasable by a single address across all tiers
     uint96 public maxTokensPerAddress;

@@ -19,9 +19,9 @@ interface IPlatformStabilityFund {
  */
 contract PlatformMarketplace is 
     Initializable,
-    OwnableUpgradeable,
-    UUPSUpgradeable,
+    OwnableUpgradeable,  
     ReentrancyGuardUpgradeable,
+    UUPSUpgradeable,
     RegistryAwareUpgradeable
 {
     
@@ -79,7 +79,7 @@ contract PlatformMarketplace is
 
     // Dispute resolution mapping for marketplace transactions
     mapping(uint256 => DisputeInfo) public resourceDisputes;
-    uint256 public disputeResolutionPeriod = 7 days;
+    uint256 public disputeResolutionPeriod;
 
     // Struct for dispute information
     struct DisputeInfo {
@@ -176,6 +176,7 @@ contract PlatformMarketplace is
         discountTiers.push(DiscountTier({minAmount: 25, discountPercent: 1500})); // 25+ resources: 15% discount
 
         requiredRecoveryApprovals = 3; // Default to 3 approvals
+        disputeResolutionPeriod = 7 days;
     }
 
     /**

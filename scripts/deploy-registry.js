@@ -9,6 +9,8 @@ async function main() {
     const registry = await upgrades.deployProxy(ContractRegistry, [], { initializer: 'initialize' });
 
     await registry.waitForDeployment();
+    const deploymentTx = await ethers.provider.getTransactionReceipt(registry.deploymentTransaction().hash);
+    console.log("Gas used:", deploymentTx.gasUsed.toString());
     const registryAddress = await registry.getAddress();
     console.log("ContractRegistry deployed to:", registryAddress);
 

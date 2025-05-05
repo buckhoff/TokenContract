@@ -29,6 +29,8 @@ async function main() {
         minimumClaimPeriod],{ initializer: 'initialize' });
 
     await teacherReward.waitForDeployment();
+    const deploymentTx = await ethers.provider.getTransactionReceipt(teacherReward.deploymentTransaction().hash);
+    console.log("Gas used:", deploymentTx.gasUsed.toString());
     const teacherRewardAddress = await teacherReward.getAddress();
     console.log("TeacherReward deployed to:", teacherRewardAddress);
 

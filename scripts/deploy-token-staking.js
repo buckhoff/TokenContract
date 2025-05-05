@@ -19,6 +19,8 @@ async function main() {
     const staking = await upgrades.deployProxy(TokenStaking,[teachTokenAddress, deployer.address],{initializer: 'initialize' });
 
     await staking.waitForDeployment();
+    const deploymentTx = await ethers.provider.getTransactionReceipt(staking.deploymentTransaction().hash);
+    console.log("Gas used:", deploymentTx.gasUsed.toString());
     const stakingAddress = await staking.getAddress();
     console.log("TokenStaking deployed to:", stakingAddress);
 

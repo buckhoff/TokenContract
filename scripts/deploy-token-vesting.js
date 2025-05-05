@@ -19,17 +19,19 @@ async function main() {
     const vesting = await upgrades.deployProxy(TokenVesting,[teachTokenAddress],{initializer: 'initialize' });
 
     await vesting.waitForDeployment();
+    const deploymentTx = await ethers.provider.getTransactionReceipt(vesting.deploymentTransaction().hash);
+    console.log("Gas used:", deploymentTx.gasUsed.toString());
     const vestingAddress = await vesting.getAddress();
-    console.log("TokenStaking deployed to:", vestingAddress);
+    console.log("TeachTokenVesting deployed to:", vestingAddress);
     
-    console.log("TokenStaking initialized");
+    console.log("TeachTokenVesting initialized");
 
     // Set registry
     if (registryAddress) {
-        console.log("Setting Registry for TokenVesting...");
+        console.log("Setting Registry for TeachTokenVesting...");
         const setRegistryTx = await vesting.setRegistry(registryAddress);
         await setRegistryTx.wait();
-        console.log("Registry set for TokenVesting");
+        console.log("Registry set for TeachTokenVesting");
 
         // Register in registry
         const ContractRegistry = await ethers.getContractFactory("ContractRegistry");
@@ -37,10 +39,10 @@ async function main() {
 
         const VESTING_NAME = ethers.keccak256(ethers.toUtf8Bytes("TOKEN_VESTING"));
 
-        console.log("Registering TokenVesting in Registry...");
-        const registerTx = await registry.registerContract(VESTING_NAME, stakingAddress, "0x00000000");
+        console.log("Registering TeachTokenVesting in Registry...");
+        const registerTx = await registry.registerContract(VESTING_NAME, vestingAddress, "0x00000000");
         await registerTx.wait();
-        console.log("TokenVesting registered in Registry");
+        console.log("TeachTokenVesting registered in Registry");
     }
 
     console.log("\n--- IMPORTANT: Update your .env file with these values ---");

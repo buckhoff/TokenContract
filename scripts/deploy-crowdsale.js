@@ -9,6 +9,7 @@ async function main() {
     const teachTokenAddress = process.env.TOKEN_ADDRESS;
     const stableCoinAddress = process.env.STABLE_COIN_ADDRESS;
     const registryAddress = process.env.REGISTRY_ADDRESS;
+    const treasuryAddress = process.env.TREASURY_ADDRESS;
 
     if (!teachTokenAddress || !stableCoinAddress) {
         console.error("Please set TOKEN_ADDRESS and STABLE_COIN_ADDRESS in your .env file");
@@ -17,19 +18,21 @@ async function main() {
 
     // Deploy the TokenCrowdSale contract
     const TokenCrowdSale = await ethers.getContractFactory("TokenCrowdSale");
-    const crowdsale = await upgrades.deployProxy(TokenCrowdSale,[stableCoinAddress, deployer.address],{ initializer: 'initialize' });
+    const crowdsale = await upgrades.deployProxy(TokenCrowdSale,[stableCoinAddress, treasuryAddress],{ initializer: 'initialize' });
 
     await crowdsale.waitForDeployment();
+    const deploymentTx = await ethers.provider.getTransactionReceipt(crowdsale.deploymentTransaction().hash);
+    console.log("Gas used:", deploymentTx.gasUsed.toString());
     const crowdsaleAddress = await crowdsale.getAddress();
     console.log("TokenCrowdSale deployed to:", crowdsaleAddress);
 
     // Initialize the crowdsale contract
     //console.log("Initializing TokenCrowdSale...");
-    const initTx = await crowdsale.initialize(
-        stableCoinAddress, // Payment token (USDC)
-        deployer.address   // Treasury address (for now)
-    );
-    await initTx.wait();
+    //const initTx = await crowdsale.initialize(
+     //   stableCoinAddress, // Payment token (USDC)
+    //    deployer.address   // Treasury address (for now)
+    //);
+    //await initTx.wait();
     console.log("TokenCrowdSale initialized");
 
     // Set the sale token

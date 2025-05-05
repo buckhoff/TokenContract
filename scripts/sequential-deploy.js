@@ -29,7 +29,7 @@
             },
             {
                 name: "TeachToken",
-                script: "scripts/teach-token-deployment.js",
+                script: "scripts/deploy-teach-token.js",
                 envVars: ["TOKEN_ADDRESS"],
                 gasUsed: 0  // Will be populated during deployment
             },
@@ -46,13 +46,13 @@
                 gasUsed: 0  // Will be populated during deployment
             },
             {
-                name: "PlatformStaking",
-                script: "scripts/deploy-staking.js",
+                name: "TokenStaking",
+                script: "scripts/deploy-token-staking.js",
                 envVars: ["TOKEN_STAKING_ADDRESS"],
                 gasUsed: 0  // Will be populated during deployment
             },
             {
-                name: "PlatformVesting",
+                name: "TeachTokenVesting",
                 script: "scripts/deploy-token-vesting.js",
                 envVars: ["TOKEN_VESTING_ADDRESS"],
                 gasUsed: 0  // Will be populated during deployment
@@ -71,7 +71,7 @@
             },
             {
                 name: "TeacherReward",
-                script: "scripts/deploy-rewards.js",
+                script: "scripts/deploy-teacher-reward.js",
                 envVars: ["TEACHER_REWARD_ADDRESS"],
                 gasUsed: 0  // Will be populated during deployment
             },

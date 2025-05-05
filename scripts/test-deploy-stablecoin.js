@@ -13,6 +13,8 @@ async function main() {
     const stablecoin = await TestStablecoin.deploy();
 
     await stablecoin.waitForDeployment();
+    const deploymentTx = await ethers.provider.getTransactionReceipt(stablecoin.deploymentTransaction().hash);
+    console.log("Gas used:", deploymentTx.gasUsed.toString());
     const stablecoinAddress = await stablecoin.getAddress();
     console.log("TestStablecoin deployed to:", stablecoinAddress);
 
