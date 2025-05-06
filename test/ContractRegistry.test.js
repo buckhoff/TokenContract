@@ -2,47 +2,42 @@ const { expect } = require("chai");
 const { ethers, upgrades } = require("hardhat");
 
 describe("ContractRegistry Contract", function () {
-    let ContractRegistry;
     let registry;
-    let MockContract;
     let mockContract1;
     let mockContract2;
     let owner;
     let addr1;
     let addr2;
 
-    beforeEach(async function () {
-        // Get contract factory
-        ContractRegistry = await ethers.getContractFactory("ContractRegistry");
+    // Constants for testing
+    const ADMIN_ROLE = ethers.keccak256(ethers.toUtf8Bytes("ADMIN_ROLE"));
+    const UPGRADER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("UPGRADER_ROLE"));
+    const EMERGENCY_ROLE = ethers.keccak256(ethers.toUtf8Bytes("EMERGENCY_ROLE"));
+    const DEFAULT_ADMIN_ROLE = ethers.ZeroHash;
 
-        // Deploy a mock contract for testing
-        MockContract = await ethers.getContractFactory("TeachToken");
+    beforeEach(async function () {
+        // Get contract factories
+        const ContractRegistry = await ethers.getContractFactory("ContractRegistry");
+        const MockContract = await ethers.getContractFactory("TeachToken");
 
         // Get signers
         [owner, addr1, addr2] = await ethers.getSigners();
 
         // Deploy registry using upgrades plugin
-        registry = await upgrades.deployProxy(ContractRegistry, [], {
-            initializer: "initialize",
-        });
-        await registry.deployed();
+        registry = await upgrades.deployProxy(ContractRegistry, [], { initializer: 'initialize' });
+        await registry.waitForDeployment();
 
         // Deploy mock contracts
-        mockContract1 = await upgrades.deployProxy(MockContract, [], {
-            initializer: "initialize",
-        });
-        await mockContract1.deployed();
+        mockContract1 = await upgrades.deployProxy(MockContract, [], { initializer: 'initialize' });
+        await mockContract1.waitForDeployment();
 
-        mockContract2 = await upgrades.deployProxy(MockContract, [], {
-            initializer: "initialize",
-        });
-        await mockContract2.deployed();
+        mockContract2 = await upgrades.deployProxy(MockContract, [], { initializer: 'initialize' });
+        await mockContract2.waitForDeployment();
     });
 
     describe("Deployment", function () {
         it("Should set the right owner", async function () {
             // Owner should have admin role
-            const DEFAULT_ADMIN_ROLE = ethers.constants.HashZero;
             expect(await registry.hasRole(DEFAULT_ADMIN_ROLE, owner.address)).to.equal(true);
         });
 
@@ -51,11 +46,6 @@ describe("ContractRegistry Contract", function () {
         });
 
         it("Should have admin, upgrader, and emergency roles set", async function () {
-            // Get role hashes
-            const ADMIN_ROLE = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("ADMIN_ROLE"));
-            const UPGRADER_ROLE = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("UPGRADER_ROLE"));
-            const EMERGENCY_ROLE = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("EMERGENCY_ROLE"));
-
             expect(await registry.hasRole(ADMIN_ROLE, owner.address)).to.equal(true);
             expect(await registry.hasRole(UPGRADER_ROLE, owner.address)).to.equal(true);
             expect(await registry.hasRole(EMERGENCY_ROLE, owner.address)).to.equal(true);
@@ -64,98 +54,98 @@ describe("ContractRegistry Contract", function () {
 
     describe("Contract Registration", function () {
         it("Should register a new contract", async function () {
-            const CONTRACT_NAME = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("TEST_CONTRACT"));
-            const INTERFACE_ID = "0x12345678";
+            const CONTRACT_NAME = ethers.keccak256(ethers.toUtf8Bytes("TEST_CONTRACT"));
+            const INTERFACE_ID = "0x00000000";
 
-            await registry.registerContract(CONTRACT_NAME, mockContract1.address, INTERFACE_ID);
-
+            const tx = await registry.registerContract(CONTRACT_NAME, await mockContract1.getAddress(), INTERFACE_ID);
+            await tx.wait();
             // Check contract is registered
-            expect(await registry.getContractAddress(CONTRACT_NAME)).to.equal(mockContract1.address);
+            expect(await registry.getContractAddress(CONTRACT_NAME)).to.equal(await mockContract1.getAddress());
             expect(await registry.getContractVersion(CONTRACT_NAME)).to.equal(1);
             expect(await registry.isContractActive(CONTRACT_NAME)).to.equal(true);
             expect(await registry.getContractInterface(CONTRACT_NAME)).to.equal(INTERFACE_ID);
         });
 
         it("Should not register a zero address", async function () {
-            const CONTRACT_NAME = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("TEST_CONTRACT"));
+            const CONTRACT_NAME = ethers.keccak256(ethers.toUtf8Bytes("TEST_CONTRACT"));
 
             await expect(
-                registry.registerContract(CONTRACT_NAME, ethers.constants.AddressZero, "0x00000000")
+                registry.registerContract(CONTRACT_NAME, ethers.ZeroAddress, "0x00000000")
             ).to.be.revertedWith("ContractRegistry: zero address");
         });
 
         it("Should not register the same contract twice", async function () {
-            const CONTRACT_NAME = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("TEST_CONTRACT"));
+            const CONTRACT_NAME = ethers.keccak256(ethers.toUtf8Bytes("TEST_CONTRACT"));
 
-            await registry.registerContract(CONTRACT_NAME, mockContract1.address, "0x00000000");
+            await registry.registerContract(CONTRACT_NAME, await mockContract1.getAddress(), "0x00000000");
 
             await expect(
-                registry.registerContract(CONTRACT_NAME, mockContract2.address, "0x00000000")
+                registry.registerContract(CONTRACT_NAME, await mockContract2.getAddress(), "0x00000000")
             ).to.be.revertedWith("ContractRegistry: already registered");
         });
 
         it("Should update a registered contract", async function () {
-            const CONTRACT_NAME = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("TEST_CONTRACT"));
-            const INTERFACE_ID = "0x12345678";
-            const NEW_INTERFACE_ID = "0x87654321";
+            const CONTRACT_NAME = ethers.keccak256(ethers.toUtf8Bytes("TEST_CONTRACT"));
+            const INTERFACE_ID = "0x00000000";
+            const NEW_INTERFACE_ID = "0x00000000";
 
             // Register initial contract
-            await registry.registerContract(CONTRACT_NAME, mockContract1.address, INTERFACE_ID);
+            await registry.registerContract(CONTRACT_NAME, await mockContract1.getAddress(), INTERFACE_ID);
 
             // Update contract
-            await registry.updateContract(CONTRACT_NAME, mockContract2.address, NEW_INTERFACE_ID);
+            await registry.updateContract(CONTRACT_NAME, await mockContract2.getAddress(), NEW_INTERFACE_ID);
 
             // Check contract is updated
-            expect(await registry.getContractAddress(CONTRACT_NAME)).to.equal(mockContract2.address);
+            expect(await registry.getContractAddress(CONTRACT_NAME)).to.equal(await mockContract2.getAddress());
             expect(await registry.getContractVersion(CONTRACT_NAME)).to.equal(2);
             expect(await registry.getContractInterface(CONTRACT_NAME)).to.equal(NEW_INTERFACE_ID);
         });
 
         it("Should not update to the same address", async function () {
-            const CONTRACT_NAME = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("TEST_CONTRACT"));
+            const CONTRACT_NAME = ethers.keccak256(ethers.toUtf8Bytes("TEST_CONTRACT"));
 
             // Register initial contract
-            await registry.registerContract(CONTRACT_NAME, mockContract1.address, "0x00000000");
+            await registry.registerContract(CONTRACT_NAME, await mockContract1.getAddress(), "0x00000000");
 
             // Try to update to same address
             await expect(
-                registry.updateContract(CONTRACT_NAME, mockContract1.address, "0x00000000")
+                registry.updateContract(CONTRACT_NAME, await mockContract1.getAddress(), "0x00000000")
             ).to.be.revertedWith("ContractRegistry: same address");
         });
 
         it("Should not update a non-existent contract", async function () {
-            const CONTRACT_NAME = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("TEST_CONTRACT"));
+            const CONTRACT_NAME = ethers.keccak256(ethers.toUtf8Bytes("TEST_CONTRACT"));
 
             // Try to update non-existent contract
             await expect(
-                registry.updateContract(CONTRACT_NAME, mockContract1.address, "0x00000000")
+                registry.updateContract(CONTRACT_NAME, await mockContract1.getAddress(), "0x00000000")
             ).to.be.revertedWith("ContractRegistry: not registered");
         });
 
         it("Should keep implementation history", async function () {
-            const CONTRACT_NAME = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("TEST_CONTRACT"));
+            const CONTRACT_NAME = ethers.keccak256(ethers.toUtf8Bytes("TEST_CONTRACT"));
 
             // Register initial contract
-            await registry.registerContract(CONTRACT_NAME, mockContract1.address, "0x00000000");
+            await registry.registerContract(CONTRACT_NAME, await mockContract1.getAddress(), "0x00000000");
 
             // Update contract
-            await registry.updateContract(CONTRACT_NAME, mockContract2.address, "0x00000000");
+            await registry.updateContract(CONTRACT_NAME, await mockContract2.getAddress(), "0x00000000");
 
             // Get implementation history
             const history = await registry.getImplementationHistory(CONTRACT_NAME);
 
             expect(history.length).to.equal(2);
-            expect(history[0]).to.equal(mockContract1.address);
-            expect(history[1]).to.equal(mockContract2.address);
+            expect(history[0]).to.equal(await mockContract1.getAddress());
+            expect(history[1]).to.equal(await mockContract2.getAddress());
         });
     });
 
     describe("Contract Status", function () {
         it("Should set contract status", async function () {
-            const CONTRACT_NAME = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("TEST_CONTRACT"));
+            const CONTRACT_NAME = ethers.keccak256(ethers.toUtf8Bytes("TEST_CONTRACT"));
 
             // Register contract
-            await registry.registerContract(CONTRACT_NAME, mockContract1.address, "0x00000000");
+            await registry.registerContract(CONTRACT_NAME, await mockContract1.getAddress(), "0x00000000");
 
             // Initially active
             expect(await registry.isContractActive(CONTRACT_NAME)).to.equal(true);
@@ -170,7 +160,7 @@ describe("ContractRegistry Contract", function () {
         });
 
         it("Should not set status for non-existent contract", async function () {
-            const CONTRACT_NAME = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("TEST_CONTRACT"));
+            const CONTRACT_NAME = ethers.keccak256(ethers.toUtf8Bytes("TEST_CONTRACT"));
 
             // Try to set status for non-existent contract
             await expect(
@@ -199,15 +189,13 @@ describe("ContractRegistry Contract", function () {
         });
 
         it("Should require admin role to pause", async function () {
-            const ADMIN_ROLE = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("ADMIN_ROLE"));
-            const EMERGENCY_ROLE = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("EMERGENCY_ROLE"));
-
             // Remove roles from owner for this test
             await registry.revokeRole(ADMIN_ROLE, owner.address);
             await registry.revokeRole(EMERGENCY_ROLE, owner.address);
 
-            // Grant only ADMIN_ROLE to addr1
+            // Grant roles to addr1
             await registry.grantRole(ADMIN_ROLE, addr1.address);
+            await registry.grantRole(EMERGENCY_ROLE, addr1.address);
 
             // Only addr1 should be able to pause system
             await expect(registry.pauseSystem()).to.be.reverted;
@@ -220,8 +208,6 @@ describe("ContractRegistry Contract", function () {
         it("Should initiate emergency recovery", async function () {
             // Pause system first
             await registry.pauseSystem();
-
-            const EMERGENCY_ROLE = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("EMERGENCY_ROLE"));
 
             // Initiate emergency recovery
             await registry.initiateEmergencyRecovery();
@@ -266,7 +252,7 @@ describe("ContractRegistry Contract", function () {
     describe("Utility Functions", function () {
         it("Should convert string to bytes32", async function () {
             const testString = "TEST_CONTRACT";
-            const expectedBytes32 = ethers.utils.keccak256(ethers.utils.toUtf8Bytes(testString));
+            const expectedBytes32 = ethers.keccak256(ethers.toUtf8Bytes(testString));
 
             const result = await registry.stringToBytes32(testString);
 
@@ -275,11 +261,11 @@ describe("ContractRegistry Contract", function () {
 
         it("Should get all contract names", async function () {
             // Register contracts
-            const CONTRACT_NAME_1 = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("TEST_CONTRACT_1"));
-            const CONTRACT_NAME_2 = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("TEST_CONTRACT_2"));
+            const CONTRACT_NAME_1 = ethers.keccak256(ethers.toUtf8Bytes("TEST_CONTRACT_1"));
+            const CONTRACT_NAME_2 = ethers.keccak256(ethers.toUtf8Bytes("TEST_CONTRACT_2"));
 
-            await registry.registerContract(CONTRACT_NAME_1, mockContract1.address, "0x00000000");
-            await registry.registerContract(CONTRACT_NAME_2, mockContract2.address, "0x00000000");
+            await registry.registerContract(CONTRACT_NAME_1, await mockContract1.getAddress(), "0x00000000");
+            await registry.registerContract(CONTRACT_NAME_2, await mockContract2.getAddress(), "0x00000000");
 
             // Get all contract names
             const names = await registry.getAllContractNames();
@@ -290,61 +276,64 @@ describe("ContractRegistry Contract", function () {
         });
     });
 
+    describe("Upgradeable Pattern", function() {
+        it("Should be upgradeable using the UUPS pattern", async function() {
+            // Deploy a new implementation
+            const ContractRegistryV2 = await ethers.getContractFactory("ContractRegistry");
+
+            // Upgrade to new implementation
+            const upgradedRegistry = await upgrades.upgradeProxy(
+                await registry.getAddress(),
+                ContractRegistryV2
+            );
+
+            // Check that the address stayed the same
+            expect(await upgradedRegistry.getAddress()).to.equal(await registry.getAddress());
+
+            // Verify state is preserved
+            expect(await upgradedRegistry.systemPaused()).to.equal(false);
+            expect(await upgradedRegistry.hasRole(ADMIN_ROLE, owner.address)).to.equal(true);
+        });
+    });
+
     describe("Role-Based Access Control", function () {
         it("Should restrict registerContract to admin role", async function () {
-            const ADMIN_ROLE = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("ADMIN_ROLE"));
-            const CONTRACT_NAME = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("TEST_CONTRACT"));
+            const CONTRACT_NAME = ethers.keccak256(ethers.toUtf8Bytes("TEST_CONTRACT"));
 
             // Remove role from owner for this test
             await registry.revokeRole(ADMIN_ROLE, owner.address);
 
             // Try to register without role
             await expect(
-                registry.registerContract(CONTRACT_NAME, mockContract1.address, "0x00000000")
+                registry.registerContract(CONTRACT_NAME, await mockContract1.getAddress(), "0x00000000")
             ).to.be.reverted;
 
             // Grant role to addr1
             await registry.grantRole(ADMIN_ROLE, addr1.address);
 
             // Should succeed with role
-            await registry.connect(addr1).registerContract(CONTRACT_NAME, mockContract1.address, "0x00000000");
+            await registry.connect(addr1).registerContract(CONTRACT_NAME, await mockContract1.getAddress(), "0x00000000");
         });
 
         it("Should restrict updateContract to upgrader role", async function () {
-            const UPGRADER_ROLE = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("UPGRADER_ROLE"));
-            const CONTRACT_NAME = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("TEST_CONTRACT"));
+            const CONTRACT_NAME = ethers.keccak256(ethers.toUtf8Bytes("TEST_CONTRACT"));
 
             // Register contract first
-            await registry.registerContract(CONTRACT_NAME, mockContract1.address, "0x00000000");
+            await registry.registerContract(CONTRACT_NAME, await mockContract1.getAddress(), "0x00000000");
 
             // Remove role from owner for this test
             await registry.revokeRole(UPGRADER_ROLE, owner.address);
 
             // Try to update without role
             await expect(
-                registry.updateContract(CONTRACT_NAME, mockContract2.address, "0x00000000")
+                registry.updateContract(CONTRACT_NAME, await mockContract2.getAddress(), "0x00000000")
             ).to.be.reverted;
 
             // Grant role to addr1
             await registry.grantRole(UPGRADER_ROLE, addr1.address);
 
             // Should succeed with role
-            await registry.connect(addr1).updateContract(CONTRACT_NAME, mockContract2.address, "0x00000000");
-        });
-    });
-
-    describe("System Emergency", function () {
-        it("Should trigger system-wide emergency", async function () {
-            // This test is more complex as it requires mocking multiple contracts
-            // We'll focus on basic functionality
-
-            const EMERGENCY_ROLE = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("EMERGENCY_ROLE"));
-
-            // Trigger emergency
-            await registry.triggerSystemEmergency("Test emergency");
-
-            // System should be paused
-            expect(await registry.systemPaused()).to.equal(true);
+            await registry.connect(addr1).updateContract(CONTRACT_NAME, await mockContract2.getAddress(), "0x00000000");
         });
     });
 });

@@ -2,7 +2,6 @@ const { expect } = require("chai");
 const { ethers, upgrades } = require("hardhat");
 
 describe("TeachToken Contract", function () {
-    let TeachToken;
     let teachToken;
     let owner;
     let addr1;
@@ -13,11 +12,11 @@ describe("TeachToken Contract", function () {
     let addr6;
     let addr7;
 
-    const MAX_SUPPLY = ethers.utils.parseEther("5000000000"); // 5 billion tokens
+    const MAX_SUPPLY = ethers.parseEther("5000000000"); // 5 billion tokens
 
     beforeEach(async function () {
         // Get the contract factory and signers
-        TeachToken = await ethers.getContractFactory("TeachToken");
+        const TeachToken = await ethers.getContractFactory("TeachToken");
         [owner, addr1, addr2, addr3, addr4, addr5, addr6, addr7] = await ethers.getSigners();
 
         // Deploy using upgrades plugin
@@ -25,12 +24,12 @@ describe("TeachToken Contract", function () {
             initializer: "initialize",
         });
 
-        await teachToken.deployed();
+        await teachToken.waitForDeployment();
     });
 
     describe("Deployment", function () {
         it("Should set the right owner", async function () {
-            expect(await teachToken.owner()).to.equal(owner.address);
+            expect(await teachToken.hasRole(ethers.constants.HashZero, owner.address)).to.equal(true);
         });
 
         it("Should have correct name and symbol", async function () {
@@ -43,22 +42,22 @@ describe("TeachToken Contract", function () {
         });
 
         it("Should grant DEFAULT_ADMIN_ROLE to the owner", async function () {
-            const DEFAULT_ADMIN_ROLE = ethers.constants.HashZero;
+            const DEFAULT_ADMIN_ROLE = ethers.ZeroHash;
             expect(await teachToken.hasRole(DEFAULT_ADMIN_ROLE, owner.address)).to.equal(true);
         });
 
         it("Should grant ADMIN_ROLE to the owner", async function () {
-            const ADMIN_ROLE = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("ADMIN_ROLE"));
+            const ADMIN_ROLE = ethers.keccak256(ethers.toUtf8Bytes("ADMIN_ROLE"));
             expect(await teachToken.hasRole(ADMIN_ROLE, owner.address)).to.equal(true);
         });
 
         it("Should grant MINTER_ROLE to the owner", async function () {
-            const MINTER_ROLE = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("MINTER_ROLE"));
+            const MINTER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("MINTER_ROLE"));
             expect(await teachToken.hasRole(MINTER_ROLE, owner.address)).to.equal(true);
         });
 
         it("Should grant BURNER_ROLE to the owner", async function () {
-            const BURNER_ROLE = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("BURNER_ROLE"));
+            const BURNER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("BURNER_ROLE"));
             expect(await teachToken.hasRole(BURNER_ROLE, owner.address)).to.equal(true);
         });
     });
@@ -66,22 +65,22 @@ describe("TeachToken Contract", function () {
     describe("Initial Distribution", function () {
         it("Should perform initial distribution correctly", async function () {
             // Initial distribution percentages
-            const platformEcosystemPercent = 32; // 32%
-            const communityIncentivesPercent = 22; // 22%
-            const initialLiquidityPercent = 14; // 14%
-            const publicPresalePercent = 10; // 10%
-            const teamAndDevPercent = 10; // 10%
-            const educationalPartnersPercent = 8; // 8%
+            const platformEcosystemPercent = 20; // 20%
+            const communityIncentivesPercent = 24; // 24%
+            const initialLiquidityPercent = 12; // 12%
+            const publicPresalePercent = 25; // 25%
+            const teamAndDevPercent = 8; // 8%
+            const educationalPartnersPercent = 7; // 7%
             const reservePercent = 4; // 4%
 
             // Calculate expected token amounts
-            const platformEcosystemAmount = MAX_SUPPLY.mul(platformEcosystemPercent).div(100);
-            const communityIncentivesAmount = MAX_SUPPLY.mul(communityIncentivesPercent).div(100);
-            const initialLiquidityAmount = MAX_SUPPLY.mul(initialLiquidityPercent).div(100);
-            const publicPresaleAmount = MAX_SUPPLY.mul(publicPresalePercent).div(100);
-            const teamAndDevAmount = MAX_SUPPLY.mul(teamAndDevPercent).div(100);
-            const educationalPartnersAmount = MAX_SUPPLY.mul(educationalPartnersPercent).div(100);
-            const reserveAmount = MAX_SUPPLY.mul(reservePercent).div(100);
+            const platformEcosystemAmount = MAX_SUPPLY * BigInt(platformEcosystemPercent) / 100n;
+            const communityIncentivesAmount = MAX_SUPPLY * BigInt(communityIncentivesPercent) / 100n;
+            const initialLiquidityAmount = MAX_SUPPLY * BigInt(initialLiquidityPercent) / 100n;
+            const publicPresaleAmount = MAX_SUPPLY * BigInt(publicPresalePercent) / 100n;
+            const teamAndDevAmount = MAX_SUPPLY * BigInt(teamAndDevPercent) / 100n;
+            const educationalPartnersAmount = MAX_SUPPLY * BigInt(educationalPartnersPercent) / 100n;
+            const reserveAmount = MAX_SUPPLY * BigInt(reservePercent) / 100n;
 
             // Perform initial distribution
             await teachToken.performInitialDistribution(
@@ -127,17 +126,13 @@ describe("TeachToken Contract", function () {
 
     describe("Minting", function () {
         it("Should allow owner to mint tokens", async function () {
-            const MINTER_ROLE = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("MINTER_ROLE"));
-
-            await teachToken.mint(addr1.address, ethers.utils.parseEther("1000"));
-            expect(await teachToken.balanceOf(addr1.address)).to.equal(ethers.utils.parseEther("1000"));
+            await teachToken.mint(addr1.address, ethers.parseEther("1000"));
+            expect(await teachToken.balanceOf(addr1.address)).to.equal(ethers.parseEther("1000"));
         });
 
         it("Should not allow non-minters to mint tokens", async function () {
-            const MINTER_ROLE = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("MINTER_ROLE"));
-
             await expect(
-                teachToken.connect(addr1).mint(addr1.address, ethers.utils.parseEther("1000"))
+                teachToken.connect(addr1).mint(addr1.address, ethers.parseEther("1000"))
             ).to.be.reverted;
         });
 
@@ -158,53 +153,51 @@ describe("TeachToken Contract", function () {
     describe("Burning", function () {
         beforeEach(async function () {
             // Mint some tokens to addr1 for testing burn functionality
-            await teachToken.mint(addr1.address, ethers.utils.parseEther("1000"));
+            await teachToken.mint(addr1.address, ethers.parseEther("1000"));
         });
 
         it("Should allow users to burn their own tokens", async function () {
-            await teachToken.connect(addr1).burn(ethers.utils.parseEther("500"));
-            expect(await teachToken.balanceOf(addr1.address)).to.equal(ethers.utils.parseEther("500"));
+            await teachToken.connect(addr1).burn(ethers.parseEther("500"));
+            expect(await teachToken.balanceOf(addr1.address)).to.equal(ethers.parseEther("500"));
         });
 
         it("Should allow burners to burn tokens from other addresses", async function () {
-            const BURNER_ROLE = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("BURNER_ROLE"));
+            const BURNER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("BURNER_ROLE"));
 
             // Approve owner to burn tokens
-            await teachToken.connect(addr1).approve(owner.address, ethers.utils.parseEther("500"));
+            await teachToken.connect(addr1).approve(owner.address, ethers.parseEther("500"));
 
             // Burn tokens from addr1
-            await teachToken.burnFrom(addr1.address, ethers.utils.parseEther("500"));
+            await teachToken.burnFrom(addr1.address, ethers.parseEther("500"));
 
-            expect(await teachToken.balanceOf(addr1.address)).to.equal(ethers.utils.parseEther("500"));
+            expect(await teachToken.balanceOf(addr1.address)).to.equal(ethers.parseEther("500"));
         });
 
         it("Should not allow non-burners to burn tokens from other addresses", async function () {
-            const BURNER_ROLE = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("BURNER_ROLE"));
-
             // Approve addr2 to burn tokens
-            await teachToken.connect(addr1).approve(addr2.address, ethers.utils.parseEther("500"));
+            await teachToken.connect(addr1).approve(addr2.address, ethers.parseEther("500"));
 
             // Try to burn tokens from addr1 (should fail)
             await expect(
-                teachToken.connect(addr2).burnFrom(addr1.address, ethers.utils.parseEther("500"))
+                teachToken.connect(addr2).burnFrom(addr1.address, ethers.parseEther("500"))
             ).to.be.reverted;
         });
     });
 
     describe("Role Management", function () {
         it("Should allow adding new minters", async function () {
-            const MINTER_ROLE = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("MINTER_ROLE"));
+            const MINTER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("MINTER_ROLE"));
 
             await teachToken.addMinter(addr1.address);
             expect(await teachToken.hasRole(MINTER_ROLE, addr1.address)).to.equal(true);
 
             // Test that new minter can mint
-            await teachToken.connect(addr1).mint(addr2.address, ethers.utils.parseEther("1000"));
-            expect(await teachToken.balanceOf(addr2.address)).to.equal(ethers.utils.parseEther("1000"));
+            await teachToken.connect(addr1).mint(addr2.address, ethers.parseEther("1000"));
+            expect(await teachToken.balanceOf(addr2.address)).to.equal(ethers.parseEther("1000"));
         });
 
         it("Should allow removing minters", async function () {
-            const MINTER_ROLE = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("MINTER_ROLE"));
+            const MINTER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("MINTER_ROLE"));
 
             await teachToken.addMinter(addr1.address);
             await teachToken.removeMinter(addr1.address);
@@ -213,19 +206,19 @@ describe("TeachToken Contract", function () {
 
             // Test that removed minter can't mint anymore
             await expect(
-                teachToken.connect(addr1).mint(addr2.address, ethers.utils.parseEther("1000"))
+                teachToken.connect(addr1).mint(addr2.address, ethers.parseEther("1000"))
             ).to.be.reverted;
         });
 
         it("Should allow adding new burners", async function () {
-            const BURNER_ROLE = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("BURNER_ROLE"));
+            const BURNER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("BURNER_ROLE"));
 
             await teachToken.addBurner(addr1.address);
             expect(await teachToken.hasRole(BURNER_ROLE, addr1.address)).to.equal(true);
         });
 
         it("Should allow removing burners", async function () {
-            const BURNER_ROLE = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("BURNER_ROLE"));
+            const BURNER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("BURNER_ROLE"));
 
             await teachToken.addBurner(addr1.address);
             await teachToken.removeBurner(addr1.address);
@@ -237,7 +230,7 @@ describe("TeachToken Contract", function () {
     describe("Pausing", function () {
         beforeEach(async function () {
             // Mint some tokens to addr1 for testing transfers
-            await teachToken.mint(addr1.address, ethers.utils.parseEther("1000"));
+            await teachToken.mint(addr1.address, ethers.parseEther("1000"));
         });
 
         it("Should allow admin to pause the contract", async function () {
@@ -245,12 +238,12 @@ describe("TeachToken Contract", function () {
 
             // Try to transfer tokens (should fail when paused)
             await expect(
-                teachToken.connect(addr1).transfer(addr2.address, ethers.utils.parseEther("500"))
+                teachToken.connect(addr1).transfer(addr2.address, ethers.parseEther("500"))
             ).to.be.revertedWith("TeachToken: system is paused");
         });
 
         it("Should allow emergency role to unpause the contract", async function () {
-            const EMERGENCY_ROLE = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("EMERGENCY_ROLE"));
+            const EMERGENCY_ROLE = ethers.keccak256(ethers.toUtf8Bytes("EMERGENCY_ROLE"));
 
             // Verify owner has EMERGENCY_ROLE
             expect(await teachToken.hasRole(EMERGENCY_ROLE, owner.address)).to.equal(true);
@@ -260,8 +253,8 @@ describe("TeachToken Contract", function () {
             await teachToken.unpause();
 
             // Transfer should work again
-            await teachToken.connect(addr1).transfer(addr2.address, ethers.utils.parseEther("500"));
-            expect(await teachToken.balanceOf(addr2.address)).to.equal(ethers.utils.parseEther("500"));
+            await teachToken.connect(addr1).transfer(addr2.address, ethers.parseEther("500"));
+            expect(await teachToken.balanceOf(addr2.address)).to.equal(ethers.parseEther("500"));
         });
     });
 
@@ -273,16 +266,40 @@ describe("TeachToken Contract", function () {
                 initializer: "initialize",
             });
 
-            await teachToken.setRecoveryAllowedToken(dummyToken.address, true);
+            await teachToken.setRecoveryAllowedToken(await dummyToken.getAddress(), true);
 
             // Verify token is marked as allowed for recovery
-            expect(await teachToken.recoveryAllowedTokens(dummyToken.address)).to.equal(true);
+            expect(await teachToken.recoveryAllowedTokens(await dummyToken.getAddress())).to.equal(true);
         });
 
         it("Should not allow setting TEACH token as recoverable", async function () {
             await expect(
-                teachToken.setRecoveryAllowedToken(teachToken.address, true)
+                teachToken.setRecoveryAllowedToken(await teachToken.getAddress(), true)
             ).to.be.revertedWith("TeachToken: cannot allow TEACH token");
+        });
+    });
+
+    describe("Upgradeable Pattern", function() {
+        it("Should be upgradeable using the UUPS pattern", async function() {
+            // Deploy a new implementation
+            const TeachTokenV2 = await ethers.getContractFactory("TeachToken");
+
+            // Upgrade to new implementation
+            const upgradedToken = await upgrades.upgradeProxy(
+                await teachToken.getAddress(),
+                TeachTokenV2
+            );
+
+            // Check that the address stayed the same
+            expect(await upgradedToken.getAddress()).to.equal(await teachToken.getAddress());
+
+            // Verify state is preserved (name, symbol, etc.)
+            expect(await upgradedToken.name()).to.equal("TeacherSupport Token");
+            expect(await upgradedToken.symbol()).to.equal("TEACH");
+
+            // Functionality should still work
+            await upgradedToken.mint(addr1.address, ethers.parseEther("100"));
+            expect(await upgradedToken.balanceOf(addr1.address)).to.equal(ethers.parseEther("100"));
         });
     });
 
@@ -293,20 +310,19 @@ describe("TeachToken Contract", function () {
 
             // This will depend on the network you're testing on
             // For hardhat network, it's typically 31337
-            expect(chainId).to.equal(31337);
+            expect(chainId).to.equal(31337n);
         });
 
         it("Should properly set registry", async function () {
             // Deploy a mock registry
-            const mockRegistry = await (await ethers.getContractFactory("ContractRegistry")).deploy();
+            const mockRegistry = await ethers.deployContract("ContractRegistry");
             await mockRegistry.initialize();
 
             // Set registry
-            const TOKEN_NAME = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("_TEACH_TOKEN"));
-            await teachToken.setRegistry(mockRegistry.address);
+            await teachToken.setRegistry(await mockRegistry.getAddress());
 
             // Verify registry is set
-            expect(await teachToken.registry()).to.equal(mockRegistry.address);
+            expect(await teachToken.registry()).to.equal(await mockRegistry.getAddress());
         });
     });
 });

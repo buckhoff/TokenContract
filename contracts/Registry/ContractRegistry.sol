@@ -295,9 +295,7 @@ contract ContractRegistry is
      */
     function stringToBytes32(string memory _str) external pure returns (bytes32 result) {
         require(bytes(_str).length <= 32, "ContractRegistry: string too long");
-        assembly {
-            result := mload(add(_str, 32))
-        }
+        result = keccak256(abi.encodePacked(_str));
     }
 
     // Add emergency recovery functions
