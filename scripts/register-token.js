@@ -27,6 +27,16 @@ async function main() {
     totalGas += setRegistryReceipt.gasUsed;
     console.log("TeachToken registered successfully!");
 
+    console.log("Setting TeachToken active in the Registry...");
+    const status =await registry.setContractStatus(TOKEN_NAME, true);
+    const statusReceipt = await status.wait();
+    totalGas += statusReceipt.gasUsed;
+    console.log("Token contract status set to active");
+
+    // Now verify it's active
+    const isActive = await registry.isContractActive(TOKEN_NAME);
+    console.log("Is token active:", isActive);
+    
     // Set registry in TeachToken
     const TeachToken = await ethers.getContractFactory("TeachToken");
     const teachToken = TeachToken.attach(teachTokenAddress);

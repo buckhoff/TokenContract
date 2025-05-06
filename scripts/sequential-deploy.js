@@ -34,6 +34,12 @@
                 gasUsed: 0 // Will be populated during deployment
             },
             {
+                name: "RegisterTeachToken",
+                script: "scripts/register-token.js",
+                envVars: [""],
+                gasUsed: 0 // Will be populated during deployment
+            },
+            {
                 name: "TestStableCoin",
                 script: "scripts/test-deploy-stablecoin.js",
                 envVars: ["STABLE_COIN_ADDRESS"],

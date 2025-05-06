@@ -29,7 +29,8 @@ describe("TeachToken Contract", function () {
 
     describe("Deployment", function () {
         it("Should set the right owner", async function () {
-            expect(await teachToken.hasRole(ethers.constants.HashZero, owner.address)).to.equal(true);
+            const DEFAULT_ADMIN_ROLE = ethers.ZeroHash; // For ethers v6
+            expect(await teachToken.hasRole(DEFAULT_ADMIN_ROLE, owner.address)).to.equal(true)
         });
 
         it("Should have correct name and symbol", async function () {

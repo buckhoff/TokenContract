@@ -35,6 +35,7 @@ contract TeachToken is
     bool public inEmergencyRecovery;
     mapping(address => bool) public emergencyRecoveryApprovals;
     uint256 public requiredRecoveryApprovals;
+    bool public isPaused;
 
     address private _cachedTokenAddress;
     address private _cachedStabilityFundAddress;
@@ -55,14 +56,17 @@ contract TeachToken is
     event EmergencyRecoveryInitiated(address indexed recoveryAdmin, uint256 timestamp);
     event EmergencyRecoveryCompleted(address indexed recoveryAdmin);
 
+    error TokenNotActiveOrRegistered();
+    
     modifier whenContractNotPaused(){
         if (address(registry) != address(0)) {
             try registry.isSystemPaused() returns (bool systemPaused) {
                 require(!systemPaused, "TeachToken: system is paused");
-            } catch {
-                // If registry call fails, fall back to local pause state
-                require(!paused, "TeachToken: contract is paused");
-            }
+            } 
+             catch{
+                 // If registry call fails, fall back to local pause state
+                 require(!paused, "TeachToken: contract is paused");
+             }
             require(!registryOfflineMode, "TeachToken: registry Offline");
         } else {
             require(!paused, "TeachToken: contract is paused");
@@ -187,17 +191,10 @@ contract TeachToken is
      * @dev Pauses all token transfers
      * Requirements: Caller must have the ADMIN_ROLE
      */
-    function pause() public {
+    function pause() public onlyRole(Constants.ADMIN_ROLE){
         
-        if (address(registry) != address(0) && registry.isContractActive(Constants.TOKEN_NAME)){
-            require(
-                hasRole(Constants.ADMIN_ROLE, msg.sender),
-                "TeachToken: not authorized"
-            );
+        if (registry.isContractActive(Constants.TOKEN_NAME)){
             paused=true;
-        }
-        else {
-            require(hasRole(Constants.ADMIN_ROLE, msg.sender), "TeachToken: not authorized");
         }
     }
 
@@ -256,6 +253,15 @@ contract TeachToken is
         emit TokensBurned(from, amount);
     }
 
+    /**
+     * @dev Hook that is called before any transfer of tokens.
+     * Prevents transfers when the contract is paused.
+     */
+    function _update(address from, address to, uint256 amount) internal override whenContractNotPaused
+    {
+        super._update(from, to, amount);
+    }
+    
     /**
      * @dev Burn with deflationary effect notification to stability fund
      * @param amount Amount burned
@@ -324,24 +330,6 @@ contract TeachToken is
     function removeBurner(address account) public onlyRole(DEFAULT_ADMIN_ROLE) {
         revokeRole(Constants.BURNER_ROLE, account);
         emit BurnerRemoved(account);
-    }
-    
-    /**
-     * @dev Hook that is called before any transfer of tokens.
-     * Prevents transfers when the contract is paused.
-     */
-    function _beforeTokenTransfer(address from, address to, uint256 amount) internal whenContractNotPaused
-    {
-        // Also check if system is paused via registry
-        if (address(registry) != address(0)) {
-            try registry.isSystemPaused() returns (bool systemPaused) {
-                require(!systemPaused, "TeachToken: system is paused");
-            } catch {
-                require(!paused, "TeachToken: contract is paused");  
-            }
-            super._update(from, to, amount);
-        }
-        require(!paused, "TeachToken: system is paused");
     }
 
     /**
