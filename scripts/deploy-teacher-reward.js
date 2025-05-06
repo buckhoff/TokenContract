@@ -6,6 +6,7 @@ async function main() {
     const [deployer] = await ethers.getSigners();
     console.log("Deploying TeacherReward with the account:", deployer.address);
 
+    let totalGas = 0n;
     const teachTokenAddress = process.env.TOKEN_ADDRESS;
     const registryAddress = process.env.REGISTRY_ADDRESS;
 
@@ -30,7 +31,7 @@ async function main() {
 
     await teacherReward.waitForDeployment();
     const deploymentTx = await ethers.provider.getTransactionReceipt(teacherReward.deploymentTransaction().hash);
-    console.log("Gas used:", deploymentTx.gasUsed.toString());
+    totalGas += deploymentTx.gasUsed;
     const teacherRewardAddress = await teacherReward.getAddress();
     console.log("TeacherReward deployed to:", teacherRewardAddress);
 
@@ -49,7 +50,8 @@ async function main() {
     if (registryAddress) {
         console.log("Setting Registry for TeacherReward...");
         const setRegistryTx = await teacherReward.setRegistry(registryAddress);
-        await setRegistryTx.wait();
+        const setRegistryReceipt = await setRegistryTx.wait();
+        totalGas += setRegistryReceipt.gasUsed;
         console.log("Registry set for TeacherReward");
 
         // Register in registry
@@ -60,10 +62,12 @@ async function main() {
 
         console.log("Registering TeacherReward in Registry...");
         const registerTx = await registry.registerContract(TEACHER_REWARD_NAME, teacherRewardAddress, "0x00000000");
-        await registerTx.wait();
+        const registerReceipt = await registerTx.wait();
+        totalGas += registerReceipt.gasUsed;
         console.log("TeacherReward registered in Registry");
     }
 
+    console.log("Gas used:",totalGas.toString());
     console.log("\n--- IMPORTANT: Update your .env file with these values ---");
     console.log(`TEACHER_REWARD_ADDRESS=${teacherRewardAddress}`);
 }

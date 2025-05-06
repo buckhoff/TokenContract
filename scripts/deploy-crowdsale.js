@@ -6,6 +6,7 @@ async function main() {
     const [deployer] = await ethers.getSigners();
     console.log("Deploying TokenCrowdSale with the account:", deployer.address);
 
+    let totalGas = 0n;
     const teachTokenAddress = process.env.TOKEN_ADDRESS;
     const stableCoinAddress = process.env.STABLE_COIN_ADDRESS;
     const registryAddress = process.env.REGISTRY_ADDRESS;
@@ -22,7 +23,7 @@ async function main() {
 
     await crowdsale.waitForDeployment();
     const deploymentTx = await ethers.provider.getTransactionReceipt(crowdsale.deploymentTransaction().hash);
-    console.log("Gas used:", deploymentTx.gasUsed.toString());
+    totalGas += deploymentTx.gasUsed;
     const crowdsaleAddress = await crowdsale.getAddress();
     console.log("TokenCrowdSale deployed to:", crowdsaleAddress);
 
@@ -38,7 +39,8 @@ async function main() {
     // Set the sale token
     console.log("Setting TEACH token as sale token...");
     const setTokenTx = await crowdsale.setSaleToken(teachTokenAddress);
-    await setTokenTx.wait();
+    const setTokenReceipt = await setTokenTx.wait();
+    totalGas += setTokenReceipt.gasUsed;
     console.log("Sale token set successfully");
 
     // Set presale times (example: start in 1 day, end in 30 days)
@@ -48,20 +50,23 @@ async function main() {
 
     console.log("Setting presale times...");
     const setTimesTx = await crowdsale.setPresaleTimes(startTime, endTime);
-    await setTimesTx.wait();
+    const setTimesReceipt = await setTimesTx.wait();
+    totalGas += setTimesReceipt.gasUsed;
     console.log("Presale times set successfully");
 
     // Activate first tier
     console.log("Activating first tier...");
     const activateTierTx = await crowdsale.setTierStatus(0, true);
-    await activateTierTx.wait();
+    const activateTierReceipt = await activateTierTx.wait();
+    totalGas +=activateTierReceipt.gasUsed;
     console.log("First tier activated");
 
     // Set registry
     if (registryAddress) {
         console.log("Setting Registry for TokenCrowdSale...");
         const setRegistryTx = await crowdsale.setRegistry(registryAddress);
-        await setRegistryTx.wait();
+        const setRegistryReceipt = await setRegistryTx.wait();
+        totalGas += setRegistryReceipt.gasUsed;
         console.log("Registry set for TokenCrowdSale");
 
         // Register in registry
@@ -72,10 +77,12 @@ async function main() {
 
         console.log("Registering TokenCrowdSale in Registry...");
         const registerTx = await registry.registerContract(CROWDSALE_NAME, crowdsaleAddress, "0x00000000");
-        await registerTx.wait();
+        const registerReceipt = await registerTx.wait();
+        totalGas += registerReceipt.gasUsed;
         console.log("TokenCrowdSale registered in Registry");
     }
 
+    console.log("Gas used:", totalGas.toString());
     console.log("\n--- IMPORTANT: Update your .env file with these values ---");
     console.log(`TOKEN_CROWDSALE_ADDRESS=${crowdsaleAddress}`);
 }

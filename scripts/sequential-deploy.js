@@ -8,7 +8,7 @@
         // Gas tracking configuration
         const TRACK_GAS_USAGE = true;  // Set to false to disable gas tracking
         const GAS_PRICE_GWEI = 30;     // Average gas price on Polygon in Gwei
-        const MATIC_PRICE_USD = 0.56;  // Current MATIC price in USD
+        const MATIC_PRICE_USD = 0.228;  // Current MATIC price in USD
         
         // Create readline interface for user prompts
         const rl = readline.createInterface({
@@ -31,7 +31,7 @@
                 name: "TeachToken",
                 script: "scripts/deploy-teach-token.js",
                 envVars: ["TOKEN_ADDRESS"],
-                gasUsed: 0  // Will be populated during deployment
+                gasUsed: 0 // Will be populated during deployment
             },
             {
                 name: "TestStableCoin",
@@ -250,6 +250,18 @@
                 });
             });
 
+            if (startFrom === 1) {
+                const clearEnv = await new Promise((resolve) => {
+                    rl.question('Do you want to clear existing deployment addresses from .env? (y/n) [n]: ', (ans) => {
+                        resolve(ans.toLowerCase() === 'y');
+                    });
+                });
+
+                if (clearEnv) {
+                    await clearEnvDeploymentAddresses();
+                }
+            }
+            
             // Run deployments
             for (let i = startFrom - 1; i < deploymentSequence.length; i++) {
                 const deployment = deploymentSequence[i];
@@ -380,6 +392,50 @@
             }
         }
 
+        /**
+         * @dev Clears deployment addresses from .env file when starting from scratch
+         */
+        async function clearEnvDeploymentAddresses() {
+            try {
+                // Read the current .env file
+                let envContent = '';
+                try {
+                    envContent = fs.readFileSync('.env', 'utf8');
+                } catch (error) {
+                    // If .env doesn't exist, create an empty one
+                    fs.writeFileSync('.env', '');
+                    return;
+                }
+
+                // List of contract address variables to clear
+                const addressVars = [
+                    'REGISTRY_ADDRESS',
+                    'TOKEN_ADDRESS',
+                    'STABLE_COIN_ADDRESS',
+                    'STABILITY_FUND_ADDRESS',
+                    'TOKEN_STAKING_ADDRESS',
+                    'TOKEN_VESTING_ADDRESS',
+                    'PLATFORM_GOVERNANCE_ADDRESS',
+                    'PLATFORM_MARKETPLACE_ADDRESS',
+                    'TEACHER_REWARD_ADDRESS',
+                    'TOKEN_CROWDSALE_ADDRESS'
+                ];
+
+                // Create a new content without these variables
+                const lines = envContent.split('\n');
+                const filteredLines = lines.filter(line => {
+                    const varName = line.split('=')[0];
+                    return !addressVars.includes(varName);
+                });
+
+                // Write the filtered content back to .env
+                fs.writeFileSync('.env', filteredLines.join('\n'));
+                console.log('\x1b[33m✓ Cleared deployment addresses from .env file\x1b[0m');
+            } catch (error) {
+                console.error(`\x1b[31mError clearing .env file: ${error.message}\x1b[0m`);
+            }
+        }
+        
         // Run the main function
         runSequentialDeployments()
             .then((network) => {

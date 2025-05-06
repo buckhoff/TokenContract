@@ -6,6 +6,7 @@ async function main() {
     const [deployer] = await ethers.getSigners();
     console.log("Deploying TokenVesting with the account:", deployer.address);
 
+    let totalGas = 0n;
     const teachTokenAddress = process.env.TOKEN_ADDRESS;
     const registryAddress = process.env.REGISTRY_ADDRESS;
 
@@ -20,7 +21,7 @@ async function main() {
 
     await vesting.waitForDeployment();
     const deploymentTx = await ethers.provider.getTransactionReceipt(vesting.deploymentTransaction().hash);
-    console.log("Gas used:", deploymentTx.gasUsed.toString());
+    totalGas += deploymentTx.gasUsed;
     const vestingAddress = await vesting.getAddress();
     console.log("TeachTokenVesting deployed to:", vestingAddress);
     
@@ -30,7 +31,8 @@ async function main() {
     if (registryAddress) {
         console.log("Setting Registry for TeachTokenVesting...");
         const setRegistryTx = await vesting.setRegistry(registryAddress);
-        await setRegistryTx.wait();
+        const setRegistryReceipt = await setRegistryTx.wait();
+        totalGas += setRegistryReceipt.gasUsed;
         console.log("Registry set for TeachTokenVesting");
 
         // Register in registry
@@ -41,10 +43,12 @@ async function main() {
 
         console.log("Registering TeachTokenVesting in Registry...");
         const registerTx = await registry.registerContract(VESTING_NAME, vestingAddress, "0x00000000");
-        await registerTx.wait();
+        const registerReceipt = await registerTx.wait();
+        totalGas += registerReceipt.gasUsed;
         console.log("TeachTokenVesting registered in Registry");
     }
 
+    console.log("Gas used:",totalGas.toString());
     console.log("\n--- IMPORTANT: Update your .env file with these values ---");
     console.log(`TOKEN_VESTING_ADDRESS=${vestingAddress}`);
 }

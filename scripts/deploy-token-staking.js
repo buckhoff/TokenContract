@@ -6,6 +6,7 @@ async function main() {
     const [deployer] = await ethers.getSigners();
     console.log("Deploying TokenStaking with the account:", deployer.address);
 
+    let totalGas = 0n;
     const teachTokenAddress = process.env.TOKEN_ADDRESS;
     const registryAddress = process.env.REGISTRY_ADDRESS;
 
@@ -20,7 +21,7 @@ async function main() {
 
     await staking.waitForDeployment();
     const deploymentTx = await ethers.provider.getTransactionReceipt(staking.deploymentTransaction().hash);
-    console.log("Gas used:", deploymentTx.gasUsed.toString());
+    totalGas += deploymentTx.gasUsed;
     const stakingAddress = await staking.getAddress();
     console.log("TokenStaking deployed to:", stakingAddress);
 
@@ -37,7 +38,8 @@ async function main() {
     if (registryAddress) {
         console.log("Setting Registry for TokenStaking...");
         const setRegistryTx = await staking.setRegistry(registryAddress);
-        await setRegistryTx.wait();
+        const setRegistryReceipt = await setRegistryTx.wait();
+        totalGas += setRegistryReceipt.gasUsed;
         console.log("Registry set for TokenStaking");
 
         // Register in registry
@@ -48,10 +50,12 @@ async function main() {
 
         console.log("Registering TokenStaking in Registry...");
         const registerTx = await registry.registerContract(STAKING_NAME, stakingAddress, "0x00000000");
-        await registerTx.wait();
+        const registerReceipt = await registerTx.wait();
+        totalGas += registerReceipt.gasUsed;
         console.log("TokenStaking registered in Registry");
     }
 
+    console.log("Gas used:",totalGas.toString());
     console.log("\n--- IMPORTANT: Update your .env file with these values ---");
     console.log(`TOKEN_STAKING_ADDRESS=${stakingAddress}`);
 }

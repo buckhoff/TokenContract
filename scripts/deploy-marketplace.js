@@ -6,6 +6,7 @@ async function main() {
     const [deployer] = await ethers.getSigners();
     console.log("Deploying PlatformMarketplace with the account:", deployer.address);
 
+    let totalGas = 0n;
     const teachTokenAddress = process.env.TOKEN_ADDRESS;
     const registryAddress = process.env.REGISTRY_ADDRESS;
 
@@ -25,7 +26,7 @@ async function main() {
 
     await marketplace.waitForDeployment();
     const deploymentTx = await ethers.provider.getTransactionReceipt(marketplace.deploymentTransaction().hash);
-    console.log("Gas used:", deploymentTx.gasUsed.toString());
+    totalGas += deploymentTx.gasUsed;
     const marketplaceAddress = await marketplace.getAddress();
     console.log("PlatformMarketplace deployed to:", marketplaceAddress);
 
@@ -44,7 +45,8 @@ async function main() {
     if (registryAddress) {
         console.log("Setting Registry for PlatformMarketplace...");
         const setRegistryTx = await marketplace.setRegistry(registryAddress);
-        await setRegistryTx.wait();
+        const setRegistryReceipt = await setRegistryTx.wait();
+        totalGas += setRegistryReceipt.gasUsed;
         console.log("Registry set for PlatformMarketplace");
 
         // Register in registry
@@ -55,10 +57,12 @@ async function main() {
 
         console.log("Registering PlatformMarketplace in Registry...");
         const registerTx = await registry.registerContract(MARKETPLACE_NAME, marketplaceAddress, "0x00000000");
-        await registerTx.wait();
+        const registerReceipt = await registerTx.wait();
+        totalGas += registerReceipt.gasUsed;
         console.log("PlatformMarketplace registered in Registry");
     }
 
+    console.log("Gas used:",totalGas.toString());
     console.log("\n--- IMPORTANT: Update your .env file with these values ---");
     console.log(`PLATFORM_MARKETPLACE_ADDRESS=${marketplaceAddress}`);
 }

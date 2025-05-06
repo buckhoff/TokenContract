@@ -6,6 +6,7 @@ async function main() {
     // Get the deployer account
     const [deployer] = await ethers.getSigners();
 
+    let totalGas = 0n;
     console.log("Deploying contracts with the account:", deployer.address);
     console.log("Account balance:", (await deployer.provider.getBalance(deployer.address)).toString());
 
@@ -16,7 +17,7 @@ async function main() {
 
     await teachToken.waitForDeployment();
     const deploymentTx = await ethers.provider.getTransactionReceipt(teachToken.deploymentTransaction().hash);
-    console.log("Gas used:", deploymentTx.gasUsed.toString());
+    totalGas += deploymentTx.gasUsed;
     const teachTokenAddress = await teachToken.getAddress();
     console.log("TeachToken deployed to:", teachTokenAddress);
 
@@ -51,12 +52,14 @@ async function main() {
     console.log("Initial distribution transaction hash:", tx.hash);
     const receipt = await tx.wait();
     console.log("Initial distribution complete!");
-    console.log("Gas Used:", receipt.gasUsed.toString());
+    totalGas += receipt.gasUsed;
 
     // Verify initial distribution
     const totalSupply = await teachToken.totalSupply();
     console.log("Total supply:", ethers.formatEther(totalSupply), "TEACH");
 
+    console.log("Gas used:",totalGas.toString());
+    
     // Save this address for later use
     console.log("\n--- IMPORTANT: Update your .env file with these values ---");
     console.log(`TEACH_TOKEN_ADDRESS=${teachTokenAddress}`);

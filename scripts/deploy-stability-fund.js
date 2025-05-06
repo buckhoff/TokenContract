@@ -6,6 +6,7 @@ async function main() {
     const [deployer] = await ethers.getSigners();
     console.log("Deploying PlatformStabilityFund with the account:", deployer.address);
 
+    let totalGas = 0n;
     const teachTokenAddress = process.env.TOKEN_ADDRESS;
     const stableCoinAddress = process.env.STABLE_COIN_ADDRESS;
     const registryAddress = process.env.REGISTRY_ADDRESS;
@@ -37,7 +38,7 @@ async function main() {
 
     await stabilityFund.waitForDeployment();
     const deploymentTx = await ethers.provider.getTransactionReceipt(stabilityFund.deploymentTransaction().hash);
-    console.log("Gas used:", deploymentTx.gasUsed.toString());
+    totalGas += deploymentTx.gasUsed;
     const stabilityFundAddress = await stabilityFund.getAddress();
     console.log("PlatformStabilityFund deployed to:", stabilityFundAddress);
 
@@ -62,7 +63,8 @@ async function main() {
     if (registryAddress) {
         console.log("Setting Registry for StabilityFund...");
         const setRegistryTx = await stabilityFund.setRegistry(registryAddress);
-        await setRegistryTx.wait();
+        const setRegistryReceipt = await setRegistryTx.wait();
+        totalGas += setRegistryReceipt.gasUsed;
         console.log("Registry set for StabilityFund");
     }
 
@@ -77,10 +79,13 @@ async function main() {
         console.log("Registering StabilityFund in Registry...");
         const registerTx = await registry.registerContract(STABILITY_FUND_NAME, stabilityFundAddress, "0x00000000");
         console.log("Await");
-        await registerTx.wait();
+        const registerReceipt = await registerTx.wait();
+        totalGas += registerReceipt.gasUsed;
+
         console.log("StabilityFund registered in Registry");
     }
 
+    console.log("Gas used:",totalGas.toString());
     console.log("\n--- IMPORTANT: Update your .env file with these values ---");
     console.log(`STABILITY_FUND_ADDRESS=${stabilityFundAddress}`);
 }
