@@ -240,14 +240,14 @@ describe("TeachToken Contract", function () {
             // Try to transfer tokens (should fail when paused)
             await expect(
                 teachToken.connect(addr1).transfer(addr2.address, ethers.parseEther("500"))
-            ).to.be.revertedWith("TeachToken: system is paused");
+            ).to.be.revertedWith("TeachToken: Paused");
         });
 
         it("Should allow emergency role to unpause the contract", async function () {
-            const EMERGENCY_ROLE = ethers.keccak256(ethers.toUtf8Bytes("EMERGENCY_ROLE"));
+            const ADMIN_ROLE = ethers.keccak256(ethers.toUtf8Bytes("ADMIN_ROLE"));
 
             // Verify owner has EMERGENCY_ROLE
-            expect(await teachToken.hasRole(EMERGENCY_ROLE, owner.address)).to.equal(true);
+            expect(await teachToken.hasRole(ADMIN_ROLE, owner.address)).to.equal(true);
 
             // Pause and then unpause
             await teachToken.pause();

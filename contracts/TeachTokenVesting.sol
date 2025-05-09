@@ -119,7 +119,7 @@ UUPSUpgradeable
         require(vestingSchedules[scheduleId].beneficiary == msg.sender, "TeachTokenVesting: not schedule owner");
         _;
     }
-
+    
     /**
      * @dev Initializes the contract with initial parameters
      * @param _token Address of the TEACH token
@@ -136,6 +136,7 @@ UUPSUpgradeable
 
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(Constants.ADMIN_ROLE, msg.sender);
+        _grantRole(Constants.CREATOR_ROLE, msg.sender);
     }
 
     /**
@@ -158,7 +159,15 @@ UUPSUpgradeable
 
         emit TGESet(_tgeTime);
     }
-
+    
+    function addCreator(address _creator) external onlyRole(Constants.ADMIN_ROLE) {
+        grantRole(Constants.CREATOR_ROLE, _creator);
+    }
+    
+    function removeCreator(address _creator) external onlyRole(Constants.ADMIN_ROLE) {
+        revokeRole(Constants.CREATOR_ROLE, _creator);
+    }
+    
     /**
      * @dev Creates a new linear vesting schedule
      * @param _beneficiary Address of the beneficiary
@@ -178,7 +187,7 @@ UUPSUpgradeable
         uint8 _tgePercentage,
         BeneficiaryGroup _group,
         bool _revocable
-    ) public onlyRole(Constants.ADMIN_ROLE) returns (uint256) {
+    ) public onlyRole(Constants.CREATOR_ROLE) returns (uint256) {
         require(_beneficiary != address(0), "TeachTokenVesting: zero beneficiary address");
         require(_amount > 0, "TeachTokenVesting: zero amount");
         require(_duration > 0, "TeachTokenVesting: zero duration");
@@ -229,7 +238,7 @@ UUPSUpgradeable
         uint40 _firstReleaseTime,
         BeneficiaryGroup _group,
         bool _revocable
-    ) public onlyRole(Constants.ADMIN_ROLE) returns (uint256) {
+    ) public onlyRole(Constants.CREATOR_ROLE) returns (uint256) {
         require(_beneficiary != address(0), "TeachTokenVesting: zero beneficiary address");
         require(_totalAmount > 0, "TeachTokenVesting: zero amount");
         require(_initialAmount < _totalAmount, "TeachTokenVesting: initial amount too high");
@@ -298,7 +307,7 @@ UUPSUpgradeable
         uint8 _tgePercentage,
         BeneficiaryGroup _group,
         bool _revocable
-    ) external onlyRole(Constants.ADMIN_ROLE) returns (uint256) {
+    ) external onlyRole(Constants.CREATOR_ROLE) returns (uint256) {
         require(_beneficiary != address(0), "TeachTokenVesting: zero beneficiary address");
         require(_totalAmount > 0, "TeachTokenVesting: zero amount");
         require(_tgePercentage <= 100, "TeachTokenVesting: TGE percentage too high");

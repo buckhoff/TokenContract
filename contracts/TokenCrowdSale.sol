@@ -80,7 +80,7 @@ UUPSUpgradeable
         uint64 lastUpdate;
     }
 
-    ERC20Upgradeable internal token;
+    ERC20Upgradeable public token;
     // Payment token (USDC)
     ERC20Upgradeable public paymentToken;
 
@@ -166,26 +166,54 @@ UUPSUpgradeable
     event EmergencyStateChanged(EmergencyState state);
     event StabilityFundRecordingFailed(address indexed user, string reason);
 
+    error ZeroTokenAddress();
+    error ZeroPaymentTokenAddress();
+    error ZeroTreasuryAddress();
+    error ZeroVestingContractAddress();
+    error InvalidTierId(uint8 tierId);
+    error TierNotActive(uint8 tierId);
+    error TierPriceInvalid();
+    error TierAllocationInvalid();
+    error TierPurchaseLimitsInvalid();
+    error BelowMinPurchase(uint256 amount, uint256 minRequired);
+    error AboveMaxPurchase(uint256 amount, uint256 maxAllowed);
+    error ExceedsMaxTierPurchase(uint256 totalAmount, uint256 maxAllowed);
+    error ExceedsMaxTokensPerAddress(uint256 totalAmount, uint256 maxAllowed);
+    error InsufficientTierAllocation(uint256 requested, uint256 available);
+    error NotEnoughTokenBalance(uint256 requested, uint256 available);
+    error PaymentTransferFailed();
+    error TGENotCompleted();
+    error NoTokensToWithdraw();
+    error PresaleNotActive();
+    error ScheduleAlreadyCreated();
+    error AlreadyInEmergencyMode();
+    error NotInEmergencyMode();
+    error NotEmergencyRole();
+    error AlreadyApproved();
+    error NonPositiveAmount();
+    error UnauthorizedCaller();
+    error TierAlreadyAdvanced();
+    error DeadlineInPast(uint64 deadline);
+    error InvalidPresaleTimes(uint64 start, uint64 end);
+    error InitialDistributionIncomplete();
+    error PurchaseTooSoon(uint256 deadline,uint256 current);
+    error TokenAlreadySet();
+    error InvalidBracketID();
+    error InvalidFillPercentage();
+    
     modifier purchaseRateLimit(uint256 _usdAmount) {
-        uint16 deployer = 0;
         address msgr = msg.sender;
         uint256 userLastPurchase = uint256(lastPurchaseTime[msgr]);
         
         if (userLastPurchase != 0) {
-            require(
-                block.timestamp >= userLastPurchase + minTimeBetweenPurchases,
-                "CrowdSale: purchase too soon after previous"
-            );
+            if (block.timestamp < userLastPurchase + minTimeBetweenPurchases){
+                revert PurchaseTooSoon(userLastPurchase + minTimeBetweenPurchases,block.timestamp);
+            }
         }
-        require(
-            _usdAmount <= maxPurchaseAmount,
-            "CrowdSale: amount exceeds maximum purchase limit"
-        );
-
-        require(
-            deployer != 0,
-            "CrowdSale: deployer not 0"
-        );
+            
+        if (_usdAmount > maxPurchaseAmount)
+            revert AboveMaxPurchase(_usdAmount,maxPurchaseAmount);
+        
         lastPurchaseTime[msg.sender] = block.timestamp;
         _;
     }
@@ -279,7 +307,7 @@ UUPSUpgradeable
      * @dev Calculate tokens remaining in a tier - moved from library to contract
      */
     function tokensRemainingInTier(uint8 _tierId) public view returns (uint96) {
-        require(_tierId < tiers.length, "Invalid tier ID");
+        if (_tierId >= tiers.length) revert InvalidTierId(_tierId);
         PresaleTier storage tier = tiers[_tierId];
         if (tier.allocation <= tier.sold) {
             return 0;
@@ -336,7 +364,7 @@ UUPSUpgradeable
         _calculateTierMaximums();
         _setupDefaultBonuses();
         
-        maxTokensPerAddress = 1_500_000 * 10**18; // 1.5M tokens by default
+        maxTokensPerAddress = 1_500_000 * 10**6; // 1.5M tokens by default
 
         // Initialize cache
         _cachedAddresses = CachedAddresses({
@@ -379,12 +407,12 @@ UUPSUpgradeable
      * @param _token Address of the ERC20 token contract
      */
     function setSaleToken(ERC20Upgradeable _token) external onlyOwner {
-        require(address(token) == address(0), "Token already set");
+        if (address(token) != address(0)) revert TokenAlreadySet();
         token = _token;
     }
 
     function setVestingContract(address _vestingContract) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_vestingContract != address(0), "CrowdSale: zero address");
+        if (_vestingContract == address(0)) revert ZeroTokenAddress();
         vestingContract = ITeachTokenVesting(_vestingContract);
     }
     
@@ -394,7 +422,7 @@ UUPSUpgradeable
      * @param _end End timestamp
      */
     function setPresaleTimes(uint64 _start, uint64 _end) external onlyOwner {
-        require(_end > _start, "End must be after start");
+        if (_end <= _start) revert InvalidPresaleTimes(_start, _end);
         presaleStart = _start;
         presaleEnd = _end;
         emit PresaleTimesUpdated(_start, _end);
@@ -406,7 +434,7 @@ UUPSUpgradeable
      * @param _isActive New active status
      */
     function setTierStatus(uint8 _tierId, bool _isActive) external onlyOwner {
-        require(_tierId < tiers.length, "Invalid tier ID");
+        if (_tierId >= tiers.length) revert InvalidTierId(_tierId);
         tiers[_tierId].isActive = _isActive;
         emit TierStatusChanged(_tierId, _isActive);
     }
@@ -426,10 +454,10 @@ UUPSUpgradeable
         uint256 _minPurchase,
         uint256 _maxPurchase
     ) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_tierId < 4, "TieredTokenSale: invalid tier ID");
-        require(_price > 0, "TieredTokenSale: zero price");
-        require(_allocation > 0, "TieredTokenSale: zero allocation");
-        require(_minPurchase > 0 && _maxPurchase > _minPurchase, "TieredTokenSale: invalid purchase limits");
+        if (_tierId >= tiers.length) revert InvalidTierId(_tierId);
+        if (_price == 0) revert TierPriceInvalid();
+        if(_allocation == 0) revert TierAllocationInvalid();
+        if(_minPurchase == 0 || _maxPurchase < _minPurchase) revert TierPurchaseLimitsInvalid();
 
         tiers[_tierId].price = _price;
         tiers[_tierId].allocation = _allocation;
@@ -452,9 +480,9 @@ UUPSUpgradeable
         uint96 _fillPercentage,
         uint8 _bonusPercentage
     ) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_tierId < 4, "TieredTokenSale: invalid tier ID");
-        require(_bracketId < 4, "TieredTokenSale: invalid bracket ID");
-        require(_fillPercentage > 0 && _fillPercentage <= 100, "TieredTokenSale: invalid fill percentage");
+        if (_tierId >= tiers.length) revert InvalidTierId(_tierId);
+        if(_bracketId >= 4) revert InvalidBracketID();
+        if(_fillPercentage == 0 && _fillPercentage > 100) revert InvalidFillPercentage();
 
         // Ensure each bracket has a higher fill percentage than the previous
         if (_bracketId > 0) {
@@ -481,8 +509,8 @@ UUPSUpgradeable
      * @param _tierId ID of the tier
      * @return Bonus percentage (scaled by 100)
      */
-    function getCurrentBonus(uint256 _tierId) public view returns (uint8) {
-        require(_tierId < 4, "TieredTokenSale: invalid tier ID");
+    function getCurrentBonus(uint8 _tierId) public view returns (uint8) {
+        if (_tierId >= tiers.length) revert InvalidTierId(_tierId);
 
         PresaleTier memory tier = tiers[_tierId];
 
@@ -516,29 +544,33 @@ UUPSUpgradeable
      * @param _usdAmount USD amount to spend (scaled by 1e6)
      */
     function purchase(uint8 _tierId, uint256 _usdAmount) external nonReentrant whenNotPaused purchaseRateLimit(_usdAmount) {
-        require(block.timestamp >= presaleStart && block.timestamp <= presaleEnd, "Presale not active");
-        require(_tierId < tiers.length, "Invalid tier ID");
+        if (block.timestamp < presaleStart || block.timestamp > presaleEnd) revert PresaleNotActive();
+        if (_tierId >= tiers.length) revert InvalidTierId(_tierId);
         PresaleTier storage tier = tiers[_tierId];
-        require(tier.isActive, "Tier not active");
+        if (!tier.isActive) revert TierNotActive(_tierId);
 
         // Validate purchase amount
-        require(_usdAmount >= tier.minPurchase, "Below minimum purchase");
-        require(_usdAmount <= tier.maxPurchase, "Above maximum purchase");
+        if (_usdAmount < tier.minPurchase) revert BelowMinPurchase(_usdAmount, tier.minPurchase);
+        if (_usdAmount > tier.maxPurchase) revert AboveMaxPurchase(_usdAmount, tier.maxPurchase);
 
         // Check if user's total purchase would exceed max
         uint256 userTierTotal = purchases[msg.sender].tierAmounts.length > _tierId
             ? purchases[msg.sender].tierAmounts[_tierId] + _usdAmount
             : _usdAmount;
-        require(userTierTotal <= tier.maxPurchase, "Would exceed max tier purchase");
+        if (userTierTotal > tier.maxPurchase) 
+            revert ExceedsMaxTierPurchase(userTierTotal, tier.maxPurchase);
 
         // Calculate token amount
-        uint256 tokenAmount = (_usdAmount * 10**18) / tier.price;
+        uint256 tokenAmount = (_usdAmount * 10**6) / tier.price;
 
         // Check total cap per address
-        require(addressTokensPurchased[msg.sender] + tokenAmount <= maxTokensPerAddress, "Exceeds max tokens per address");
-
+        if (addressTokensPurchased[msg.sender] + tokenAmount > maxTokensPerAddress) 
+            revert ExceedsMaxTokensPerAddress(addressTokensPurchased[msg.sender] + tokenAmount, 
+                maxTokensPerAddress);
+        
         // Check if there's enough allocation left
-        require(tier.sold + tokenAmount <= tier.allocation, "Insufficient tier allocation");
+        if (tier.sold + tokenAmount >= tier.allocation) 
+            revert InsufficientTierAllocation(tokenAmount, tier.allocation - tier.sold);
 
         // Calculate bonus percentage
         uint8 bonusPercentage = getCurrentBonus(_tierId);
@@ -563,7 +595,8 @@ UUPSUpgradeable
         userPurchase.usdAmount += _usdAmount;
 
         // Transfer payment tokens from user to treasury
-        require(paymentToken.transferFrom(msg.sender, treasury, _usdAmount), "Payment failed");
+        if (!paymentToken.transferFrom(msg.sender, treasury, _usdAmount)) 
+            revert PaymentTransferFailed();
 
         // Update total tokens purchased by address
         addressTokensPurchased[msg.sender] += totalTokenAmount;
@@ -665,14 +698,14 @@ UUPSUpgradeable
      * @dev Withdraw available tokens based on vesting schedule
      */
     function withdrawTokens() external nonReentrant whenNotPaused {
-        require(tgeCompleted, "TGE not completed yet");
+        if (!tgeCompleted) revert TGENotCompleted();
 
         Purchase storage userPurchase = purchases[msg.sender];
         uint256 scheduleId = userPurchase.vestingScheduleId;
 
         // Claim tokens through vesting contract
         uint256 claimed = vestingContract.claimTokens(scheduleId);
-        require(claimed > 0, "No tokens available to claim");
+        if (claimed == 0) revert NoTokensToWithdraw();
 
         emit TokensWithdrawn(msg.sender, uint96(claimed));
     }
@@ -690,22 +723,22 @@ UUPSUpgradeable
 
     // New function to set tier deadlines
     function setTierDeadline(uint8 _tier, uint64 _deadline) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(_tier < tierCount, "Crowdsale: invalid tier");
-        require(_deadline > uint64(block.timestamp), "Crowdsale: deadline in past");
+        if (_tier >= tiers.length) revert InvalidTierId(_tier);
+        if (_deadline <= block.timestamp) revert DeadlineInPast(_deadline);
         tierDeadlines[_tier] = _deadline;
         emit TierDeadlineUpdated(_tier, _deadline);
     }
 
     // New function to manually advance tier
     function advanceTier() external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(currentTier < tierCount - 1, "Crowdsale: already at final tier");
+        if (currentTier >= tierCount - 1) revert TierAlreadyAdvanced();
         currentTier++;
         emit TierAdvanced(currentTier);
     }
 
     // New function to extend current tier
     function extendTier(uint64 _newDeadline) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(_newDeadline > tierDeadlines[currentTier], "Crowdsale: new deadline must be later");
+        if (_newDeadline <= tierDeadlines[currentTier]) revert DeadlineInPast(_newDeadline);
         tierDeadlines[currentTier] = _newDeadline;
         emit TierExtended(currentTier, _newDeadline);
     }
@@ -832,7 +865,7 @@ UUPSUpgradeable
         uint256 _tokenAmount,
         uint256 _usdAmount
     ) external returns (bool success) {
-        require(msg.sender == address(this), "CrowdSale: unauthorized");
+        if (msg.sender != address(this)) revert UnauthorizedCaller();
 
         // Verify registry and stability fund are properly set
         if (address(registry) == address(0) || !registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
@@ -859,7 +892,7 @@ UUPSUpgradeable
      * @dev In case of critical emergency, allows users to withdraw their USDC
      */
     function emergencyWithdraw() external nonReentrant {
-        require(emergencyState == EmergencyState.CRITICAL_EMERGENCY, "CrowdSale: not in critical emergency");
+        if (emergencyState != EmergencyState.CRITICAL_EMERGENCY) revert NotInEmergencyMode();
         require(!emergencyWithdrawalsProcessed[msg.sender], "CrowdSale: already processed");
 
         // Calculate refundable amount
@@ -881,7 +914,7 @@ UUPSUpgradeable
      * @dev System for multi-signature approval of recovery actions
      */
     function approveRecovery() external onlyRole(Constants.ADMIN_ROLE) {
-        require(emergencyState == EmergencyState.CRITICAL_EMERGENCY, "CrowdSale: not in critical emergency");
+        if (emergencyState != EmergencyState.CRITICAL_EMERGENCY) revert NotInEmergencyMode();
         require(!recoveryApprovals[msg.sender], "CrowdSale: already approved");
 
         recoveryApprovals[msg.sender] = true;
@@ -898,7 +931,7 @@ UUPSUpgradeable
      * @param _users Array of user addresses
      */
     function batchDistributeTokens(address[] calldata _users) external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant {
-        require(tgeCompleted, "TGE not completed yet");
+        if (!tgeCompleted) revert TGENotCompleted();
 
         for (uint8 i = 0; i < _users.length; i++) {
             address user = _users[i];

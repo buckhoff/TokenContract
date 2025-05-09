@@ -140,10 +140,13 @@ describe("PlatformGovernance Contract", function () {
 
             expect(proposalDetails.proposer).to.equal(voter1.address);
             expect(proposalDetails.description).to.equal(description);
+           
             expect(proposalDetails.currentState).to.equal(ProposalState.Active);
         });
-
+        
         it("Should not allow creating proposals below threshold", async function () {
+
+            await teachToken.connect(voter3).transfer(voter2.address, ethers.parseEther("125000"))
             await expect(
                 governance.connect(voter3).createProposal(
                     targets,

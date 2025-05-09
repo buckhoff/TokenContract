@@ -22,4 +22,5 @@ library Constants{
     bytes32 internal constant BURNER_ROLE = keccak256("BURNER_ROLE");
     bytes32 internal constant RECORDER_ROLE = keccak256("RECORDER_ROLE");
     bytes32 internal constant ORACLE_ROLE = keccak256("ORACLE_ROLE");
+    bytes32 internal constant CREATOR_ROLE = keccak256("CREATOR_ROLE");
 }

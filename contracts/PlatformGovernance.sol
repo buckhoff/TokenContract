@@ -22,7 +22,7 @@ contract PlatformGovernance is
     IPlatformGovernance
 {
 
-    ERC20Upgradeable internal token;
+    ERC20Upgradeable public token;
 
     // Struct to store proposal information
     struct Proposal {
@@ -142,6 +142,49 @@ contract PlatformGovernance is
     event SystemEmergencyTriggered(address indexed triggeredBy, string reason);
     event EmergencySystemFailed(string reason);
     
+    error InsufficientProposalThreshold(uint256 balance, uint256 required);
+    error EmptyTargets();
+    error SignatureMismatch(uint256 targetsLength, uint256 signaturesLength);
+    error CalldataMismatch(uint256 targetsLength, uint256 calldataLength);
+    error InvalidVotingPeriod(uint256 provided, uint256 min, uint256 max);
+    error NotAuthorizedForSystemContracts();
+    error InvalidVoteType();
+    error InvalidProposalId(uint256 proposalId, uint256 maxId);
+    error ReasonTooLong(uint256 length, uint256 maxLength);
+    error VotingNotStarted(uint256 proposalId, uint256 currentTime, uint256 startTime);
+    error VotingEnded(uint256 proposalId, uint256 currentTime, uint256 endTime);
+    error AlreadyVoted(uint256 proposalId, address voter);
+    error NoVotingPower(address voter);
+    error ProposalNotQueued(uint256 proposalId, ProposalState currentState);
+    error TransactionExecutionFailed(uint256 proposalId);
+    error InvalidProposalState(uint256 proposalId, ProposalState currentState);
+    error NotProposer(uint256 proposalId, address caller, address proposer);
+    error DelayTooLong(uint256 delay, uint256 maxDelay);
+    error NoPendingChange();
+    error TimelockNotExpired(uint256 currentTime, uint256 requiredTime);
+    error InvalidVotingPeriods(uint256 min, uint256 max);
+    error QuorumTooHigh(uint256 quorum, uint256 maxAllowed);
+    error ChangeAlreadyPending();
+    error ZeroStakingAddress();
+    error InvalidMultiplier(uint16 multiplier, uint16 minValue);
+    error InvalidPeriod(uint16 period, uint16 minValue);
+    error ZeroAmount();
+    error OnlyViaProposal();
+    error TokenNotAllowed(address token);
+    error ZeroRecipient();
+    error InsufficientTreasury(uint256 requested, uint256 available);
+    error TransferFailed();
+    error ZeroGuardianAddress();
+    error AlreadyGuardian(address guardian);
+    error NotGuardian(address caller);
+    error AlreadyVotedForCancellation(uint256 proposalId, address guardian);
+    error EmergencyPeriodExpired(uint256 currentTime, uint256 deadline);
+    error RegistryNotSet();
+    error StakingContractNotSet();
+    error NotStakingContract();
+    error ZeroTokenAddress();
+    error CannotCancelProposal();
+    
     bool public stakingWeightEnabled;
     uint16 public maxStakingMultiplier; // multiplier scaled by 100 (e.g., 200 = 2x)
     uint16 public maxStakingPeriod; // in days
@@ -195,9 +238,9 @@ contract PlatformGovernance is
         _grantRole(Constants.EMERGENCY_ROLE, msg.sender);
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         
-        require(_token != address(0), "PlatformGovernance: zero token address");
-        require(_quorumThreshold <= 5000, "PlatformGovernance: quorum too high");
-        require(_minVotingPeriod <= _maxVotingPeriod, "PlatformGovernance: invalid voting periods");
+        if(_token == address(0)) revert ZeroTokenAddress();
+        if(_quorumThreshold > 5000) revert QuorumTooHigh(_quorumThreshold, 5000);
+        if(_minVotingPeriod > _maxVotingPeriod) revert InvalidVotingPeriods(_minVotingPeriod,_maxVotingPeriod );
         
         token = ERC20Upgradeable(_token);
         proposalThreshold = _proposalThreshold;
@@ -231,17 +274,27 @@ contract PlatformGovernance is
         string memory _description, uint256 _votingPeriod) external whenContractNotPaused returns (uint256){
         
         // Use governance token from registry if available
-        ERC20Upgradeable governanceToken = token;
+        ERC20Upgradeable governanceToken;
         if (address(registry) != address(0) && registry.isContractActive(Constants.TOKEN_NAME)) {
-            governanceToken =ERC20Upgradeable(registry.getContractAddress(Constants.TOKEN_NAME));
+            // If registry is available and token is registered, use that address
+            governanceToken = ERC20Upgradeable(registry.getContractAddress(Constants.TOKEN_NAME));
+        } else {
+            // Otherwise fall back to the stored token address
+            governanceToken = token;
         }
         
-        require(governanceToken.balanceOf(msg.sender) >= proposalThreshold, "PlatformGovernance: below proposal threshold");
-        require(_targets.length > 0, "PlatformGovernance: empty proposal");
-        require(_targets.length == _signatures.length, "PlatformGovernance: mismatched signatures");
-        require(_targets.length == _calldatas.length, "PlatformGovernance: mismatched calldatas");
-        require(_votingPeriod >= minVotingPeriod, "PlatformGovernance: voting period too short");
-        require(_votingPeriod <= maxVotingPeriod, "PlatformGovernance: voting period too long");
+        
+        if (governanceToken.balanceOf(msg.sender) < proposalThreshold) 
+            revert InsufficientProposalThreshold(governanceToken.balanceOf(msg.sender), proposalThreshold);
+        if(_targets.length == 0) revert EmptyTargets();
+        if(_targets.length != _signatures.length) 
+            revert SignatureMismatch(_targets.length, _signatures.length);
+        if(_targets.length != _calldatas.length) 
+            revert CalldataMismatch(_targets.length, _calldatas.length);
+        if(_votingPeriod < minVotingPeriod) 
+            revert InvalidVotingPeriod(_votingPeriod , minVotingPeriod, maxVotingPeriod);
+        if(_votingPeriod > maxVotingPeriod) 
+            revert InvalidVotingPeriod(_votingPeriod , minVotingPeriod, maxVotingPeriod);
 
         // Check if any system contracts are targets
         for (uint256 i = 0; i < _targets.length; i++) {
@@ -261,7 +314,7 @@ contract PlatformGovernance is
                     if (registry.isContractActive(contractNames[j])) {
                         if (target == registry.getContractAddress(contractNames[j])) {
                             // Target is a system contract, require additional permissions
-                            require(hasRole(Constants.ADMIN_ROLE, msg.sender), "PlatformGovernance: not authorized for system contracts");
+                            if(!hasRole(Constants.ADMIN_ROLE, msg.sender)) revert NotAuthorizedForSystemContracts();
                         }
                     }
                 }
@@ -303,17 +356,19 @@ contract PlatformGovernance is
      * @param _reason Reason for the vote
      */
     function castVote(uint256 _proposalId, uint8 _voteType, string memory _reason) external nonReentrant {
-        require(_voteType <= uint8(VoteType.Abstain), "PlatformGovernance: invalid vote type");
-        require(_proposalId < _proposalIdCounter, "PlatformGovernance: proposal doesn't exist");
-        require(bytes(_reason).length <= 200, "PlatformGovernance: reason too long");
+        if(_voteType > uint8(VoteType.Abstain)) revert InvalidVoteType();
+        if(_proposalId > _proposalIdCounter) revert InvalidProposalId(_proposalId, _proposalIdCounter);
+        if(bytes(_reason).length <= 200) revert ReasonTooLong(bytes(_reason).length, 200);
         
         Proposal storage proposal = proposals[_proposalId];
-        require(block.timestamp >= proposal.startTime, "PlatformGovernance: voting not started");
-        require(block.timestamp <= proposal.endTime, "PlatformGovernance: voting ended");
-        require(!proposal.receipts[msg.sender].hasVoted, "PlatformGovernance: already voted");
+        if(block.timestamp < proposal.startTime) 
+            revert VotingNotStarted(_proposalId, block.timestamp, proposal.startTime);
+        if(block.timestamp > proposal.endTime) 
+            revert VotingEnded(_proposalId, block.timestamp, proposal.endTime);
+        if(proposal.receipts[msg.sender].hasVoted) revert AlreadyVoted(_proposalId, msg.sender);
         
-        uint256 votes = getVotingPower(msg.sender);
-        require(votes > 0, "PlatformGovernance: no voting power");
+        uint256 votes = getVotingPower(msg.sender); 
+        if(votes > 0) revert NoVotingPower(msg.sender);
         
         // Update voter receipt
         proposal.receipts[msg.sender] = Receipt({
@@ -342,15 +397,28 @@ contract PlatformGovernance is
      * @param _proposalId ID of the proposal to execute
      */
     function executeProposal(uint256 _proposalId) external nonReentrant {
-        require(state(_proposalId) == ProposalState.Queued, "PlatformGovernance: proposal not queued");
+        if(state(_proposalId) != ProposalState.Queued) 
+            revert ProposalNotQueued(_proposalId, state(_proposalId));
         
         Proposal storage proposal = proposals[_proposalId];
         proposal.executed = true;
         
         // Execute each transaction in the proposal
         for (uint256 i = 0; i < proposal.targets.length; i++) {
-            (bool success, ) = proposal.targets[i].call(proposal.calldatas[i]);
-            require(success, "PlatformGovernance: transaction execution reverted");
+            bytes memory callData;
+            if (bytes(proposal.signatures[i]).length > 0) {
+                // If signature is provided, use it to create the calldata
+                callData = abi.encodePacked(
+                    bytes4(keccak256(bytes(proposal.signatures[i]))),
+                    proposal.calldatas[i]
+                );
+            } else {
+                // If no signature, use calldata directly
+                callData = proposal.calldatas[i];
+            }
+
+            (bool success, ) = proposal.targets[i].call(callData);
+            if(!success) revert TransactionExecutionFailed(_proposalId);
         }
         
         emit ProposalExecuted(_proposalId);
@@ -362,20 +430,18 @@ contract PlatformGovernance is
      */
     function cancelProposal(uint256 _proposalId) external nonReentrant {
         ProposalState currentState = state(_proposalId);
-        require(
-            currentState == ProposalState.Pending || 
-            currentState == ProposalState.Active,
-            "PlatformGovernance: cannot cancel proposal"
-        );
+        if(
+            currentState != ProposalState.Pending && 
+            currentState != ProposalState.Active
+        ) revert InvalidProposalState(_proposalId, state(_proposalId));
         
         Proposal storage proposal = proposals[_proposalId];
         
         // Only proposer or if proposer drops below threshold can cancel
-        require(
-            msg.sender == proposal.proposer || 
-            token.balanceOf(proposal.proposer) < proposalThreshold,
-            "PlatformGovernance: not authorized"
-        );
+        if(
+            msg.sender != proposal.proposer &&
+            token.balanceOf(proposal.proposer) >= proposalThreshold
+        ) revert NotProposer(_proposalId, msg.sender , proposal.proposer);
         
         proposal.canceled = true;
         
@@ -476,7 +542,7 @@ contract PlatformGovernance is
     * @param _newDelay New delay in seconds
      */
     function setParameterChangeDelay(uint256 _newDelay) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_newDelay <= 30 days, "PlatformGovernance: delay too long");
+        if(_newDelay > 30 days) revert DelayTooLong(_newDelay, 30);
 
         emit TimelockDelayUpdated(parameterChangeDelay, _newDelay);
         parameterChangeDelay = _newDelay;
@@ -520,11 +586,9 @@ contract PlatformGovernance is
     * @dev Executes a scheduled parameter change after timelock delay
     */
     function executeParameterChange() external {
-        require(pendingChange.isPending, "PlatformGovernance: no pending change");
-        require(
-            block.timestamp >= pendingChange.scheduledTime + parameterChangeDelay,
-            "PlatformGovernance: timelock not expired"
-        );
+        if(!pendingChange.isPending) revert NoPendingChange();
+        if(block.timestamp < pendingChange.scheduledTime + parameterChangeDelay) 
+            revert TimelockNotExpired(block.timestamp, pendingChange.scheduledTime + parameterChangeDelay);
 
         // Update the parameters
         proposalThreshold = pendingChange.proposalThreshold;
@@ -553,7 +617,7 @@ contract PlatformGovernance is
     * @dev Cancels a scheduled parameter change
     */
     function cancelParameterChange() external onlyRole(Constants.ADMIN_ROLE) {
-        require(pendingChange.isPending, "PlatformGovernance: no pending change");
+       if(pendingChange.isPending) revert NoPendingChange();
 
         // Clear the pending change
         pendingChange.isPending = false;
@@ -573,9 +637,9 @@ contract PlatformGovernance is
         uint256 _executionDelay,
         uint256 _executionPeriod
     ) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_minVotingPeriod <= _maxVotingPeriod, "PlatformGovernance: invalid voting periods");
-        require(_quorumThreshold <= 5000, "PlatformGovernance: quorum too high");
-        require(!pendingChange.isPending, "PlatformGovernance: change already pending");
+        if(_minVotingPeriod >= _maxVotingPeriod) revert InvalidVotingPeriods(_minVotingPeriod, _maxVotingPeriod);
+        if(_quorumThreshold > 5000) revert QuorumTooHigh(_quorumThreshold, 5000);
+        if(pendingChange.isPending) revert ChangeAlreadyPending();
 
         // Schedule the change
         pendingChange = PendingParameterChange({
@@ -611,9 +675,9 @@ contract PlatformGovernance is
         uint16 _maxStakingMultiplier,
         uint16 _maxStakingPeriod
     ) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_stakingContract != address(0), "PlatformGovernance: zero staking address");
-        require(_maxStakingMultiplier >= 100, "PlatformGovernance: multiplier must be >= 100");
-        require(_maxStakingPeriod > 0, "PlatformGovernance: period must be > 0");
+        if(_stakingContract == address(0)) revert ZeroStakingAddress();
+        if(_maxStakingMultiplier < 100) revert InvalidMultiplier(_maxStakingMultiplier, 100);
+        if(_maxStakingPeriod == 0) revert InvalidPeriod(_maxStakingPeriod, 1);
 
         stakingContract = IPlatformStaking(_stakingContract);
         maxStakingMultiplier = _maxStakingMultiplier;
@@ -729,11 +793,11 @@ contract PlatformGovernance is
 	* @param _amount Amount to deposit
 	*/
 	function depositToTreasury(address _token, uint256 _amount) external nonReentrant {
-		require(_amount > 0, "PlatformGovernance: zero amount");
-		require(allowedTokens[_token], "PlatformGovernance: token not allowed");
+		if(_amount == 0) revert ZeroAmount();
+		if(!allowedTokens[_token]) revert TokenNotAllowed(_token);
 		
 		token = ERC20Upgradeable(_token);
-		require(token.transferFrom(msg.sender, address(this), _amount), "PlatformGovernance: transfer failed");
+		if(!token.transferFrom(msg.sender, address(this), _amount)) revert TransferFailed();
 		
 		if (_token == address(token)) {
 			treasuryBalance += uint96(_amount);
@@ -750,18 +814,18 @@ contract PlatformGovernance is
 	*/
 	function withdrawFromTreasury(address _token, address _recipient, uint256 _amount) external nonReentrant {
 		// Only executable through a proposal
-		require(msg.sender == address(this), "PlatformGovernance: only via proposal");
-		require(_amount > 0, "PlatformGovernance: zero amount");
-		require(_recipient != address(0), "PlatformGovernance: zero recipient");
-		require(allowedTokens[_token], "PlatformGovernance: token not allowed");
+		if(msg.sender != address(this)) revert OnlyViaProposal();
+		if(_amount == 0) revert ZeroAmount();
+		if(_recipient == address(0)) revert ZeroRecipient();
+		if(!allowedTokens[_token]) revert TokenNotAllowed(_token);
 		
 		token = ERC20Upgradeable(_token);
 		if (_token == address(token)) {
-			require(_amount <= treasuryBalance, "PlatformGovernance: insufficient treasury");
+			if(_amount > treasuryBalance) revert InsufficientTreasury(_amount, treasuryBalance);
 			treasuryBalance -= uint96(_amount);
 		}
 		
-		require(token.transfer(_recipient, _amount), "PlatformGovernance: transfer failed");
+		if(!token.transfer(_recipient, _amount)) revert  TransferFailed();
 		
 		emit TreasuryWithdrawal(_token, _recipient, _amount);
 	}
@@ -783,8 +847,8 @@ contract PlatformGovernance is
 	* @param _guardian Address to add as guardian
 	*/
 	function addGuardian(address _guardian) external onlyRole(Constants.ADMIN_ROLE) {
-		require(_guardian != address(0), "PlatformGovernance: zero guardian address");
-		require(!guardians[_guardian], "PlatformGovernance: already guardian");
+		if(_guardian == address(0)) revert ZeroGuardianAddress();
+		if(guardians[_guardian]) revert AlreadyGuardian(_guardian);
 		
 		guardians[_guardian] = true;
 		emit GuardianAdded(_guardian);
@@ -795,7 +859,7 @@ contract PlatformGovernance is
 	* @param _guardian Address to remove as guardian
 	*/
 	function removeGuardian(address _guardian) external onlyRole(Constants.ADMIN_ROLE) {
-		require(guardians[_guardian], "PlatformGovernance: not a guardian");
+		if(!guardians[_guardian]) revert NotGuardian(_guardian);
 		
 		guardians[_guardian] = false;
 		emit GuardianRemoved(_guardian);
@@ -817,23 +881,22 @@ contract PlatformGovernance is
 	* @param _reason Reason for cancellation
 	*/
 	function voteToCancel(uint256 _proposalId, string calldata _reason) external {
-		require(guardians[msg.sender], "PlatformGovernance: not a guardian");
-		require(!guardianCancellations[_proposalId][msg.sender], "PlatformGovernance: already voted");
+		if(!guardians[msg.sender]) revert NotGuardian(msg.sender);
+		if(guardianCancellations[_proposalId][msg.sender]) 
+            revert AlreadyVotedForCancellation(_proposalId, msg.sender);
 		
 		ProposalState currentState = state(_proposalId);
-		require(
-			currentState == ProposalState.Pending || 
-			currentState == ProposalState.Active,
-			"PlatformGovernance: cannot cancel proposal"
-		);
+		if(
+			currentState != ProposalState.Pending &&
+			currentState != ProposalState.Active
+		) revert InvalidProposalState(_proposalId, currentState);
 		
 		Proposal storage proposal = proposals[_proposalId];
 		
 		// Check if within emergency period
-		require(
-			block.timestamp <= proposal.startTime + (emergencyPeriod * 1 hours),
-			"PlatformGovernance: emergency period expired"
-		);
+		if(
+			block.timestamp > proposal.startTime + (emergencyPeriod * 1 hours)
+		) revert EmergencyPeriodExpired(block.timestamp, proposal.startTime + (emergencyPeriod * 1 hours));
 		
 		// Record guardian's vote
 		guardianCancellations[_proposalId][msg.sender] = true;
@@ -872,7 +935,7 @@ contract PlatformGovernance is
      * This ensures contracts always have the latest addresses
      */
     function updateContractReferences() external onlyRole(Constants.ADMIN_ROLE) {
-        require(address(registry) != address(0), "PlatformGovernance: registry not set");
+        if(address(registry) == address(0)) revert RegistryNotSet();
 
         // Update token reference
         if (registry.isContractActive(Constants.TOKEN_NAME)) {
@@ -908,11 +971,10 @@ contract PlatformGovernance is
     // Add proposal cancellation by governor consensus
     function cancelProposalByGovernance(uint256 _proposalId, string calldata _reason) external onlyRole(Constants.ADMIN_ROLE) {
         ProposalState currentState = state(_proposalId);
-        require(
-            currentState == ProposalState.Queued ||
-            currentState == ProposalState.Succeeded,
-            "Governance: cannot cancel proposal"
-        );
+        if(
+            currentState != ProposalState.Queued &&
+            currentState != ProposalState.Succeeded
+        ) revert CannotCancelProposal();
 
         Proposal storage proposal = proposals[_proposalId];
         proposal.canceled = true;
@@ -977,7 +1039,7 @@ contract PlatformGovernance is
         if (fallbackAddress != address(0)) {
             return fallbackAddress;
         }
-
+        
         // Final fallback: Use hardcoded address (if appropriate) or revert
         revert("Token address unavailable through all fallback mechanisms");
     }
@@ -993,9 +1055,9 @@ contract PlatformGovernance is
         // Verify caller is the staking contract
         if (address(registry) != address(0) && registry.isContractActive(Constants.STAKING_NAME)) {
             address stakingAddress = registry.getContractAddress(Constants.STAKING_NAME);
-            require(msg.sender == stakingAddress, "PlatformGovernance: not staking contract");
+            if(msg.sender != stakingAddress) revert NotStakingContract();
         } else if (address(stakingContract) != address(0)) {
-            require(msg.sender == address(stakingContract), "PlatformGovernance: not staking contract");
+            if(msg.sender != address(stakingContract)) revert NotStakingContract();
         }
 
         // No need to store voting power as it's calculated dynamically in getVotingPower()
@@ -1009,7 +1071,7 @@ contract PlatformGovernance is
  * @param _reason Reason for the emergency
  */
     function triggerSystemEmergency(string calldata _reason) external override onlyRole(Constants.EMERGENCY_ROLE) {
-        require(address(registry) != address(0), "PlatformGovernance: registry not set");
+        if(address(registry) == address(0)) revert RegistryNotSet();
 
         // Directly trigger system emergency in the registry
         try this.triggerSystemEmergency(_reason) {

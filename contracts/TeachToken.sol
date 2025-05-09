@@ -61,15 +61,15 @@ contract TeachToken is
     modifier whenContractNotPaused(){
         if (address(registry) != address(0)) {
             try registry.isSystemPaused() returns (bool systemPaused) {
-                require(!systemPaused, "TeachToken: system is paused");
+                require(!systemPaused, "TeachToken: Paused");
             } 
              catch{
                  // If registry call fails, fall back to local pause state
-                 require(!paused, "TeachToken: contract is paused");
+                 require(!paused, "TeachToken: Paused");
              }
             require(!registryOfflineMode, "TeachToken: registry Offline");
         } else {
-            require(!paused, "TeachToken: contract is paused");
+            require(!paused, "TeachToken: Paused");
         }
         _;
     }
@@ -192,17 +192,14 @@ contract TeachToken is
      * Requirements: Caller must have the ADMIN_ROLE
      */
     function pause() public onlyRole(Constants.ADMIN_ROLE){
-        
-        if (registry.isContractActive(Constants.TOKEN_NAME)){
             paused=true;
-        }
     }
 
     /**
      * @dev Unpauses all token transfers
      * Requirements: Caller must have the ADMIN_ROLE
      */
-    function unpause() public onlyRole(Constants.EMERGENCY_ROLE) {
+    function unpause() public onlyRole(Constants.ADMIN_ROLE) {
         // Check if system is still paused before unpausing locally
         if (address(registry) != address(0)) {
             try registry.isSystemPaused() returns (bool systemPaused) {

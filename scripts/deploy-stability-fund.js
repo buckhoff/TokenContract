@@ -17,7 +17,7 @@ async function main() {
     }
 
     // Initialize the stability fund with parameters
-    const initialPrice = ethers.parseUnits("0.12", 18); // Initial token price ($0.12)
+    const initialPrice = ethers.parseUnits("0.12", 6); // Initial token price ($0.12)
     const reserveRatio = 5000; // 50%
     const minReserveRatio = 2000; // 20%
     const platformFeePercent = 300; // 3%
