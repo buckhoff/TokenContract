@@ -8,24 +8,44 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
 import {Constants} from "./Libraries/Constants.sol";
 
-interface ILiquidityManager {
-    function getDexReserves(uint16 _dexId) external view returns (
-        uint96 tokenReserve,
-        uint96 stableReserve,
-        uint96 currentPrice,
-        uint96 lpSupply
-    );
-
-    function getPoolAPY(uint256 _poolId) external view returns (uint256);
-
-    function getCurrentTier() external view returns (uint8);
-
-    // Get the price of a token relative to a stablecoin
-    function getTokenPrice(address _token, address _stablecoin) external view returns (uint96 price);
+// Import interfaces for auxiliary contracts
+interface ITokenPriceFeed {
+    function getTokenUsdPrice(address token) external view returns (uint256);
+    function convertTokenToUsd(address token, uint256 amount) external view returns (uint256);
+    function convertUsdToToken(address token, uint256 usdAmount) external view returns (uint256);
+    function isTokenSupported(address token) external view returns (bool);
+    function getSupportedPaymentTokens() external view returns (address[] memory);
+    function recordPaymentCollection(address token, uint256 amount) external;
 }
 
-interface IPlatformStabilityFund {
-    function getVerifiedPrice() external view returns (uint96);
+interface ITierManager {
+    struct PresaleTier {
+        uint96 price;
+        uint256 allocation;
+        uint256 sold;
+        uint256 minPurchase;
+        uint256 maxPurchase;
+        uint8 vestingTGE;
+        uint16 vestingMonths;
+        bool isActive;
+    }
+
+    function getCurrentBonus(uint8 tierId) external view returns (uint8);
+    function recordPurchase(uint8 tierId, uint256 tokenAmount) external;
+    function tokensRemainingInTier(uint8 tierId) external view returns (uint96);
+    function totalTokensSold() external view returns (uint256);
+    function getTierDetails(uint8 tierId) external view returns (PresaleTier memory);
+    function isTierActive(uint8 tierId) external view returns (bool);
+    function getTierPrice(uint8 tierId) external view returns (uint96);
+    function getTierVestingParams(uint8 tierId) external view returns (uint8 tgePercentage, uint16 vestingMonths);
+}
+
+interface IEmergencyManager {
+    enum EmergencyState { NORMAL, MINOR_EMERGENCY, CRITICAL_EMERGENCY }
+
+    function getEmergencyState() external view returns (EmergencyState);
+    function isEmergencyWithdrawalProcessed(address user) external view returns (bool);
+    function processEmergencyWithdrawal(address user, uint256 amount) external;
 }
 
 interface ITeachTokenVesting {
@@ -42,13 +62,18 @@ interface ITeachTokenVesting {
     ) external returns (uint256);
 
     function calculateClaimableAmount(uint256 _scheduleId) external view returns (uint256);
-    function claimTokens(uint256 _scheduleId) external returns (uint256) ;
+    function claimTokens(uint256 _scheduleId) external returns (uint256);
     function getSchedulesForBeneficiary(address _beneficiary) external view returns (uint256[] memory);
+}
+
+interface IPlatformStabilityFund {
+    function getVerifiedPrice() external view returns (uint96);
 }
 
 /**
  * @title TokenCrowdSale
- * @dev Multi-tier presale contract for token sales, with all tier functionality integrated directly
+ * @dev Refactored multi-tier presale contract that leverages external
+ * components for pricing, tier management, and emergency handling
  */
 contract TokenCrowdSale is
 OwnableUpgradeable,
@@ -56,52 +81,13 @@ ReentrancyGuardUpgradeable,
 RegistryAwareUpgradeable,
 UUPSUpgradeable
 {
-
+    // External components
+    ITokenPriceFeed public priceFeed;
+    ITierManager public tierManager;
+    IEmergencyManager public emergencyManager;
     ITeachTokenVesting public vestingContract;
-    
-    // Presale tiers structure - integrated directly into contract
-    struct PresaleTier {
-        uint96 price;         // Price in USD (scaled by 1e6)
-        uint256 allocation;    // Total allocation for this tier
-        uint256 sold;          // Amount sold in this tier
-        uint256 minPurchase;   // Minimum purchase amount in USD
-        uint256 maxPurchase;   // Maximum purchase amount in USD
-        uint8 vestingTGE;     // Percentage released at TGE (scaled by 100)
-        uint16 vestingMonths; // Remaining vesting period in months
-        bool isActive;        // Whether this tier is currently active
-    }
 
-    // Mapping of supported payment tokens to their details
-    struct PaymentTokenInfo {
-        bool isActive;           // Whether the token is active
-        uint256 minAmount;       // Minimum purchase amount in USD
-        uint256 maxAmount;       // Maximum purchase amount in USD
-        address priceOracle;     // Custom price oracle (if any)
-        uint8 decimals;          // Token decimals (cached)
-        uint256 totalCollected;  // Total amount collected
-    }
-
-    // Payment token mapping and tracking
-    mapping(address => PaymentTokenInfo) public paymentTokens;
-    address[] public supportedPaymentTokensArray;
-
-    // Default stablecoin (reference for prices)
-    address public defaultStablecoin;
-
-    // LiquidityManager reference for price discovery
-    ILiquidityManager public liquidityManager;
-
-    // Dynamic pricing settings
-    bool public useDynamicPricing;
-    uint32 public priceCacheTimeout;
-    uint16 public maxPriceDeviationThreshold;
-
-    // Price caching
-    mapping(address => uint256) public cachedPriceRates;
-    mapping(address => uint256) public lastPriceUpdate;
-    mapping(address => uint256) public fallbackPriceRates;
-
-    // Purchase tracking with token information
+    // Purchase tracking
     struct Purchase {
         uint256 tokens;          // Total tokens purchased
         uint256 bonusAmount;     // Amount of bonus tokens received
@@ -109,16 +95,10 @@ UUPSUpgradeable
         uint256[] tierAmounts;   // Amount purchased in each tier
         uint256 lastClaimTime;   // Last time user claimed tokens
         uint256 vestingScheduleId; // Vesting Schedule ID
-        bool vestingCreated;
+        bool vestingCreated;     // Whether vesting schedule was created
         mapping(address => uint256) paymentsByToken; // Amount purchased with each token
     }
-    
-    // Bonus bracket information
-    struct BonusBracket {
-        uint96 fillPercentage;  // Fill percentage threshold (e.g., 25%, 50%, 75%, 100%)
-        uint8 bonusPercentage;   // Bonus percentage for this bracket (scaled by 100)
-    }
-    
+
     struct ClaimEvent {
         uint128 amount;
         uint64 timestamp;
@@ -130,95 +110,44 @@ UUPSUpgradeable
         uint64 lastUpdate;
     }
 
+    // Token and treasury
     ERC20Upgradeable public token;
-    // Payment token 
-    ERC20Upgradeable public paymentToken;
-
-    // Treasury wallet to receive funds
     address public treasury;
-    
-    // Emergency state tracking
-    enum EmergencyState { NORMAL, MINOR_EMERGENCY, CRITICAL_EMERGENCY }
-    EmergencyState public emergencyState;
 
-    // Emergency thresholds
-    uint8 public constant MINOR_EMERGENCY_THRESHOLD = 1;
-    uint8 public constant CRITICAL_EMERGENCY_THRESHOLD = 2;
-
-    // Emergency recovery tracking
-    mapping(address => bool) public recoveryApprovals;
-    uint8 public requiredRecoveryApprovals;
-    uint8 public recoveryApprovalsCount;
-
-    uint8 public currentTier;
-    uint8 public tierCount;
-    mapping(uint8 => uint256) public maxTokensForTier;
-    
-    // Presale tiers
-    PresaleTier[] public tiers;
-
-    // Mapping from user address to purchase info
-    mapping(address => Purchase) public purchases;
-
-    // Bonus brackets for each tier
-    mapping(uint256 => BonusBracket[4]) public tierBonuses;
-    
-    // Presale start and end times
+    // Presale timing
     uint64 public presaleStart;
     uint64 public presaleEnd;
 
-    // Whether tokens have been generated and initial distribution occurred
+    // TGE status
     bool public tgeCompleted;
 
     // USD price scaling factor (6 decimal places)
     uint256 public constant PRICE_DECIMALS = 1e6;
 
-    // Maximum tokens purchasable by a single address across all tiers
+    // Purchase limits
     uint96 public maxTokensPerAddress;
-
-    // Mapping to track total tokens purchased by each address
     mapping(address => uint256) public addressTokensPurchased;
-
-    // Timestamps for tier deadlines
-    mapping(uint8 => uint64) public tierDeadlines;
-
     mapping(address => uint256) public lastPurchaseTime;
     uint32 public minTimeBetweenPurchases;
     uint256 public maxPurchaseAmount;
 
-    // Add mapping to track claims history
+    // Purchase and claim tracking
+    mapping(address => Purchase) public purchases;
     mapping(address => ClaimEvent[]) public claimHistory;
-
     mapping(address => bool) public autoCompoundEnabled;
 
-    uint64 public emergencyPauseTime;
-    mapping(address => bool) public emergencyWithdrawalsProcessed;
-
+    // Cache management
     CachedAddresses private _cachedAddresses;
 
     // Events
     event TierPurchase(address indexed buyer, uint8 tierId, uint256 tokenAmount, uint256 usdAmount);
-    event TierConfigured(uint256 tierId, uint256 price, uint256 allocation);
-    event BonusConfigured(uint256 tierId, uint256 bracketId, uint256 fillPercentage, uint8 bonusPercentage);
-    event TierStatusChanged(uint8 tierId, bool isActive);
     event TokensWithdrawn(address indexed user, uint256 amount);
     event PresaleTimesUpdated(uint64 newStart, uint64 newEnd);
-    event TierDeadlineUpdated(uint8 indexed tier, uint64 deadline);
-    event TierAdvanced(uint8 indexed newTier);
-    event TierExtended(uint8 indexed tier, uint64 newDeadline);
     event RegistrySet(address indexed registry);
     event ContractReferenceUpdated(bytes32 indexed contractName, address indexed oldAddress, address indexed newAddress);
-    event EmergencyPaused(address indexed triggeredBy, uint64 timestamp);
-    event EmergencyRecoveryInitiated(address indexed recoveryAdmin, uint64 timestamp);
-    event EmergencyRecoveryCompleted(address indexed recoveryAdmin, uint64 timestamp);
     event AutoCompoundUpdated(address indexed user, bool enabled);
-    event EmergencyWithdrawalProcessed(address indexed user, uint256 amount);
-    event EmergencyStateChanged(EmergencyState state);
     event StabilityFundRecordingFailed(address indexed user, string reason);
-    event PaymentTokenAdded(address indexed token, uint256 minAmount, uint256 maxAmount);
-    event PaymentTokenRemoved(address indexed token);
-    event PaymentTokenUpdated(address indexed token, uint256 minAmount, uint256 maxAmount);
-    event PriceOracleSet(address indexed token, address indexed oracle);
+    event ComponentSet(string indexed componentName, address componentAddress);
     event PurchaseWithToken(
         address indexed buyer,
         uint8 tierId,
@@ -227,65 +156,29 @@ UUPSUpgradeable
         uint256 tokenAmount,
         uint256 usdEquivalent
     );
-    event PriceRateUpdated(address indexed token, uint256 oldRate, uint256 newRate);
-    event LiquidityManagerSet(address indexed liquidityManager);
-    
+
+    // Errors
     error ZeroTokenAddress();
     error ZeroPaymentTokenAddress();
     error ZeroTreasuryAddress();
-    error ZeroVestingContractAddress();
     error InvalidTierId(uint8 tierId);
     error TierNotActive(uint8 tierId);
-    error TierPriceInvalid();
-    error TierAllocationInvalid();
-    error TierPurchaseLimitsInvalid();
     error BelowMinPurchase(uint256 amount, uint256 minRequired);
     error AboveMaxPurchase(uint256 amount, uint256 maxAllowed);
     error ExceedsMaxTierPurchase(uint256 totalAmount, uint256 maxAllowed);
     error ExceedsMaxTokensPerAddress(uint256 totalAmount, uint256 maxAllowed);
     error InsufficientTierAllocation(uint256 requested, uint256 available);
-    error NotEnoughTokenBalance(uint256 requested, uint256 available);
     error PaymentTransferFailed();
     error TGENotCompleted();
     error NoTokensToWithdraw();
     error PresaleNotActive();
     error ScheduleAlreadyCreated();
-    error AlreadyInEmergencyMode();
-    error NotInEmergencyMode();
-    error NotEmergencyRole();
-    error AlreadyApproved();
-    error NonPositiveAmount();
     error UnauthorizedCaller();
-    error TierAlreadyAdvanced();
-    error DeadlineInPast(uint64 deadline);
-    error InvalidPresaleTimes(uint64 start, uint64 end);
-    error InitialDistributionIncomplete();
-    error PurchaseTooSoon(uint256 deadline,uint256 current);
+    error PurchaseTooSoon(uint256 deadline, uint256 current);
     error TokenAlreadySet();
-    error InvalidBracketID();
-    error InvalidFillPercentage();
     error UnsupportedPaymentToken(address token);
-    error ZeroPriceRate();
-    error InvalidPriceOracle(address oracle);
-    error PriceDeviationTooHigh(uint256 oraclePrice, uint256 fallbackPrice, uint256 deviation);
-    error NoPriceSourceAvailable(address token);
-    
-    modifier purchaseRateLimit(uint256 _usdAmount) {
-        address msgr = msg.sender;
-        uint256 userLastPurchase = uint256(lastPurchaseTime[msgr]);
-        
-        if (userLastPurchase != 0) {
-            if (block.timestamp < userLastPurchase + minTimeBetweenPurchases){
-                revert PurchaseTooSoon(userLastPurchase + minTimeBetweenPurchases,block.timestamp);
-            }
-        }
-            
-        if (_usdAmount > maxPurchaseAmount)
-            revert AboveMaxPurchase(_usdAmount,maxPurchaseAmount);
-        
-        lastPurchaseTime[msg.sender] = block.timestamp;
-        _;
-    }
+    error ZeroComponentAddress();
+    error InvalidPresaleTimes(uint64 start, uint64 end);
 
     modifier whenNotPaused() {
         if (address(registry) != address(0)) {
@@ -293,106 +186,32 @@ UUPSUpgradeable
                 require(!systemPaused, "TokenCrowdSale: system is paused");
             } catch {
                 // If registry call fails, fall back to local pause state
-                require(emergencyState == EmergencyState.NORMAL, "TokenCrowdSale: contract is paused");
+                IEmergencyManager.EmergencyState state = emergencyManager.getEmergencyState();
+                require(state == IEmergencyManager.EmergencyState.NORMAL, "TokenCrowdSale: contract is paused");
             }
             require(!registryOfflineMode, "TokenCrowdSale: registry Offline");
         } else {
-            require(emergencyState == EmergencyState.NORMAL, "TokenCrowdSale: contract is paused");
+            IEmergencyManager.EmergencyState state = emergencyManager.getEmergencyState();
+            require(state == IEmergencyManager.EmergencyState.NORMAL, "TokenCrowdSale: contract is paused");
         }
         _;
     }
 
-    /**
-     * @dev Creates standard tier configurations for token presale
-     */
-    function _createStandardTiers() internal pure returns (PresaleTier[] memory) {
-        PresaleTier[] memory stdTiers = new PresaleTier[](4);
+    modifier purchaseRateLimit(uint256 _usdAmount) {
+        address msgr = msg.sender;
+        uint256 userLastPurchase = lastPurchaseTime[msgr];
 
-        // Tier 1:
-        stdTiers[0] = PresaleTier({
-            price: 40000, // $0.04
-            allocation: uint256(250_000_000) * 10**6, // 250M tokens
-            sold: 0,
-            minPurchase: 100 * PRICE_DECIMALS, // $100 min
-            maxPurchase: 50_000 * PRICE_DECIMALS, // $50,000 max
-            vestingTGE: 20, // 20% at TGE
-            vestingMonths: 6, // 6 months vesting
-            isActive: false
-        });
-
-        // Tier 2: 
-        stdTiers[1] = PresaleTier({
-            price: 60000, // $0.06
-            allocation: uint256(375_000_000) * 10**6, // 375M tokens
-            sold: 0,
-            minPurchase: 100 * PRICE_DECIMALS, // $100 min
-            maxPurchase: 50_000 * PRICE_DECIMALS, // $50,000 max
-            vestingTGE: 20, // 20% at TGE
-            vestingMonths: 6, // 6 months vesting
-            isActive: false
-        });
-
-        // Tier 3: 
-        stdTiers[2] = PresaleTier({
-            price: 80000, // $0.08
-            allocation: uint256(375_000_000) * 10**6, // 375M tokens
-            sold: 0,
-            minPurchase: 100 * PRICE_DECIMALS, // $100 min
-            maxPurchase: 50_000 * PRICE_DECIMALS, // $50,000 max
-            vestingTGE: 20, // 20% at TGE
-            vestingMonths: 6, // 6 months vesting
-            isActive: false
-        });
-
-        // Tier 4:
-        stdTiers[3] = PresaleTier({
-            price: 100000, // $0.10
-            allocation: uint256(250_000_000) * 10**6, // 250M tokens
-            sold: 0,
-            minPurchase: 100 * PRICE_DECIMALS, // $100 min
-            maxPurchase: 50_000 * PRICE_DECIMALS, // $50,000 max
-            vestingTGE: 20, // 20% at TGE
-            vestingMonths: 6, // 6 months vesting
-            isActive: false
-        });
-        
-        return stdTiers;
-    }
-
-    /**
-     * @dev Calculate tier maximum values - moved from library to contract
-     */
-    function _calculateTierMaximums() internal {
-        for (uint8 i = 0; i < tiers.length; i++) {
-            uint256 tierTotal = 0;
-            for (uint8 j = 0; j <= i; j++) {
-                tierTotal += tiers[j].allocation;
+        if (userLastPurchase != 0) {
+            if (block.timestamp < userLastPurchase + minTimeBetweenPurchases) {
+                revert PurchaseTooSoon(userLastPurchase + minTimeBetweenPurchases, block.timestamp);
             }
-            maxTokensForTier[i] = tierTotal;
         }
-    }
 
-    /**
-     * @dev Calculate tokens remaining in a tier - moved from library to contract
-     */
-    function tokensRemainingInTier(uint8 _tierId) public view returns (uint96) {
-        if (_tierId >= tiers.length) revert InvalidTierId(_tierId);
-        PresaleTier storage tier = tiers[_tierId];
-        if (tier.allocation <= tier.sold) {
-            return 0;
-        }
-        return uint96(tier.allocation - tier.sold);
-    }
+        if (_usdAmount > maxPurchaseAmount)
+            revert AboveMaxPurchase(_usdAmount, maxPurchaseAmount);
 
-    /**
-     * @dev Calculate total tokens sold across all tiers - moved from library to contract
-     */
-    function totalTokensSold() public view returns (uint256 total) {
-        total = 0;
-        for (uint8 i = 0; i < tiers.length; i++) {
-            total += uint96(tiers[i].sold);
-        }
-        return total;
+        lastPurchaseTime[msg.sender] = block.timestamp;
+        _;
     }
 
     /**
@@ -409,32 +228,17 @@ UUPSUpgradeable
         __AccessControl_init();
         __UUPSUpgradeable_init();
 
-        defaultStablecoin = _defaultStablecoin;
-        paymentTokens[address(token)].isActive = true;
-        fallbackPriceRates[_defaultStablecoin] = 1e6; // Default 1:1 with USD
         treasury = _treasury;
 
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(Constants.ADMIN_ROLE, msg.sender);
         _grantRole(Constants.EMERGENCY_ROLE, msg.sender);
         _grantRole(Constants.RECORDER_ROLE, msg.sender);
-        
-        tiers = _createStandardTiers();
-        tierCount = uint8(tiers.length);
 
         // Initialize state variables
-        emergencyState = EmergencyState.NORMAL;
-        currentTier = 0;
         tgeCompleted = false;
-        requiredRecoveryApprovals = 3;
-        recoveryApprovalsCount = 0;
         minTimeBetweenPurchases = 1 hours;
         maxPurchaseAmount = 50_000 * PRICE_DECIMALS; // $50,000 default max
-
-        // Calculate tier maximums
-        _calculateTierMaximums();
-        _setupDefaultBonuses();
-        
         maxTokensPerAddress = 1_500_000 * 10**6; // 1.5M tokens by default
 
         // Initialize cache
@@ -453,260 +257,212 @@ UUPSUpgradeable
     }
 
     /**
-     * @dev Set the LiquidityManager for price discovery
-     * @param _liquidityManager Address of the LiquidityManager contract
+     * @dev Set the token address after deployment
+     * @param _token Address of the ERC20 token contract
      */
-    function setLiquidityManager(address _liquidityManager) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_liquidityManager != address(0), "Zero address");
-        liquidityManager = ILiquidityManager(_liquidityManager);
-        emit LiquidityManagerSet(_liquidityManager);
+    function setSaleToken(address _token) external onlyRole(Constants.ADMIN_ROLE) {
+        if (address(token) != address(0)) revert TokenAlreadySet();
+        if (_token == address(0)) revert ZeroTokenAddress();
+        token = ERC20Upgradeable(_token);
+        emit ContractReferenceUpdated(Constants.TOKEN_NAME, address(0), _token);
     }
 
     /**
-    * @dev Configure dynamic pricing settings
-     * @param _useDynamicPricing Whether to use dynamic pricing
-     * @param _priceCacheTimeout Cache timeout in seconds
-     * @param _maxDeviationThreshold Max deviation threshold (scaled by 10000)
+     * @dev Set the vesting contract
+     * @param _vestingContract Address of the vesting contract
      */
-    function configureDynamicPricing(
-        bool _useDynamicPricing,
-        uint32 _priceCacheTimeout,
-        uint16 _maxDeviationThreshold
-    ) external onlyRole(Constants.ADMIN_ROLE) {
-        useDynamicPricing = _useDynamicPricing;
-        priceCacheTimeout = _priceCacheTimeout;
-        maxPriceDeviationThreshold = _maxDeviationThreshold;
+    function setVestingContract(address _vestingContract) external onlyRole(Constants.ADMIN_ROLE) {
+        if (_vestingContract == address(0)) revert ZeroComponentAddress();
+        vestingContract = ITeachTokenVesting(_vestingContract);
+        emit ComponentSet("VestingContract", _vestingContract);
     }
 
     /**
-     * @dev Add a payment token with custom configurations
-     * @param _token Token address
-     * @param _minAmount Minimum purchase amount in USD
-     * @param _maxAmount Maximum purchase amount in USD
-     * @param _priceOracle Custom price oracle (can be zero)
+     * @dev Set the price feed contract
+     * @param _priceFeed Address of the price feed contract
      */
-    function addPaymentToken(
-        address _token,
-        uint256 _minAmount,
-        uint256 _maxAmount,
-        address _priceOracle
-    ) external onlyRole(Constants.ADMIN_ROLE) {
-        _addPaymentToken(_token, _minAmount, _maxAmount, _priceOracle);
+    function setPriceFeed(address _priceFeed) external onlyRole(Constants.ADMIN_ROLE) {
+        if (_priceFeed == address(0)) revert ZeroComponentAddress();
+        priceFeed = ITokenPriceFeed(_priceFeed);
+        emit ComponentSet("PriceFeed", _priceFeed);
     }
 
     /**
-     * @dev Internal function to add payment token
+     * @dev Set the tier manager contract
+     * @param _tierManager Address of the tier manager contract
      */
-    function _addPaymentToken(
-        address _token,
-        uint256 _minAmount,
-        uint256 _maxAmount,
-        address _priceOracle
-    ) internal {
-        require(_token != address(0), "Zero token address");
-        require(_minAmount > 0, "Min amount must be > 0");
-        require(_maxAmount >= _minAmount, "Max amount must be >= min");
+    function setTierManager(address _tierManager) external onlyRole(Constants.ADMIN_ROLE) {
+        if (_tierManager == address(0)) revert ZeroComponentAddress();
+        tierManager = ITierManager(_tierManager);
+        emit ComponentSet("TierManager", _tierManager);
+    }
 
-        // Check if token is already supported
-        if (!paymentTokens[_token].isActive) {
-            supportedPaymentTokensArray.push(_token);
+    /**
+     * @dev Set the emergency manager contract
+     * @param _emergencyManager Address of the emergency manager contract
+     */
+    function setEmergencyManager(address _emergencyManager) external onlyRole(Constants.ADMIN_ROLE) {
+        if (_emergencyManager == address(0)) revert ZeroComponentAddress();
+        emergencyManager = IEmergencyManager(_emergencyManager);
+        emit ComponentSet("EmergencyManager", _emergencyManager);
+    }
+
+    /**
+     * @dev Set the presale start and end times
+     * @param _start Start timestamp
+     * @param _end End timestamp
+     */
+    function setPresaleTimes(uint64 _start, uint64 _end) external onlyRole(Constants.ADMIN_ROLE) {
+        if (_end <= _start) revert InvalidPresaleTimes(_start, _end);
+        presaleStart = _start;
+        presaleEnd = _end;
+        emit PresaleTimesUpdated(_start, _end);
+    }
+
+    /**
+     * @dev Purchase tokens with any supported payment token
+     * @param _tierId Tier to purchase from
+     * @param _paymentToken Payment token address
+     * @param _paymentAmount Amount of payment tokens
+     */
+    function purchaseWithToken(
+        uint8 _tierId,
+        address _paymentToken,
+        uint256 _paymentAmount
+    ) public nonReentrant whenNotPaused {
+        // Validate payment token
+        if (!priceFeed.isTokenSupported(_paymentToken)) revert UnsupportedPaymentToken(_paymentToken);
+
+        // Convert payment to USD
+        uint256 usdAmount = priceFeed.convertTokenToUsd(_paymentToken, _paymentAmount);
+
+        // Check rate limit
+        _validateRateLimit(usdAmount);
+
+        // Validate presale status and tier
+        if (block.timestamp < presaleStart || block.timestamp > presaleEnd) revert PresaleNotActive();
+
+        // Fetch tier details
+        ITierManager.PresaleTier memory tier = tierManager.getTierDetails(_tierId);
+        if (!tier.isActive) revert TierNotActive(_tierId);
+
+        // Validate purchase amount in USD
+        if (usdAmount < tier.minPurchase) revert BelowMinPurchase(usdAmount, tier.minPurchase);
+        if (usdAmount > tier.maxPurchase) revert AboveMaxPurchase(usdAmount, tier.maxPurchase);
+
+        // Check user tier limits
+        uint256 userTierTotal = purchases[msg.sender].tierAmounts.length > _tierId
+            ? purchases[msg.sender].tierAmounts[_tierId] + usdAmount
+            : usdAmount;
+        if (userTierTotal > tier.maxPurchase) revert ExceedsMaxTierPurchase(userTierTotal, tier.maxPurchase);
+
+        // Calculate TEACH token amount based on USD value
+        uint256 tokenAmount = (usdAmount * 10**18) / tier.price;
+
+        // Check total address limit
+        if (addressTokensPurchased[msg.sender] + tokenAmount > maxTokensPerAddress)
+            revert ExceedsMaxTokensPerAddress(addressTokensPurchased[msg.sender] + tokenAmount, maxTokensPerAddress);
+
+        // Check if there's enough allocation left
+        if (tier.sold + tokenAmount > tier.allocation)
+            revert InsufficientTierAllocation(tokenAmount, tier.allocation - tier.sold);
+
+        // Calculate bonus
+        uint8 bonusPercentage = tierManager.getCurrentBonus(_tierId);
+        uint256 bonusTokenAmount = 0;
+
+        if (bonusPercentage > 0) {
+            bonusTokenAmount = (tokenAmount * bonusPercentage) / 100;
         }
 
-        // Get token decimals
-        uint8 decimals = ERC20Upgradeable(_token).decimals();
+        // Total tokens
+        uint256 totalTokenAmount = tokenAmount + bonusTokenAmount;
 
-        // Store token info
-        paymentTokens[_token] = PaymentTokenInfo({
-            isActive: true,
-            minAmount: _minAmount,
-            maxAmount: _maxAmount,
-            priceOracle: _priceOracle,
-            decimals: decimals,
-            totalCollected: 0
-        });
+        // Update tier data
+        tierManager.recordPurchase(_tierId, tokenAmount);
 
-        // Set fallback price rate (1:1 for stablecoins, 0 for others)
-        if (_token == defaultStablecoin) {
-            // Default stablecoin has 1:1 rate
-            fallbackPriceRates[_token] = 10**decimals;
-        } else {
-            // Other tokens will use oracle pricing
-            fallbackPriceRates[_token] = 0;
+        // Update user purchase data
+        Purchase storage userPurchase = purchases[msg.sender];
+        userPurchase.tokens += tokenAmount;
+        userPurchase.bonusAmount += bonusTokenAmount;
+        userPurchase.usdAmount += usdAmount;
+        userPurchase.paymentsByToken[_paymentToken] += _paymentAmount;
+
+        // Ensure tierAmounts array is long enough
+        while (userPurchase.tierAmounts.length <= _tierId) {
+            userPurchase.tierAmounts.push(0);
+        }
+        userPurchase.tierAmounts[_tierId] += usdAmount;
+
+        // Record payment collection
+        priceFeed.recordPaymentCollection(_paymentToken, _paymentAmount);
+
+        // Transfer payment tokens to treasury
+        ERC20Upgradeable paymentTokenErc20 = ERC20Upgradeable(_paymentToken);
+        bool transferSuccess = paymentTokenErc20.transferFrom(msg.sender, treasury, _paymentAmount);
+        if (!transferSuccess) revert PaymentTransferFailed();
+
+        // Update user tokens purchased
+        addressTokensPurchased[msg.sender] += totalTokenAmount;
+
+        // Create vesting schedule if needed
+        if (!userPurchase.vestingCreated) {
+            (uint8 tgePercentage, uint16 vestingMonths) = tierManager.getTierVestingParams(_tierId);
+
+            uint256 scheduleId = vestingContract.createLinearVestingSchedule(
+                msg.sender,
+                totalTokenAmount,
+                0, // No cliff
+                vestingMonths * 30 days,
+                tgePercentage,
+                ITeachTokenVesting.BeneficiaryGroup.PUBLIC_SALE,
+                false // Not revocable
+            );
+            userPurchase.vestingScheduleId = scheduleId;
+            userPurchase.vestingCreated = true;
+        }
+
+        // Update rate limit tracking
+        lastPurchaseTime[msg.sender] = block.timestamp;
+
+        // Record purchase with StabilityFund
+        if (address(registry) != address(0) &&
+            registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
+            try this.recordPurchaseInStabilityFund(msg.sender, tokenAmount, usdAmount) {}
+            catch (bytes memory reason) {
+                emit StabilityFundRecordingFailed(msg.sender, string(reason));
+            }
         }
 
         // Emit event
-        emit PaymentTokenAdded(_token, _minAmount, _maxAmount);
-
-        // If custom price oracle provided
-        if (_priceOracle != address(0)) {
-            emit PriceOracleSet(_token, _priceOracle);
-        }
+        emit PurchaseWithToken(
+            msg.sender,
+            _tierId,
+            _paymentToken,
+            _paymentAmount,
+            tokenAmount,
+            usdAmount
+        );
     }
 
     /**
-     * @dev Remove a payment token
-     * @param _token Token address to remove
+     * @dev Purchase tokens in a specific tier with the default stablecoin
+     * @param _tierId Tier to purchase from
+     * @param _usdAmount USD amount to spend (scaled by 1e6)
      */
-    function removePaymentToken(address _token) external onlyRole(Constants.ADMIN_ROLE) {
-        // Cannot remove default stablecoin
-        require(_token != defaultStablecoin, "Cannot remove default stablecoin");
+    function purchase(uint8 _tierId, uint256 _usdAmount) external nonReentrant whenNotPaused purchaseRateLimit(_usdAmount) {
+        // Get supported payment tokens
+        address[] memory supportedTokens = priceFeed.getSupportedPaymentTokens();
 
-        // Deactivate token
-        paymentTokens[_token].isActive = false;
+        // Default to first token (usually stablecoin)
+        address defaultToken = supportedTokens.length > 0 ? supportedTokens[0] : address(0);
+        require(defaultToken != address(0), "No payment tokens configured");
 
-        // Remove from array (swap and pop)
-        for (uint i = 0; i < supportedPaymentTokensArray.length; i++) {
-            if (supportedPaymentTokensArray[i] == _token) {
-                // Swap with last element and pop
-                supportedPaymentTokensArray[i] = supportedPaymentTokensArray[supportedPaymentTokensArray.length - 1];
-                supportedPaymentTokensArray.pop();
-                break;
-            }
-        }
+        // Convert USD to default token amount
+        uint256 paymentAmount = priceFeed.convertUsdToToken(defaultToken, _usdAmount);
 
-        emit PaymentTokenRemoved(_token);
-    }
-
-    /**
-     * @dev Set fallback price rate for a token
-     * @param _token Token address
-     * @param _rate Price rate relative to USD (scaled by token decimals)
-     */
-    function setFallbackPriceRate(address _token, uint256 _rate) external onlyRole(Constants.ADMIN_ROLE) {
-        require(paymentTokens[_token].isActive, "Token not active");
-        require(_rate > 0, "Rate must be > 0");
-
-        uint256 oldRate = fallbackPriceRates[_token];
-        fallbackPriceRates[_token] = _rate;
-
-        emit PriceRateUpdated(_token, oldRate, _rate);
-    }
-
-    /**
-     * @dev Get current USD price of a token
-     * @param _token Token address
-     * @return price Token price in USD (scaled by PRICE_DECIMALS)
-     */
-    function getTokenUsdPrice(address _token) public view returns (uint256 price) {
-        // For default stablecoin, return 1:1
-        if (_token == defaultStablecoin) {
-            return 10**6; // $1 with 6 decimals precision
-        }
-
-        // Check if we should use dynamic pricing
-        if (!useDynamicPricing) {
-            // Use fallback rates directly
-            return _convertTokenPriceToUsd(_token, fallbackPriceRates[_token]);
-        }
-
-        // Check if we have a cached price that's still valid
-        if (lastPriceUpdate[_token] > 0 &&
-            block.timestamp < lastPriceUpdate[_token] + priceCacheTimeout) {
-            return cachedPriceRates[_token];
-        }
-
-        // Try to get price from custom oracle if available
-        if (paymentTokens[_token].priceOracle != address(0)) {
-            try ILiquidityManager(paymentTokens[_token].priceOracle).getTokenPrice(
-                _token, defaultStablecoin
-            ) returns (uint96 oraclePrice) {
-                return _convertTokenPriceToUsd(_token, oraclePrice);
-            } catch {
-                // Oracle failed, continue to next price source
-            }
-        }
-
-        // Try to get price from liquidity manager if available
-        if (address(liquidityManager) != address(0)) {
-            try liquidityManager.getTokenPrice(_token, defaultStablecoin) returns (uint96 lmPrice) {
-                return _convertTokenPriceToUsd(_token, lmPrice);
-            } catch {
-                // Liquidity manager failed, continue to next price source
-            }
-        }
-
-        // Try to get price from StabilityFund if this is the main token
-        if (_token == address(token) && address(registry) != address(0)) {
-            try registry.getContractAddress(Constants.STABILITY_FUND_NAME) returns (address stabilityFund) {
-                try IPlatformStabilityFund(stabilityFund).getVerifiedPrice() returns (uint96 sfPrice) {
-                    return _convertTokenPriceToUsd(_token, sfPrice);
-                } catch {
-                    // Stability fund failed, continue to fallback
-                }
-            } catch {
-                // Registry lookup failed, continue to fallback
-            }
-        }
-
-        // Fall back to manual rate if all oracles fail
-        if (fallbackPriceRates[_token] > 0) {
-            return _convertTokenPriceToUsd(_token, fallbackPriceRates[_token]);
-        }
-
-        // If we get here, we cannot price the token
-        revert NoPriceSourceAvailable(_token);
-    }
-
-    /**
-     * @dev Convert token amount to USD equivalent
-     * @param _token Token address
-     * @param _amount Amount of tokens
-     * @return usdAmount USD equivalent (scaled by PRICE_DECIMALS)
-     */
-    function convertTokenToUsd(address _token, uint256 _amount) public view returns (uint256 usdAmount) {
-        // Get token's USD price
-        uint256 tokenUsdPrice = getTokenUsdPrice(_token);
-
-        // Get token decimals
-        uint8 decimals = paymentTokens[_token].decimals;
-
-        // Calculate USD amount
-        // usdAmount = _amount * tokenUsdPrice / 10^decimals
-        usdAmount = (_amount * tokenUsdPrice) / (10**decimals);
-
-        return usdAmount;
-    }
-
-    /**
-     * @dev Convert USD amount to token amount
-     * @param _token Token address
-     * @param _usdAmount USD amount (scaled by PRICE_DECIMALS)
-     * @return tokenAmount Equivalent token amount
-     */
-    function convertUsdToToken(address _token, uint256 _usdAmount) public view returns (uint256 tokenAmount) {
-        // Get token's USD price
-        uint256 tokenUsdPrice = getTokenUsdPrice(_token);
-
-        // Get token decimals
-        uint8 decimals = paymentTokens[_token].decimals;
-
-        // Calculate token amount
-        // tokenAmount = _usdAmount * 10^decimals / tokenUsdPrice
-        tokenAmount = (_usdAmount * (10**decimals)) / tokenUsdPrice;
-
-        return tokenAmount;
-    }
-
-    /**
-     * @dev Helper function to convert token price to USD format
-     * @param _token Token address
-     * @param _tokenPrice Token price
-     * @return usdPrice USD price (scaled by PRICE_DECIMALS)
-     */
-    function _convertTokenPriceToUsd(address _token, uint256 _tokenPrice) internal view returns (uint256 usdPrice) {
-        // Get token decimals
-        uint8 decimals = paymentTokens[_token].decimals;
-
-        // Convert price to our standard USD format with 6 decimals
-        if (decimals > PRICE_DECIMALS) {
-            usdPrice = _tokenPrice / (10**(decimals - PRICE_DECIMALS));
-        } else if (decimals < PRICE_DECIMALS) {
-            usdPrice = _tokenPrice * (10**(PRICE_DECIMALS - decimals));
-        } else {
-            usdPrice = _tokenPrice;
-        }
-
-        return usdPrice;
+        // Call multi-token purchase function
+        purchaseWithToken(_tierId, defaultToken, paymentAmount);
     }
 
     /**
@@ -726,719 +482,6 @@ UUPSUpgradeable
         if (_usdAmount > maxPurchaseAmount) {
             revert AboveMaxPurchase(_usdAmount, maxPurchaseAmount);
         }
-    }
-
-    /**
-     * @dev Get list of supported payment tokens
-     * @return tokens Array of supported payment token addresses
-     */
-    function getSupportedPaymentTokens() public view returns (address[] memory) {
-        return supportedPaymentTokensArray;
-    }
-
-    /**
-     * @dev Get payment token details
-     * @param _token Token address
-     * @return isActive Whether token is active
-     * @return minAmount Minimum purchase amount in USD
-     * @return maxAmount Maximum purchase amount in USD
-     * @return priceOracle Address of custom price oracle
-     * @return totalCollected Total amount collected in this token
-     * @return currentPrice Current USD price (scaled by PRICE_DECIMALS)
-     */
-    function getPaymentTokenDetails(address _token) external view returns (
-        bool isActive,
-        uint256 minAmount,
-        uint256 maxAmount,
-        address priceOracle,
-        uint256 totalCollected,
-        uint256 currentPrice
-    ) {
-        PaymentTokenInfo storage tokenInfo = paymentTokens[_token];
-
-        return (
-            tokenInfo.isActive,
-            tokenInfo.minAmount,
-            tokenInfo.maxAmount,
-            tokenInfo.priceOracle,
-            tokenInfo.totalCollected,
-            getTokenUsdPrice(_token)
-        );
-    }
-    
-    /**
-     * @dev Update cached token price
-     * @param _token Token address
-     */
-    function updateTokenPrice(address _token) external {
-        require(paymentTokens[_token].isActive, "Token not active");
-
-        // Check if timeout has elapsed
-        if (lastPriceUpdate[_token] > 0 &&
-            block.timestamp < lastPriceUpdate[_token] + priceCacheTimeout) {
-            revert("Cache too recent");
-        }
-
-        // Get current price
-        uint256 price = getTokenUsdPrice(_token);
-
-        // Check for large deviation from fallback price
-        if (fallbackPriceRates[_token] > 0) {
-            uint256 fallbackUsdPrice = _convertTokenPriceToUsd(_token, fallbackPriceRates[_token]);
-
-            uint256 deviation;
-            if (price > fallbackUsdPrice) {
-                deviation = ((price - fallbackUsdPrice) * 10000) / fallbackUsdPrice;
-            } else {
-                deviation = ((fallbackUsdPrice - price) * 10000) / fallbackUsdPrice;
-            }
-
-            // If deviation is too high, revert or use fallback
-            if (deviation > maxPriceDeviationThreshold) {
-                revert PriceDeviationTooHigh(price, fallbackUsdPrice, deviation);
-            }
-        }
-
-        // Update cache
-        cachedPriceRates[_token] = price;
-        lastPriceUpdate[_token] = block.timestamp;
-
-        emit PriceRateUpdated(_token, cachedPriceRates[_token], price);
-    }
-    
-    /**
-     * @dev Update payment token configuration
-     * @param _token Token address
-     * @param _minAmount New minimum purchase amount
-     * @param _maxAmount New maximum purchase amount
-     * @param _priceOracle New price oracle (or zero for default)
-     */
-    function updatePaymentToken(
-        address _token,
-        uint256 _minAmount,
-        uint256 _maxAmount,
-        address _priceOracle
-    ) external onlyRole(Constants.ADMIN_ROLE) {
-        require(paymentTokens[_token].isActive, "Token not active");
-        require(_minAmount > 0, "Min amount must be > 0");
-        require(_maxAmount >= _minAmount, "Max amount must be >= min");
-
-        // Update token info
-        paymentTokens[_token].minAmount = _minAmount;
-        paymentTokens[_token].maxAmount = _maxAmount;
-
-        // Update price oracle if provided
-        if (_priceOracle != paymentTokens[_token].priceOracle) {
-            paymentTokens[_token].priceOracle = _priceOracle;
-            emit PriceOracleSet(_token, _priceOracle);
-        }
-
-        emit PaymentTokenUpdated(_token, _minAmount, _maxAmount);
-    }
-    
-    function addRecorder(address _recorder) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _grantRole(Constants.RECORDER_ROLE, _recorder);
-    }
-
-    /**
-     * @dev Records a token purchase for tracking
-     * @param _user Address of the user
-     * @param _tokenAmount Amount of tokens purchased
-     * @param _purchaseValue Value paid in stable coin units
-     */
-    function recordTokenPurchase(
-        address _user,
-        uint96 _tokenAmount,
-        uint96 _purchaseValue
-    ) external onlyRole(Constants.RECORDER_ROLE) whenNotPaused {
-        // This function only records data - no storage needed
-        if (address(registry) != address(0) && registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
-            try this.recordPurchaseInStabilityFund(_user, _tokenAmount, _purchaseValue) {} catch {}
-        }
-    }
-
-    /**
-     * @dev Set the token address after deployment
-     * @param _token Address of the ERC20 token contract
-     */
-    function setSaleToken(ERC20Upgradeable _token) external onlyOwner {
-        if (address(token) != address(0)) revert TokenAlreadySet();
-        token = _token;
-    }
-
-    function setVestingContract(address _vestingContract) external onlyRole(Constants.ADMIN_ROLE) {
-        if (_vestingContract == address(0)) revert ZeroTokenAddress();
-        vestingContract = ITeachTokenVesting(_vestingContract);
-    }
-    
-    /**
-     * @dev Set the presale start and end times
-     * @param _start Start timestamp
-     * @param _end End timestamp
-     */
-    function setPresaleTimes(uint64 _start, uint64 _end) external onlyOwner {
-        if (_end <= _start) revert InvalidPresaleTimes(_start, _end);
-        presaleStart = _start;
-        presaleEnd = _end;
-        emit PresaleTimesUpdated(_start, _end);
-    }
-
-    /**
-     * @dev Activate or deactivate a specific tier
-     * @param _tierId Tier ID to modify
-     * @param _isActive New active status
-     */
-    function setTierStatus(uint8 _tierId, bool _isActive) external onlyOwner {
-        if (_tierId >= tiers.length) revert InvalidTierId(_tierId);
-        tiers[_tierId].isActive = _isActive;
-        emit TierStatusChanged(_tierId, _isActive);
-    }
-
-    /**
-     * @dev Updates a tier configuration
-     * @param _tierId ID of the tier to update
-     * @param _price New price in USD (scaled by 1e6)
-     * @param _allocation New allocation in tokens
-     * @param _minPurchase New minimum purchase amount in USD
-     * @param _maxPurchase New maximum purchase amount in USD
-     */
-    function configureTier(
-        uint8 _tierId,
-        uint96 _price,
-        uint256 _allocation,
-        uint256 _minPurchase,
-        uint256 _maxPurchase
-    ) external onlyRole(Constants.ADMIN_ROLE) {
-        if (_tierId >= tiers.length) revert InvalidTierId(_tierId);
-        if (_price == 0) revert TierPriceInvalid();
-        if(_allocation == 0) revert TierAllocationInvalid();
-        if(_minPurchase == 0 || _maxPurchase < _minPurchase) revert TierPurchaseLimitsInvalid();
-
-        tiers[_tierId].price = _price;
-        tiers[_tierId].allocation = _allocation;
-        tiers[_tierId].minPurchase = _minPurchase;
-        tiers[_tierId].maxPurchase = _maxPurchase;
-
-        emit TierConfigured(_tierId, _price, _allocation);
-    }
-
-    /**
-     * @dev Updates a bonus bracket for a tier
-     * @param _tierId ID of the tier
-     * @param _bracketId ID of the bracket (0-3)
-     * @param _fillPercentage New fill percentage threshold
-     * @param _bonusPercentage New bonus percentage
-     */
-    function configureBonusBracket(
-        uint8 _tierId,
-        uint8 _bracketId,
-        uint96 _fillPercentage,
-        uint8 _bonusPercentage
-    ) external onlyRole(Constants.ADMIN_ROLE) {
-        if (_tierId >= tiers.length) revert InvalidTierId(_tierId);
-        if(_bracketId >= 4) revert InvalidBracketID();
-        if(_fillPercentage == 0 && _fillPercentage > 100) revert InvalidFillPercentage();
-
-        // Ensure each bracket has a higher fill percentage than the previous
-        if (_bracketId > 0) {
-            require(_fillPercentage > tierBonuses[_tierId][_bracketId - 1].fillPercentage,
-                "TieredTokenSale: fill percentage must be higher than previous bracket");
-        }
-
-        // Ensure worst bonus in a tier is better than best bonus in next tier (if not the last tier)
-        if (_tierId < 3 && _bracketId == 3) {
-            require(_bonusPercentage > tierBonuses[_tierId + 1][0].bonusPercentage,
-                "TieredTokenSale: worst bonus must be better than next tier's best bonus");
-        }
-
-        tierBonuses[_tierId][_bracketId] = BonusBracket({
-            fillPercentage: _fillPercentage,
-            bonusPercentage: _bonusPercentage
-        });
-
-        emit BonusConfigured(_tierId, _bracketId, _fillPercentage, _bonusPercentage);
-    }
-
-    /**
-    * @dev Calculates the current bonus percentage for a tier
-     * @param _tierId ID of the tier
-     * @return Bonus percentage (scaled by 100)
-     */
-    function getCurrentBonus(uint8 _tierId) public view returns (uint8) {
-        if (_tierId >= tiers.length) revert InvalidTierId(_tierId);
-
-        PresaleTier memory tier = tiers[_tierId];
-
-        // If nothing sold yet, return the first bracket bonus
-        if (tier.sold == 0) {
-            return tierBonuses[_tierId][0].bonusPercentage;
-        }
-
-        // Calculate fill percentage
-        uint256 fillPercentage = (tier.sold * 100) / tier.allocation;
-
-        // Find the appropriate bracket
-        for (uint256 i = 3; i >= 0; i--) {
-            if (fillPercentage >= tierBonuses[_tierId][i].fillPercentage) {
-                return tierBonuses[_tierId][i].bonusPercentage;
-            }
-
-            // Special case for the first bracket
-            if (i == 0) {
-                return tierBonuses[_tierId][0].bonusPercentage;
-            }
-        }
-
-        // Default to the first bracket (should never reach here)
-        return tierBonuses[_tierId][0].bonusPercentage;
-    }
-
-    /**
-     * @dev Purchase tokens with any supported payment token
-     * @param _tierId Tier to purchase from
-     * @param _paymentToken Payment token address
-     * @param _paymentAmount Amount of payment tokens
-     */
-    function purchaseWithToken(
-        uint8 _tierId,
-        address _paymentToken,
-        uint256 _paymentAmount
-    ) public nonReentrant whenNotPaused {
-        // Validate payment token
-        if (!paymentTokens[_paymentToken].isActive) revert UnsupportedPaymentToken(_paymentToken);
-
-        // Convert payment to USD
-        uint256 usdAmount = convertTokenToUsd(_paymentToken, _paymentAmount);
-
-        // Check rate limit
-        _validateRateLimit(usdAmount);
-
-        // Validate presale status and tier
-        if (block.timestamp < presaleStart || block.timestamp > presaleEnd) revert("Presale not active");
-        if (_tierId >= tiers.length) revert("Invalid tier ID");
-        PresaleTier storage tier = tiers[_tierId];
-        if (!tier.isActive) revert("Tier not active");
-
-        // Validate purchase amount in USD
-        if (usdAmount < tier.minPurchase) revert("Below min purchase");
-        if (usdAmount > tier.maxPurchase) revert("Above max purchase");
-
-        // Check user tier limits
-        uint256 userTierTotal = purchases[msg.sender].tierAmounts.length > _tierId
-            ? purchases[msg.sender].tierAmounts[_tierId] + usdAmount
-            : usdAmount;
-        if (userTierTotal > tier.maxPurchase) revert("Exceeds tier max");
-
-        // Calculate TEACH token amount based on USD value
-        uint256 tokenAmount = (usdAmount * 10**18) / tier.price;
-
-        // Check total address limit
-        if (addressTokensPurchased[msg.sender] + tokenAmount > maxTokensPerAddress)
-            revert("Exceeds max tokens per address");
-
-        // Check if there's enough allocation left
-        if (tier.sold + tokenAmount > tier.allocation)
-            revert("Insufficient tier allocation");
-
-        // Calculate bonus
-        uint8 bonusPercentage = getCurrentBonus(_tierId);
-        uint256 bonusTokenAmount = 0;
-
-        if (bonusPercentage > 0) {
-            bonusTokenAmount = (tokenAmount * bonusPercentage) / 100;
-        }
-
-        // Total tokens
-        uint256 totalTokenAmount = tokenAmount + bonusTokenAmount;
-
-        // Update tier data
-        tier.sold += tokenAmount;
-
-        // Update user purchase data
-        Purchase storage userPurchase = purchases[msg.sender];
-        userPurchase.tokens += tokenAmount;
-        userPurchase.bonusAmount += bonusTokenAmount;
-        userPurchase.usdAmount += usdAmount;
-        userPurchase.paymentsByToken[_paymentToken] += _paymentAmount;
-
-        // Ensure tierAmounts array is long enough
-        while (userPurchase.tierAmounts.length <= _tierId) {
-            userPurchase.tierAmounts.push(0);
-        }
-        userPurchase.tierAmounts[_tierId] += usdAmount;
-
-        // Update token total collected
-        paymentTokens[_paymentToken].totalCollected += _paymentAmount;
-
-        // Transfer payment tokens to treasury
-        ERC20Upgradeable paymentTokenErc20 = ERC20Upgradeable(_paymentToken);
-        bool transferSuccess = paymentTokenErc20.transferFrom(msg.sender, treasury, _paymentAmount);
-        require(transferSuccess, "Payment transfer failed");
-
-        // Update user tokens purchased
-        addressTokensPurchased[msg.sender] += totalTokenAmount;
-
-        // Create vesting schedule if needed
-        if (!userPurchase.vestingCreated) {
-            uint256 scheduleId = vestingContract.createLinearVestingSchedule(
-                msg.sender,
-                totalTokenAmount,
-                0, // No cliff
-                tier.vestingMonths * 30 days,
-                tier.vestingTGE,
-                ITeachTokenVesting.BeneficiaryGroup.PUBLIC_SALE,
-                false // Not revocable
-            );
-            userPurchase.vestingScheduleId = scheduleId;
-            userPurchase.vestingCreated = true;
-        }
-
-        // Update rate limit tracking
-        lastPurchaseTime[msg.sender] = block.timestamp;
-
-        // Record purchase with StabilityFund
-        if (address(registry) != address(0) &&
-            registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
-            try this.recordPurchaseInStabilityFund(msg.sender, tokenAmount, usdAmount) {}
-            catch {}
-        }
-
-        // Emit event
-        emit PurchaseWithToken(
-            msg.sender,
-            _tierId,
-            _paymentToken,
-            _paymentAmount,
-            tokenAmount,
-            usdAmount
-        );
-    }
-
-    /**
-    * @dev Purchase tokens in a specific tier
-     * @param _tierId Tier to purchase from
-     * @param _usdAmount USD amount to spend (scaled by 1e6)
-     */
-    function purchase(uint8 _tierId, uint256 _usdAmount) external nonReentrant whenNotPaused purchaseRateLimit(_usdAmount) {
-        // Convert USD to default stablecoin amount
-        uint256 paymentAmount = convertUsdToToken(defaultStablecoin, _usdAmount);
-
-        // Call multi-token purchase function
-        purchaseWithToken(_tierId, defaultStablecoin, paymentAmount);
-    }
-    /**
-     * @dev Purchase tokens in a specific tier
-     * @param _tierId Tier to purchase from
-     * @param _usdAmount USD amount to spend (scaled by 1e6)
-     */
-    /*function purchase(uint8 _tierId, uint256 _usdAmount) external nonReentrant whenNotPaused purchaseRateLimit(_usdAmount) {
-        if (block.timestamp < presaleStart || block.timestamp > presaleEnd) revert PresaleNotActive();
-        if (_tierId >= tiers.length) revert InvalidTierId(_tierId);
-        PresaleTier storage tier = tiers[_tierId];
-        if (!tier.isActive) revert TierNotActive(_tierId);
-
-        // Validate purchase amount
-        if (_usdAmount < tier.minPurchase) revert BelowMinPurchase(_usdAmount, tier.minPurchase);
-        if (_usdAmount > tier.maxPurchase) revert AboveMaxPurchase(_usdAmount, tier.maxPurchase);
-
-        // Check if user's total purchase would exceed max
-        uint256 userTierTotal = purchases[msg.sender].tierAmounts.length > _tierId
-            ? purchases[msg.sender].tierAmounts[_tierId] + _usdAmount
-            : _usdAmount;
-        if (userTierTotal > tier.maxPurchase) 
-            revert ExceedsMaxTierPurchase(userTierTotal, tier.maxPurchase);
-
-        // Calculate token amount
-        uint256 tokenAmount = (_usdAmount * 10**6) / tier.price;
-
-        // Check total cap per address
-        if (addressTokensPurchased[msg.sender] + tokenAmount > maxTokensPerAddress) 
-            revert ExceedsMaxTokensPerAddress(addressTokensPurchased[msg.sender] + tokenAmount, 
-                maxTokensPerAddress);
-        
-        // Check if there's enough allocation left
-        if (tier.sold + tokenAmount >= tier.allocation) 
-            revert InsufficientTierAllocation(tokenAmount, tier.allocation - tier.sold);
-
-        // Calculate bonus percentage
-        uint8 bonusPercentage = getCurrentBonus(_tierId);
-
-        uint256 bonusTokenAmount = 0;
-        
-        // Calculate bonus token amount
-        if(bonusPercentage > 0){
-            bonusTokenAmount = (tokenAmount * bonusPercentage) / 100;
-        }
-        
-        // Total tokens to transfer
-        uint256 totalTokenAmount = tokenAmount + bonusTokenAmount;
-        
-        // Update tier data
-        tier.sold += tokenAmount;
-
-        // Update user purchase data
-        Purchase storage userPurchase = purchases[msg.sender];
-        userPurchase.tokens += tokenAmount;
-        userPurchase.bonusAmount += bonusTokenAmount;
-        userPurchase.usdAmount += _usdAmount;
-
-        // Transfer payment tokens from user to treasury
-        if (!paymentToken.transferFrom(msg.sender, treasury, _usdAmount)) 
-            revert PaymentTransferFailed();
-
-        // Update total tokens purchased by address
-        addressTokensPurchased[msg.sender] += totalTokenAmount;
-
-        // Ensure tierAmounts array is long enough
-        while (userPurchase.tierAmounts.length <= _tierId) {
-            userPurchase.tierAmounts.push(0);
-        }
-        userPurchase.tierAmounts[_tierId] += _usdAmount;
-
-        // Record purchase for tracking using the StabilityFund
-        if (address(registry) != address(0) && registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
-            try this.recordPurchaseInStabilityFund(msg.sender, tokenAmount, _usdAmount) {} catch {}
-        }
-
-        if (!userPurchase.vestingCreated) { // Add this field to Purchase struct
-            uint256 totalTokens = userPurchase.tokens + userPurchase.bonusAmount;
-            uint256 scheduleId = vestingContract.createLinearVestingSchedule(
-                msg.sender,
-                totalTokens,
-                0, // No cliff
-                tier.vestingMonths * 30 days, // Convert months to seconds
-                tier.vestingTGE, // TGE percentage
-                ITeachTokenVesting.BeneficiaryGroup.PUBLIC_SALE,
-                false // Not revocable
-            );
-            userPurchase.vestingScheduleId = uint32(scheduleId);
-            userPurchase.vestingCreated = true;
-        }
-        emit TierPurchase(msg.sender, _tierId, tokenAmount, _usdAmount);
-    }*/
-
-    /**
-     * @dev Sets up the default bonus structure for all tiers
-     * First 25% filled: 20%/18%/15%/12% bonus
-     * 26-50% filled: 15%/13%/10%/8% bonus
-     * 51-75% filled: 10%/8%/5%/4% bonus
-     * 76-100% filled: 5%/3%/2%/1% bonus
-     */
-    function _setupDefaultBonuses() internal {
-        // Tier 1 bonuses
-        tierBonuses[0][0] = BonusBracket({ fillPercentage: 25, bonusPercentage: 20 });  // 20% bonus
-        tierBonuses[0][1] = BonusBracket({ fillPercentage: 50, bonusPercentage: 15 });  // 15% bonus
-        tierBonuses[0][2] = BonusBracket({ fillPercentage: 75, bonusPercentage: 10 });  // 10% bonus
-        tierBonuses[0][3] = BonusBracket({ fillPercentage: 100, bonusPercentage: 5 });  // 5% bonus
-
-        // Tier 2 bonuses
-        tierBonuses[1][0] = BonusBracket({ fillPercentage: 25, bonusPercentage: 18 });  // 18% bonus
-        tierBonuses[1][1] = BonusBracket({ fillPercentage: 50, bonusPercentage: 13 });  // 13% bonus
-        tierBonuses[1][2] = BonusBracket({ fillPercentage: 75, bonusPercentage: 8 });   // 8% bonus
-        tierBonuses[1][3] = BonusBracket({ fillPercentage: 100, bonusPercentage: 3 });  // 3% bonus
-
-        // Tier 3 bonuses
-        tierBonuses[2][0] = BonusBracket({ fillPercentage: 25, bonusPercentage: 15 });  // 15% bonus
-        tierBonuses[2][1] = BonusBracket({ fillPercentage: 50, bonusPercentage: 10 });  // 10% bonus
-        tierBonuses[2][2] = BonusBracket({ fillPercentage: 75, bonusPercentage: 5 });   // 5% bonus
-        tierBonuses[2][3] = BonusBracket({ fillPercentage: 100, bonusPercentage: 2 });  // 2% bonus
-
-        // Tier 4 bonuses
-        tierBonuses[3][0] = BonusBracket({ fillPercentage: 25, bonusPercentage: 12 });  // 12% bonus
-        tierBonuses[3][1] = BonusBracket({ fillPercentage: 50, bonusPercentage: 8 });   // 8% bonus
-        tierBonuses[3][2] = BonusBracket({ fillPercentage: 75, bonusPercentage: 4 });   // 4% bonus
-        tierBonuses[3][3] = BonusBracket({ fillPercentage: 100, bonusPercentage: 1 });  // 1% bonus
-
-        for (uint256 i = 0; i < 4; i++) {
-            for (uint256 j = 0; j < 4; j++) {
-                emit BonusConfigured(i, j, tierBonuses[i][j].fillPercentage, tierBonuses[i][j].bonusPercentage);
-            }
-        }
-    }
-    
-    /**
-     * @dev Complete Token Generation Event, allowing initial token claims
-     */
-    function completeTGE() external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
-        require(!tgeCompleted, "TGE already completed");
-        require(block.timestamp > presaleEnd, "Presale still active");
-        tgeCompleted = true;
-    }
-
-    /**
-     * @dev Calculate currently claimable tokens for a user
-     * @param _user Address to check
-     * @return claimable Amount of tokens claimable
-     */
-    function claimableTokens(address _user) public view returns (uint256 claimable) {
-        if (!tgeCompleted) return 0;
-
-        Purchase storage userPurchase = purchases[_user];
-        uint256 totalPurchased = userPurchase.tokens;
-        if (totalPurchased == 0) return 0;
-        
-        uint256 scheduleId = userPurchase.vestingScheduleId; 
-        claimable = vestingContract.calculateClaimableAmount( scheduleId);
-        claimable += userPurchase.bonusAmount;
-    }
-
-    /**
-     * @dev Withdraw available tokens based on vesting schedule
-     */
-    function withdrawTokens() external nonReentrant whenNotPaused {
-        if (!tgeCompleted) revert TGENotCompleted();
-
-        Purchase storage userPurchase = purchases[msg.sender];
-        uint256 scheduleId = userPurchase.vestingScheduleId;
-
-        // Claim tokens through vesting contract
-        uint256 claimed = vestingContract.claimTokens(scheduleId);
-        if (claimed == 0) revert NoTokensToWithdraw();
-
-        emit TokensWithdrawn(msg.sender, uint96(claimed));
-    }
-
-    /**
-     * @dev Emergency function to recover tokens sent to this contract by mistake
-     * @param _token Token address to recover
-     */
-    function recoverTokens(ERC20Upgradeable _token) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(address(_token) != address(token), "Cannot recover tokens");
-        uint256 balance = _token.balanceOf(address(this));
-        require(balance > 0, "No tokens to recover");
-        require(_token.transfer(owner(), balance), "Token recovery failed");
-    }
-
-    // New function to set tier deadlines
-    function setTierDeadline(uint8 _tier, uint64 _deadline) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (_tier >= tiers.length) revert InvalidTierId(_tier);
-        if (_deadline <= block.timestamp) revert DeadlineInPast(_deadline);
-        tierDeadlines[_tier] = _deadline;
-        emit TierDeadlineUpdated(_tier, _deadline);
-    }
-
-    // New function to manually advance tier
-    function advanceTier() external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (currentTier >= tierCount - 1) revert TierAlreadyAdvanced();
-        currentTier++;
-        emit TierAdvanced(currentTier);
-    }
-
-    // New function to extend current tier
-    function extendTier(uint64 _newDeadline) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (_newDeadline <= tierDeadlines[currentTier]) revert DeadlineInPast(_newDeadline);
-        tierDeadlines[currentTier] = _newDeadline;
-        emit TierExtended(currentTier, _newDeadline);
-    }
-
-    // Get current tier based on tokens sold and deadlines
-    function getCurrentTier() public view returns (uint8) {
-        // First check if any tier deadlines have passed
-        for (uint8 i = currentTier; i < tierCount - 1; i++) {
-            if (tierDeadlines[i] > 0 && block.timestamp >= tierDeadlines[i]) {
-                return i + 1; // Move to next tier if deadline passed
-            }
-        }
-
-        // Then check token sales
-        uint256 tokensSold = totalTokensSold();
-        for (uint8 i = uint8(tierCount - 1); i > 0; i--) {
-            if (tokensSold >= maxTokensForTier[i-1]) {
-                return i;
-            }
-        }
-        return 0; // Default to first tier
-    }
-
-    /**
-     * @dev Get the number of tokens remaining in the current tier
-     * @return amount The number of tokens remaining
-     */
-    function tokensRemainingInCurrentTier() external view returns (uint96 amount) {
-        return tokensRemainingInTier(currentTier);
-    }
-
-    /**
-     * @dev Set the maximum tokens that can be purchased by a single address
-     * @param _maxTokens The maximum number of tokens
-     */
-    function setMaxTokensPerAddress(uint96 _maxTokens) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(_maxTokens > 0, "Max tokens must be positive");
-        maxTokensPerAddress = _maxTokens;
-    }
-
-    /**
-     * @dev Emergency function to allow setting emergency state
-     * @param _stateValue The emergency state to set (0=NORMAL, 1=MINOR, 2=CRITICAL)
-     */
-    function _setEmergencyState(uint8 _stateValue) internal onlyRole(Constants.EMERGENCY_ROLE) {
-        EmergencyState newState;
-        if (_stateValue == 0) {
-            newState = EmergencyState.NORMAL;
-        } else if (_stateValue == 1) {
-            newState = EmergencyState.MINOR_EMERGENCY;
-        } else {
-            newState = EmergencyState.CRITICAL_EMERGENCY;
-        }
-
-        EmergencyState oldState = emergencyState;
-        emergencyState = newState;
-
-        // Handle pause/unpause based on state
-        if (newState != EmergencyState.NORMAL && oldState == EmergencyState.NORMAL) {
-            emergencyPauseTime = uint64(block.timestamp);
-            emit EmergencyPaused(msg.sender, uint64(block.timestamp));
-        }
-
-        // Handle recovery mode
-        if (newState == EmergencyState.CRITICAL_EMERGENCY && oldState != EmergencyState.CRITICAL_EMERGENCY) {
-            emit EmergencyRecoveryInitiated(msg.sender, uint64(block.timestamp));
-        } else if (newState != EmergencyState.CRITICAL_EMERGENCY && oldState == EmergencyState.CRITICAL_EMERGENCY) {
-            // Reset approvals when leaving critical emergency
-            recoveryApprovalsCount = 0;
-            emit EmergencyRecoveryCompleted(msg.sender, uint64(block.timestamp));
-        }
-
-        emit EmergencyStateChanged(newState);
-    }
-
-    // External interface that other functions can call with this
-    function setEmergencyState(uint8 _stateValue) external onlyRole(Constants.EMERGENCY_ROLE) {
-        _setEmergencyState(_stateValue);
-    }
-
-    
-    /**
-     * @dev Declare different levels of emergency based on severity
-     * @param _stateEnum The emergency state to set
-     */
-    function declareEmergency(EmergencyState _stateEnum) external onlyRole(Constants.EMERGENCY_ROLE) {
-        _setEmergencyState(uint8(_stateEnum));
-    }
-
-    /**
-     * @dev Convenience function to pause presale
-     */
-    function pausePresale() external onlyRole(Constants.EMERGENCY_ROLE) {
-        _setEmergencyState(1); // Set to MINOR_EMERGENCY
-    }
-
-    /**
-     * @dev Convenience function to resume presale
-     */
-    function resumePresale() external onlyRole(DEFAULT_ADMIN_ROLE) {
-        // Only allow resuming from MINOR_EMERGENCY
-        require(emergencyState == EmergencyState.MINOR_EMERGENCY, "Cannot resume from critical state");
-        _setEmergencyState(0); // Set to NORMAL
-    }
-
-    /**
-     * @dev Sets the registry contract address
-     * @param _registry Address of the registry contract
-     */
-    function setRegistry(address _registry) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _setRegistry(_registry, Constants.CROWDSALE_NAME);
-        emit RegistrySet(_registry);
     }
 
     /**
@@ -1477,107 +520,131 @@ UUPSUpgradeable
     }
 
     /**
+     * @dev Complete Token Generation Event, allowing initial token claims
+     */
+    function completeTGE() external onlyRole(Constants.ADMIN_ROLE) whenNotPaused {
+        require(!tgeCompleted, "TGE already completed");
+        require(block.timestamp > presaleEnd, "Presale still active");
+        tgeCompleted = true;
+    }
+
+    /**
+     * @dev Calculate currently claimable tokens for a user
+     * @param _user Address to check
+     * @return claimable Amount of tokens claimable
+     */
+    function claimableTokens(address _user) public view returns (uint256 claimable) {
+        if (!tgeCompleted) return 0;
+
+        Purchase storage userPurchase = purchases[_user];
+        if (userPurchase.vestingScheduleId == 0) return 0;
+
+        // Get claimable amount from vesting contract
+        claimable = vestingContract.calculateClaimableAmount(userPurchase.vestingScheduleId);
+
+        return claimable;
+    }
+
+    /**
+     * @dev Withdraw available tokens based on vesting schedule
+     */
+    function withdrawTokens() external nonReentrant whenNotPaused {
+        if (!tgeCompleted) revert TGENotCompleted();
+
+        Purchase storage userPurchase = purchases[msg.sender];
+        uint256 scheduleId = userPurchase.vestingScheduleId;
+        if (scheduleId == 0) revert NoTokensToWithdraw();
+
+        // Claim tokens through vesting contract
+        uint256 claimed = vestingContract.claimTokens(scheduleId);
+        if (claimed == 0) revert NoTokensToWithdraw();
+
+        // Record this claim event
+        claimHistory[msg.sender].push(ClaimEvent({
+            amount: uint128(claimed),
+            timestamp: uint64(block.timestamp)
+        }));
+
+        emit TokensWithdrawn(msg.sender, claimed);
+    }
+
+    /**
+     * @dev Set the maximum tokens that can be purchased by a single address
+     * @param _maxTokens The maximum number of tokens
+     */
+    function setMaxTokensPerAddress(uint96 _maxTokens) external onlyRole(Constants.ADMIN_ROLE) {
+        require(_maxTokens > 0, "Max tokens must be positive");
+        maxTokensPerAddress = _maxTokens;
+    }
+
+    /**
+     * @dev Set purchase rate limits
+     * @param _minTimeBetweenPurchases Minimum time between purchases
+     * @param _maxPurchaseAmount Maximum purchase amount in USD
+     */
+    function setPurchaseRateLimits(
+        uint32 _minTimeBetweenPurchases,
+        uint256 _maxPurchaseAmount
+    ) external onlyRole(Constants.ADMIN_ROLE) {
+        minTimeBetweenPurchases = _minTimeBetweenPurchases;
+        maxPurchaseAmount = _maxPurchaseAmount;
+    }
+
+    /**
+     * @dev Toggle auto-compound feature for a user
+     * @param _enabled Whether to enable auto-compounding
+     */
+    function setAutoCompound(bool _enabled) external {
+        autoCompoundEnabled[msg.sender] = _enabled;
+        emit AutoCompoundUpdated(msg.sender, _enabled);
+    }
+
+    /**
      * @dev In case of critical emergency, allows users to withdraw their USDC
      */
     function emergencyWithdraw() external nonReentrant {
-        if (emergencyState != EmergencyState.CRITICAL_EMERGENCY) revert NotInEmergencyMode();
-        require(!emergencyWithdrawalsProcessed[msg.sender], "CrowdSale: already processed");
+        require(emergencyManager.getEmergencyState() == IEmergencyManager.EmergencyState.CRITICAL_EMERGENCY,
+            "Not in critical emergency");
+        require(!emergencyManager.isEmergencyWithdrawalProcessed(msg.sender), "Already processed");
 
         // Calculate refundable amount
         Purchase storage userPurchase = purchases[msg.sender];
         uint256 refundAmount = userPurchase.usdAmount;
 
         if (refundAmount > 0) {
-            // Mark as processed
-            emergencyWithdrawalsProcessed[msg.sender] = true;
+            // Get supported payment tokens
+            address[] memory supportedTokens = priceFeed.getSupportedPaymentTokens();
 
-            // Return funds
-            require(paymentToken.transfer(msg.sender, refundAmount), "CrowdSale: transfer failed");
+            // Mark as processed via emergency manager
+            emergencyManager.processEmergencyWithdrawal(msg.sender, refundAmount);
 
-            emit EmergencyWithdrawalProcessed(msg.sender, refundAmount);
+            // Find a supported token to refund with
+            address refundToken = supportedTokens.length > 0 ? supportedTokens[0] : address(0);
+            require(refundToken != address(0), "No refund token available");
+
+            // Calculate token amount to refund
+            uint256 tokenRefundAmount = priceFeed.convertUsdToToken(refundToken, refundAmount);
+
+            // Transfer funds from treasury
+            ERC20Upgradeable(refundToken).transferFrom(treasury, msg.sender, tokenRefundAmount);
         }
     }
 
     /**
-     * @dev System for multi-signature approval of recovery actions
+     * @dev Emergency function to recover tokens sent to this contract by mistake
+     * @param _token Token address to recover
      */
-    function approveRecovery() external onlyRole(Constants.ADMIN_ROLE) {
-        if (emergencyState != EmergencyState.CRITICAL_EMERGENCY) revert NotInEmergencyMode();
-        require(!recoveryApprovals[msg.sender], "CrowdSale: already approved");
-
-        recoveryApprovals[msg.sender] = true;
-        recoveryApprovalsCount++;
-
-        if (recoveryApprovalsCount >= requiredRecoveryApprovals) {
-            // Return to normal state when enough approvals
-            _setEmergencyState(0); // Set to NORMAL
-        }
-    }
-    
-    /**
-     * @dev Batch distribute tokens to multiple users
-     * @param _users Array of user addresses
-     */
-    function batchDistributeTokens(address[] calldata _users) external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant {
-        if (!tgeCompleted) revert TGENotCompleted();
-
-        for (uint8 i = 0; i < _users.length; i++) {
-            address user = _users[i];
-            uint256 claimable = claimableTokens(user);
-
-            if (claimable > 0) {
-                // Update user's token balance
-                purchases[user].tokens = purchases[user].tokens - claimable;
-
-                // Record this claim event
-                claimHistory[user].push(ClaimEvent({
-                    amount: uint128(claimable),
-                    timestamp: uint64(block.timestamp)
-                }));
-
-                // Transfer tokens to user
-                require(token.transfer(user, claimable), "Token transfer failed");
-
-                emit TokensWithdrawn(user, claimable);
-            }
-        }
+    function recoverTokens(address _token) external onlyRole(Constants.ADMIN_ROLE) {
+        require(_token != address(token), "Cannot recover tokens");
+        uint256 balance = ERC20Upgradeable(_token).balanceOf(address(this));
+        require(balance > 0, "No tokens to recover");
+        require(ERC20Upgradeable(_token).transfer(owner(), balance), "Token recovery failed");
     }
 
     /**
-     * @dev Get claim history for a user
+     * @dev Get user's purchase details including payments by token
      * @param _user User address
-     * @return Array of claim events
-     */
-    function getClaimHistory(address _user) external view returns (ClaimEvent[] memory) {
-        return claimHistory[_user];
-    }
-
-    /**
-     * @dev Handle emergency pause notification from the StabilityFund
-     */
-    function handleEmergencyPause() external onlyFromRegistry(Constants.STABILITY_FUND_NAME) {
-        if (emergencyState == EmergencyState.NORMAL) {
-            _setEmergencyState(1); // Set to MINOR_EMERGENCY
-        }
-    }
-
-    /**
-     * @dev Emergency update limits for governance
-     * @param _minTimeBetweenPurchases New minimum time between purchases
-     * @param _maxPurchaseAmount New maximum purchase amount
-     */
-    function emergencyUpdateLimits(
-        uint32 _minTimeBetweenPurchases,
-        uint256 _maxPurchaseAmount
-    ) external onlyFromRegistry(Constants.GOVERNANCE_NAME) {
-        minTimeBetweenPurchases = _minTimeBetweenPurchases;
-        maxPurchaseAmount = _maxPurchaseAmount;
-    }
-
-    /**
-    * @dev Get user's purchase details including payments by token
-     * @param _user User address
-     * @param _token Payment token address (use address(0) for all tokens)
+     * @param _token Payment token address (use address(0) for total USD)
      * @return tokenAmount Total token amount purchased
      * @return usdAmount Total USD equivalent
      * @return paymentAmount Payment token amount for the specified token
@@ -1600,5 +667,49 @@ UUPSUpgradeable
         }
 
         return (tokenAmount, usdAmount, paymentAmount);
+    }
+
+    /**
+     * @dev Get claim history for a user
+     * @param _user User address
+     * @return Array of claim events
+     */
+    function getClaimHistory(address _user) external view returns (ClaimEvent[] memory) {
+        return claimHistory[_user];
+    }
+
+    /**
+     * @dev Get the count of user's claim events
+     * @param _user User address
+     * @return count Number of claim events
+     */
+    function getClaimCount(address _user) external view returns (uint256) {
+        return claimHistory[_user].length;
+    }
+
+    /**
+     * @dev Sets the registry contract address
+     * @param _registry Address of the registry contract
+     */
+    function setRegistry(address _registry) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _setRegistry(_registry, Constants.CROWDSALE_NAME);
+        emit RegistrySet(_registry);
+    }
+
+    /**
+     * @dev Update contract references from registry
+     */
+    function updateContractReferences() external {
+        if (address(registry) == address(0)) return;
+
+        // Update token reference
+        if (registry.isContractActive(Constants.TOKEN_NAME)) {
+            address tokenAddr = registry.getContractAddress(Constants.TOKEN_NAME);
+            if (tokenAddr != address(0) && tokenAddr != address(token)) {
+                address oldToken = address(token);
+                token = ERC20Upgradeable(tokenAddr);
+                emit ContractReferenceUpdated(Constants.TOKEN_NAME, oldToken, tokenAddr);
+            }
+        }
     }
 }
