@@ -1,13 +1,32 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.29;
 
-import "./Registry/RegistryAwareUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "./Registry/RegistryAwareUpgradeable.sol";
 import {Constants} from "./Libraries/Constants.sol";
 
+interface ILiquidityManager {
+    function getDexReserves(uint16 _dexId) external view returns (
+        uint96 tokenReserve,
+        uint96 stableReserve,
+        uint96 currentPrice,
+        uint96 lpSupply
+    );
+
+    function getPoolAPY(uint256 _poolId) external view returns (uint256);
+
+    function getCurrentTier() external view returns (uint8);
+
+    // Get the price of a token relative to a stablecoin
+    function getTokenPrice(address _token, address _stablecoin) external view returns (uint96 price);
+}
+
+interface IPlatformStabilityFund {
+    function getVerifiedPrice() external view returns (uint96);
+}
 
 interface ITeachTokenVesting {
     enum BeneficiaryGroup { TEAM, ADVISORS, PARTNERS, PUBLIC_SALE, ECOSYSTEM }
@@ -52,15 +71,46 @@ UUPSUpgradeable
         bool isActive;        // Whether this tier is currently active
     }
 
-    // User purchase tracking
+    // Mapping of supported payment tokens to their details
+    struct PaymentTokenInfo {
+        bool isActive;           // Whether the token is active
+        uint256 minAmount;       // Minimum purchase amount in USD
+        uint256 maxAmount;       // Maximum purchase amount in USD
+        address priceOracle;     // Custom price oracle (if any)
+        uint8 decimals;          // Token decimals (cached)
+        uint256 totalCollected;  // Total amount collected
+    }
+
+    // Payment token mapping and tracking
+    mapping(address => PaymentTokenInfo) public paymentTokens;
+    address[] public supportedPaymentTokensArray;
+
+    // Default stablecoin (reference for prices)
+    address public defaultStablecoin;
+
+    // LiquidityManager reference for price discovery
+    ILiquidityManager public liquidityManager;
+
+    // Dynamic pricing settings
+    bool public useDynamicPricing;
+    uint32 public priceCacheTimeout;
+    uint16 public maxPriceDeviationThreshold;
+
+    // Price caching
+    mapping(address => uint256) public cachedPriceRates;
+    mapping(address => uint256) public lastPriceUpdate;
+    mapping(address => uint256) public fallbackPriceRates;
+
+    // Purchase tracking with token information
     struct Purchase {
         uint256 tokens;          // Total tokens purchased
         uint256 bonusAmount;     // Amount of bonus tokens received
-        uint256 usdAmount;       // USD amount paid
+        uint256 usdAmount;       // USD equivalent amount
         uint256[] tierAmounts;   // Amount purchased in each tier
         uint256 lastClaimTime;   // Last time user claimed tokens
-        uint256 vestingScheduleId; //Vesting Schedule ID
+        uint256 vestingScheduleId; // Vesting Schedule ID
         bool vestingCreated;
+        mapping(address => uint256) paymentsByToken; // Amount purchased with each token
     }
     
     // Bonus bracket information
@@ -81,7 +131,7 @@ UUPSUpgradeable
     }
 
     ERC20Upgradeable public token;
-    // Payment token (USDC)
+    // Payment token 
     ERC20Upgradeable public paymentToken;
 
     // Treasury wallet to receive funds
@@ -165,7 +215,21 @@ UUPSUpgradeable
     event EmergencyWithdrawalProcessed(address indexed user, uint256 amount);
     event EmergencyStateChanged(EmergencyState state);
     event StabilityFundRecordingFailed(address indexed user, string reason);
-
+    event PaymentTokenAdded(address indexed token, uint256 minAmount, uint256 maxAmount);
+    event PaymentTokenRemoved(address indexed token);
+    event PaymentTokenUpdated(address indexed token, uint256 minAmount, uint256 maxAmount);
+    event PriceOracleSet(address indexed token, address indexed oracle);
+    event PurchaseWithToken(
+        address indexed buyer,
+        uint8 tierId,
+        address indexed paymentToken,
+        uint256 paymentAmount,
+        uint256 tokenAmount,
+        uint256 usdEquivalent
+    );
+    event PriceRateUpdated(address indexed token, uint256 oldRate, uint256 newRate);
+    event LiquidityManagerSet(address indexed liquidityManager);
+    
     error ZeroTokenAddress();
     error ZeroPaymentTokenAddress();
     error ZeroTreasuryAddress();
@@ -200,6 +264,11 @@ UUPSUpgradeable
     error TokenAlreadySet();
     error InvalidBracketID();
     error InvalidFillPercentage();
+    error UnsupportedPaymentToken(address token);
+    error ZeroPriceRate();
+    error InvalidPriceOracle(address oracle);
+    error PriceDeviationTooHigh(uint256 oraclePrice, uint256 fallbackPrice, uint256 deviation);
+    error NoPriceSourceAvailable(address token);
     
     modifier purchaseRateLimit(uint256 _usdAmount) {
         address msgr = msg.sender;
@@ -328,11 +397,11 @@ UUPSUpgradeable
 
     /**
      * @dev Initializer function to replace constructor
-     * @param _paymentToken Address of the payment token (USDC)
+     * @param _defaultStablecoin Address of the default payment token 
      * @param _treasury Address to receive presale funds
      */
     function initialize(
-        ERC20Upgradeable _paymentToken,
+        address _defaultStablecoin,
         address _treasury
     ) initializer public {
         __Ownable_init(msg.sender);
@@ -340,7 +409,9 @@ UUPSUpgradeable
         __AccessControl_init();
         __UUPSUpgradeable_init();
 
-        paymentToken = _paymentToken;
+        defaultStablecoin = _defaultStablecoin;
+        paymentTokens[address(token)].isActive = true;
+        fallbackPriceRates[_defaultStablecoin] = 1e6; // Default 1:1 with USD
         treasury = _treasury;
 
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
@@ -381,6 +452,390 @@ UUPSUpgradeable
         // Additional upgrade logic can be added here
     }
 
+    /**
+     * @dev Set the LiquidityManager for price discovery
+     * @param _liquidityManager Address of the LiquidityManager contract
+     */
+    function setLiquidityManager(address _liquidityManager) external onlyRole(Constants.ADMIN_ROLE) {
+        require(_liquidityManager != address(0), "Zero address");
+        liquidityManager = ILiquidityManager(_liquidityManager);
+        emit LiquidityManagerSet(_liquidityManager);
+    }
+
+    /**
+    * @dev Configure dynamic pricing settings
+     * @param _useDynamicPricing Whether to use dynamic pricing
+     * @param _priceCacheTimeout Cache timeout in seconds
+     * @param _maxDeviationThreshold Max deviation threshold (scaled by 10000)
+     */
+    function configureDynamicPricing(
+        bool _useDynamicPricing,
+        uint32 _priceCacheTimeout,
+        uint16 _maxDeviationThreshold
+    ) external onlyRole(Constants.ADMIN_ROLE) {
+        useDynamicPricing = _useDynamicPricing;
+        priceCacheTimeout = _priceCacheTimeout;
+        maxPriceDeviationThreshold = _maxDeviationThreshold;
+    }
+
+    /**
+     * @dev Add a payment token with custom configurations
+     * @param _token Token address
+     * @param _minAmount Minimum purchase amount in USD
+     * @param _maxAmount Maximum purchase amount in USD
+     * @param _priceOracle Custom price oracle (can be zero)
+     */
+    function addPaymentToken(
+        address _token,
+        uint256 _minAmount,
+        uint256 _maxAmount,
+        address _priceOracle
+    ) external onlyRole(Constants.ADMIN_ROLE) {
+        _addPaymentToken(_token, _minAmount, _maxAmount, _priceOracle);
+    }
+
+    /**
+     * @dev Internal function to add payment token
+     */
+    function _addPaymentToken(
+        address _token,
+        uint256 _minAmount,
+        uint256 _maxAmount,
+        address _priceOracle
+    ) internal {
+        require(_token != address(0), "Zero token address");
+        require(_minAmount > 0, "Min amount must be > 0");
+        require(_maxAmount >= _minAmount, "Max amount must be >= min");
+
+        // Check if token is already supported
+        if (!paymentTokens[_token].isActive) {
+            supportedPaymentTokensArray.push(_token);
+        }
+
+        // Get token decimals
+        uint8 decimals = ERC20Upgradeable(_token).decimals();
+
+        // Store token info
+        paymentTokens[_token] = PaymentTokenInfo({
+            isActive: true,
+            minAmount: _minAmount,
+            maxAmount: _maxAmount,
+            priceOracle: _priceOracle,
+            decimals: decimals,
+            totalCollected: 0
+        });
+
+        // Set fallback price rate (1:1 for stablecoins, 0 for others)
+        if (_token == defaultStablecoin) {
+            // Default stablecoin has 1:1 rate
+            fallbackPriceRates[_token] = 10**decimals;
+        } else {
+            // Other tokens will use oracle pricing
+            fallbackPriceRates[_token] = 0;
+        }
+
+        // Emit event
+        emit PaymentTokenAdded(_token, _minAmount, _maxAmount);
+
+        // If custom price oracle provided
+        if (_priceOracle != address(0)) {
+            emit PriceOracleSet(_token, _priceOracle);
+        }
+    }
+
+    /**
+     * @dev Remove a payment token
+     * @param _token Token address to remove
+     */
+    function removePaymentToken(address _token) external onlyRole(Constants.ADMIN_ROLE) {
+        // Cannot remove default stablecoin
+        require(_token != defaultStablecoin, "Cannot remove default stablecoin");
+
+        // Deactivate token
+        paymentTokens[_token].isActive = false;
+
+        // Remove from array (swap and pop)
+        for (uint i = 0; i < supportedPaymentTokensArray.length; i++) {
+            if (supportedPaymentTokensArray[i] == _token) {
+                // Swap with last element and pop
+                supportedPaymentTokensArray[i] = supportedPaymentTokensArray[supportedPaymentTokensArray.length - 1];
+                supportedPaymentTokensArray.pop();
+                break;
+            }
+        }
+
+        emit PaymentTokenRemoved(_token);
+    }
+
+    /**
+     * @dev Set fallback price rate for a token
+     * @param _token Token address
+     * @param _rate Price rate relative to USD (scaled by token decimals)
+     */
+    function setFallbackPriceRate(address _token, uint256 _rate) external onlyRole(Constants.ADMIN_ROLE) {
+        require(paymentTokens[_token].isActive, "Token not active");
+        require(_rate > 0, "Rate must be > 0");
+
+        uint256 oldRate = fallbackPriceRates[_token];
+        fallbackPriceRates[_token] = _rate;
+
+        emit PriceRateUpdated(_token, oldRate, _rate);
+    }
+
+    /**
+     * @dev Get current USD price of a token
+     * @param _token Token address
+     * @return price Token price in USD (scaled by PRICE_DECIMALS)
+     */
+    function getTokenUsdPrice(address _token) public view returns (uint256 price) {
+        // For default stablecoin, return 1:1
+        if (_token == defaultStablecoin) {
+            return 10**6; // $1 with 6 decimals precision
+        }
+
+        // Check if we should use dynamic pricing
+        if (!useDynamicPricing) {
+            // Use fallback rates directly
+            return _convertTokenPriceToUsd(_token, fallbackPriceRates[_token]);
+        }
+
+        // Check if we have a cached price that's still valid
+        if (lastPriceUpdate[_token] > 0 &&
+            block.timestamp < lastPriceUpdate[_token] + priceCacheTimeout) {
+            return cachedPriceRates[_token];
+        }
+
+        // Try to get price from custom oracle if available
+        if (paymentTokens[_token].priceOracle != address(0)) {
+            try ILiquidityManager(paymentTokens[_token].priceOracle).getTokenPrice(
+                _token, defaultStablecoin
+            ) returns (uint96 oraclePrice) {
+                return _convertTokenPriceToUsd(_token, oraclePrice);
+            } catch {
+                // Oracle failed, continue to next price source
+            }
+        }
+
+        // Try to get price from liquidity manager if available
+        if (address(liquidityManager) != address(0)) {
+            try liquidityManager.getTokenPrice(_token, defaultStablecoin) returns (uint96 lmPrice) {
+                return _convertTokenPriceToUsd(_token, lmPrice);
+            } catch {
+                // Liquidity manager failed, continue to next price source
+            }
+        }
+
+        // Try to get price from StabilityFund if this is the main token
+        if (_token == address(token) && address(registry) != address(0)) {
+            try registry.getContractAddress(Constants.STABILITY_FUND_NAME) returns (address stabilityFund) {
+                try IPlatformStabilityFund(stabilityFund).getVerifiedPrice() returns (uint96 sfPrice) {
+                    return _convertTokenPriceToUsd(_token, sfPrice);
+                } catch {
+                    // Stability fund failed, continue to fallback
+                }
+            } catch {
+                // Registry lookup failed, continue to fallback
+            }
+        }
+
+        // Fall back to manual rate if all oracles fail
+        if (fallbackPriceRates[_token] > 0) {
+            return _convertTokenPriceToUsd(_token, fallbackPriceRates[_token]);
+        }
+
+        // If we get here, we cannot price the token
+        revert NoPriceSourceAvailable(_token);
+    }
+
+    /**
+     * @dev Convert token amount to USD equivalent
+     * @param _token Token address
+     * @param _amount Amount of tokens
+     * @return usdAmount USD equivalent (scaled by PRICE_DECIMALS)
+     */
+    function convertTokenToUsd(address _token, uint256 _amount) public view returns (uint256 usdAmount) {
+        // Get token's USD price
+        uint256 tokenUsdPrice = getTokenUsdPrice(_token);
+
+        // Get token decimals
+        uint8 decimals = paymentTokens[_token].decimals;
+
+        // Calculate USD amount
+        // usdAmount = _amount * tokenUsdPrice / 10^decimals
+        usdAmount = (_amount * tokenUsdPrice) / (10**decimals);
+
+        return usdAmount;
+    }
+
+    /**
+     * @dev Convert USD amount to token amount
+     * @param _token Token address
+     * @param _usdAmount USD amount (scaled by PRICE_DECIMALS)
+     * @return tokenAmount Equivalent token amount
+     */
+    function convertUsdToToken(address _token, uint256 _usdAmount) public view returns (uint256 tokenAmount) {
+        // Get token's USD price
+        uint256 tokenUsdPrice = getTokenUsdPrice(_token);
+
+        // Get token decimals
+        uint8 decimals = paymentTokens[_token].decimals;
+
+        // Calculate token amount
+        // tokenAmount = _usdAmount * 10^decimals / tokenUsdPrice
+        tokenAmount = (_usdAmount * (10**decimals)) / tokenUsdPrice;
+
+        return tokenAmount;
+    }
+
+    /**
+     * @dev Helper function to convert token price to USD format
+     * @param _token Token address
+     * @param _tokenPrice Token price
+     * @return usdPrice USD price (scaled by PRICE_DECIMALS)
+     */
+    function _convertTokenPriceToUsd(address _token, uint256 _tokenPrice) internal view returns (uint256 usdPrice) {
+        // Get token decimals
+        uint8 decimals = paymentTokens[_token].decimals;
+
+        // Convert price to our standard USD format with 6 decimals
+        if (decimals > PRICE_DECIMALS) {
+            usdPrice = _tokenPrice / (10**(decimals - PRICE_DECIMALS));
+        } else if (decimals < PRICE_DECIMALS) {
+            usdPrice = _tokenPrice * (10**(PRICE_DECIMALS - decimals));
+        } else {
+            usdPrice = _tokenPrice;
+        }
+
+        return usdPrice;
+    }
+
+    /**
+     * @dev Validate rate limiting based on USD amount
+     * @param _usdAmount USD amount to validate
+     */
+    function _validateRateLimit(uint256 _usdAmount) internal view {
+        address msgr = msg.sender;
+        uint256 userLastPurchase = lastPurchaseTime[msgr];
+
+        if (userLastPurchase > 0) {
+            if (block.timestamp < userLastPurchase + minTimeBetweenPurchases) {
+                revert PurchaseTooSoon(userLastPurchase + minTimeBetweenPurchases, block.timestamp);
+            }
+        }
+
+        if (_usdAmount > maxPurchaseAmount) {
+            revert AboveMaxPurchase(_usdAmount, maxPurchaseAmount);
+        }
+    }
+
+    /**
+     * @dev Get list of supported payment tokens
+     * @return tokens Array of supported payment token addresses
+     */
+    function getSupportedPaymentTokens() public view returns (address[] memory) {
+        return supportedPaymentTokensArray;
+    }
+
+    /**
+     * @dev Get payment token details
+     * @param _token Token address
+     * @return isActive Whether token is active
+     * @return minAmount Minimum purchase amount in USD
+     * @return maxAmount Maximum purchase amount in USD
+     * @return priceOracle Address of custom price oracle
+     * @return totalCollected Total amount collected in this token
+     * @return currentPrice Current USD price (scaled by PRICE_DECIMALS)
+     */
+    function getPaymentTokenDetails(address _token) external view returns (
+        bool isActive,
+        uint256 minAmount,
+        uint256 maxAmount,
+        address priceOracle,
+        uint256 totalCollected,
+        uint256 currentPrice
+    ) {
+        PaymentTokenInfo storage tokenInfo = paymentTokens[_token];
+
+        return (
+            tokenInfo.isActive,
+            tokenInfo.minAmount,
+            tokenInfo.maxAmount,
+            tokenInfo.priceOracle,
+            tokenInfo.totalCollected,
+            getTokenUsdPrice(_token)
+        );
+    }
+    
+    /**
+     * @dev Update cached token price
+     * @param _token Token address
+     */
+    function updateTokenPrice(address _token) external {
+        require(paymentTokens[_token].isActive, "Token not active");
+
+        // Check if timeout has elapsed
+        if (lastPriceUpdate[_token] > 0 &&
+            block.timestamp < lastPriceUpdate[_token] + priceCacheTimeout) {
+            revert("Cache too recent");
+        }
+
+        // Get current price
+        uint256 price = getTokenUsdPrice(_token);
+
+        // Check for large deviation from fallback price
+        if (fallbackPriceRates[_token] > 0) {
+            uint256 fallbackUsdPrice = _convertTokenPriceToUsd(_token, fallbackPriceRates[_token]);
+
+            uint256 deviation;
+            if (price > fallbackUsdPrice) {
+                deviation = ((price - fallbackUsdPrice) * 10000) / fallbackUsdPrice;
+            } else {
+                deviation = ((fallbackUsdPrice - price) * 10000) / fallbackUsdPrice;
+            }
+
+            // If deviation is too high, revert or use fallback
+            if (deviation > maxPriceDeviationThreshold) {
+                revert PriceDeviationTooHigh(price, fallbackUsdPrice, deviation);
+            }
+        }
+
+        // Update cache
+        cachedPriceRates[_token] = price;
+        lastPriceUpdate[_token] = block.timestamp;
+
+        emit PriceRateUpdated(_token, cachedPriceRates[_token], price);
+    }
+    
+    /**
+     * @dev Update payment token configuration
+     * @param _token Token address
+     * @param _minAmount New minimum purchase amount
+     * @param _maxAmount New maximum purchase amount
+     * @param _priceOracle New price oracle (or zero for default)
+     */
+    function updatePaymentToken(
+        address _token,
+        uint256 _minAmount,
+        uint256 _maxAmount,
+        address _priceOracle
+    ) external onlyRole(Constants.ADMIN_ROLE) {
+        require(paymentTokens[_token].isActive, "Token not active");
+        require(_minAmount > 0, "Min amount must be > 0");
+        require(_maxAmount >= _minAmount, "Max amount must be >= min");
+
+        // Update token info
+        paymentTokens[_token].minAmount = _minAmount;
+        paymentTokens[_token].maxAmount = _maxAmount;
+
+        // Update price oracle if provided
+        if (_priceOracle != paymentTokens[_token].priceOracle) {
+            paymentTokens[_token].priceOracle = _priceOracle;
+            emit PriceOracleSet(_token, _priceOracle);
+        }
+
+        emit PaymentTokenUpdated(_token, _minAmount, _maxAmount);
+    }
+    
     function addRecorder(address _recorder) external onlyRole(DEFAULT_ADMIN_ROLE) {
         _grantRole(Constants.RECORDER_ROLE, _recorder);
     }
@@ -537,13 +992,146 @@ UUPSUpgradeable
         // Default to the first bracket (should never reach here)
         return tierBonuses[_tierId][0].bonusPercentage;
     }
-    
+
+    /**
+     * @dev Purchase tokens with any supported payment token
+     * @param _tierId Tier to purchase from
+     * @param _paymentToken Payment token address
+     * @param _paymentAmount Amount of payment tokens
+     */
+    function purchaseWithToken(
+        uint8 _tierId,
+        address _paymentToken,
+        uint256 _paymentAmount
+    ) public nonReentrant whenNotPaused {
+        // Validate payment token
+        if (!paymentTokens[_paymentToken].isActive) revert UnsupportedPaymentToken(_paymentToken);
+
+        // Convert payment to USD
+        uint256 usdAmount = convertTokenToUsd(_paymentToken, _paymentAmount);
+
+        // Check rate limit
+        _validateRateLimit(usdAmount);
+
+        // Validate presale status and tier
+        if (block.timestamp < presaleStart || block.timestamp > presaleEnd) revert("Presale not active");
+        if (_tierId >= tiers.length) revert("Invalid tier ID");
+        PresaleTier storage tier = tiers[_tierId];
+        if (!tier.isActive) revert("Tier not active");
+
+        // Validate purchase amount in USD
+        if (usdAmount < tier.minPurchase) revert("Below min purchase");
+        if (usdAmount > tier.maxPurchase) revert("Above max purchase");
+
+        // Check user tier limits
+        uint256 userTierTotal = purchases[msg.sender].tierAmounts.length > _tierId
+            ? purchases[msg.sender].tierAmounts[_tierId] + usdAmount
+            : usdAmount;
+        if (userTierTotal > tier.maxPurchase) revert("Exceeds tier max");
+
+        // Calculate TEACH token amount based on USD value
+        uint256 tokenAmount = (usdAmount * 10**18) / tier.price;
+
+        // Check total address limit
+        if (addressTokensPurchased[msg.sender] + tokenAmount > maxTokensPerAddress)
+            revert("Exceeds max tokens per address");
+
+        // Check if there's enough allocation left
+        if (tier.sold + tokenAmount > tier.allocation)
+            revert("Insufficient tier allocation");
+
+        // Calculate bonus
+        uint8 bonusPercentage = getCurrentBonus(_tierId);
+        uint256 bonusTokenAmount = 0;
+
+        if (bonusPercentage > 0) {
+            bonusTokenAmount = (tokenAmount * bonusPercentage) / 100;
+        }
+
+        // Total tokens
+        uint256 totalTokenAmount = tokenAmount + bonusTokenAmount;
+
+        // Update tier data
+        tier.sold += tokenAmount;
+
+        // Update user purchase data
+        Purchase storage userPurchase = purchases[msg.sender];
+        userPurchase.tokens += tokenAmount;
+        userPurchase.bonusAmount += bonusTokenAmount;
+        userPurchase.usdAmount += usdAmount;
+        userPurchase.paymentsByToken[_paymentToken] += _paymentAmount;
+
+        // Ensure tierAmounts array is long enough
+        while (userPurchase.tierAmounts.length <= _tierId) {
+            userPurchase.tierAmounts.push(0);
+        }
+        userPurchase.tierAmounts[_tierId] += usdAmount;
+
+        // Update token total collected
+        paymentTokens[_paymentToken].totalCollected += _paymentAmount;
+
+        // Transfer payment tokens to treasury
+        ERC20Upgradeable paymentTokenErc20 = ERC20Upgradeable(_paymentToken);
+        bool transferSuccess = paymentTokenErc20.transferFrom(msg.sender, treasury, _paymentAmount);
+        require(transferSuccess, "Payment transfer failed");
+
+        // Update user tokens purchased
+        addressTokensPurchased[msg.sender] += totalTokenAmount;
+
+        // Create vesting schedule if needed
+        if (!userPurchase.vestingCreated) {
+            uint256 scheduleId = vestingContract.createLinearVestingSchedule(
+                msg.sender,
+                totalTokenAmount,
+                0, // No cliff
+                tier.vestingMonths * 30 days,
+                tier.vestingTGE,
+                ITeachTokenVesting.BeneficiaryGroup.PUBLIC_SALE,
+                false // Not revocable
+            );
+            userPurchase.vestingScheduleId = scheduleId;
+            userPurchase.vestingCreated = true;
+        }
+
+        // Update rate limit tracking
+        lastPurchaseTime[msg.sender] = block.timestamp;
+
+        // Record purchase with StabilityFund
+        if (address(registry) != address(0) &&
+            registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
+            try this.recordPurchaseInStabilityFund(msg.sender, tokenAmount, usdAmount) {}
+            catch {}
+        }
+
+        // Emit event
+        emit PurchaseWithToken(
+            msg.sender,
+            _tierId,
+            _paymentToken,
+            _paymentAmount,
+            tokenAmount,
+            usdAmount
+        );
+    }
+
+    /**
+    * @dev Purchase tokens in a specific tier
+     * @param _tierId Tier to purchase from
+     * @param _usdAmount USD amount to spend (scaled by 1e6)
+     */
+    function purchase(uint8 _tierId, uint256 _usdAmount) external nonReentrant whenNotPaused purchaseRateLimit(_usdAmount) {
+        // Convert USD to default stablecoin amount
+        uint256 paymentAmount = convertUsdToToken(defaultStablecoin, _usdAmount);
+
+        // Call multi-token purchase function
+        purchaseWithToken(_tierId, defaultStablecoin, paymentAmount);
+    }
     /**
      * @dev Purchase tokens in a specific tier
      * @param _tierId Tier to purchase from
      * @param _usdAmount USD amount to spend (scaled by 1e6)
      */
-    function purchase(uint8 _tierId, uint256 _usdAmount) external nonReentrant whenNotPaused purchaseRateLimit(_usdAmount) {
+    /*function purchase(uint8 _tierId, uint256 _usdAmount) external nonReentrant whenNotPaused purchaseRateLimit(_usdAmount) {
         if (block.timestamp < presaleStart || block.timestamp > presaleEnd) revert PresaleNotActive();
         if (_tierId >= tiers.length) revert InvalidTierId(_tierId);
         PresaleTier storage tier = tiers[_tierId];
@@ -627,7 +1215,7 @@ UUPSUpgradeable
             userPurchase.vestingCreated = true;
         }
         emit TierPurchase(msg.sender, _tierId, tokenAmount, _usdAmount);
-    }
+    }*/
 
     /**
      * @dev Sets up the default bonus structure for all tiers
@@ -984,5 +1572,33 @@ UUPSUpgradeable
     ) external onlyFromRegistry(Constants.GOVERNANCE_NAME) {
         minTimeBetweenPurchases = _minTimeBetweenPurchases;
         maxPurchaseAmount = _maxPurchaseAmount;
+    }
+
+    /**
+    * @dev Get user's purchase details including payments by token
+     * @param _user User address
+     * @param _token Payment token address (use address(0) for all tokens)
+     * @return tokenAmount Total token amount purchased
+     * @return usdAmount Total USD equivalent
+     * @return paymentAmount Payment token amount for the specified token
+     */
+    function getUserPurchaseDetails(address _user, address _token) external view returns (
+        uint256 tokenAmount,
+        uint256 usdAmount,
+        uint256 paymentAmount
+    ) {
+        Purchase storage userPurchase = purchases[_user];
+        tokenAmount = userPurchase.tokens + userPurchase.bonusAmount;
+        usdAmount = userPurchase.usdAmount;
+
+        if (_token == address(0)) {
+            // Return total USD amount for all tokens
+            paymentAmount = usdAmount;
+        } else {
+            // Return specific token payment amount
+            paymentAmount = userPurchase.paymentsByToken[_token];
+        }
+
+        return (tokenAmount, usdAmount, paymentAmount);
     }
 }

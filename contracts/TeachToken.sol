@@ -114,6 +114,14 @@ contract TeachToken is
         _setRegistry(_registry, Constants.TOKEN_NAME);
         emit RegistrySet(_registry);
     }
+
+    /**
+     * @dev Returns the chain ID of the current blockchain.
+     * @return chainId of the current blockchain
+     */
+    function getChainId() public view returns (uint256) {
+        return block.chainid;
+    }
     
     /**
     * @dev Performs the initial token distribution according to the defined allocation
@@ -161,23 +169,23 @@ contract TeachToken is
                     reserveAmount;
 
         require(totalAllocation == MAX_SUPPLY, "Total allocation must equal MAX_SUPPLY");
-
-        // Platform Ecosystem (32%)
-        _mint(platformEcosystemAddress, platformEcosystemAmount);
-
-        // Community Incentives (22%)
-        _mint(communityIncentivesAddress, communityIncentivesAmount);
-
-        // Initial Liquidity (14%)
-        _mint(initialLiquidityAddress, initialLiquidityAmount);
-
-        // Public Presale (10%)
+        
+        // Public Presale (25%)
         _mint(publicPresaleAddress, publicPresaleAmount);
 
-        // Team and Development (10%)
+        // Community Incentives (24%)
+        _mint(communityIncentivesAddress, communityIncentivesAmount);
+        
+        // Platform Ecosystem (20%)
+        _mint(platformEcosystemAddress, platformEcosystemAmount);
+        
+        // Initial Liquidity (12%)
+        _mint(initialLiquidityAddress, initialLiquidityAmount);
+
+        // Team and Development (8%)
         _mint(teamAndDevAddress, teamAndDevAmount);
 
-        // Educational Partners (8%)
+        // Educational Partners (7%)
         _mint(educationalPartnersAddress, educationalPartnersAmount);
 
         // Reserve (4%)
@@ -186,32 +194,16 @@ contract TeachToken is
         initialDistributionDone = true;
         emit InitialDistributionComplete(block.timestamp);
     }
+
+    /**
+     * @dev Check if the initial distribution has been completed
+     * @return Boolean indicating if initial distribution is done
+     */
+    function isInitialDistributionComplete() public view returns (bool) {
+        return initialDistributionDone;
+    }
+
     
-    /**
-     * @dev Pauses all token transfers
-     * Requirements: Caller must have the ADMIN_ROLE
-     */
-    function pause() public onlyRole(Constants.ADMIN_ROLE){
-            paused=true;
-    }
-
-    /**
-     * @dev Unpauses all token transfers
-     * Requirements: Caller must have the ADMIN_ROLE
-     */
-    function unpause() public onlyRole(Constants.ADMIN_ROLE) {
-        // Check if system is still paused before unpausing locally
-        if (address(registry) != address(0)) {
-            try registry.isSystemPaused() returns (bool systemPaused) {
-                require(!systemPaused, "TokenStaking: system still paused");
-            } catch {
-                // If registry call fails, proceed with unpause
-            }
-        }
-
-        paused = false;
-    }
-
     /**
      * @dev Creates `amount` new tokens for `to`.
      * Requirements: Caller must have the MINTER_ROLE
@@ -248,15 +240,6 @@ contract TeachToken is
         _notifyBurn(amount);
         
         emit TokensBurned(from, amount);
-    }
-
-    /**
-     * @dev Hook that is called before any transfer of tokens.
-     * Prevents transfers when the contract is paused.
-     */
-    function _update(address from, address to, uint256 amount) internal override whenContractNotPaused
-    {
-        super._update(from, to, amount);
     }
     
     /**
@@ -295,19 +278,19 @@ contract TeachToken is
      * @dev Adds a new minter with rights to mint tokens
      * Requirements: Caller must have the DEFAULT_ADMIN_ROLE
      */
-    function addMinter(address account) public onlyRole(DEFAULT_ADMIN_ROLE) {
-        grantRole(Constants.MINTER_ROLE, account);
-        emit MinterAdded(account);
-    }
+    //function addMinter(address account) public onlyRole(DEFAULT_ADMIN_ROLE) {
+    //    grantRole(Constants.MINTER_ROLE, account);
+    //    emit MinterAdded(account);
+    //}
 
     /**
      * @dev Removes a minter
      * Requirements: Caller must have the DEFAULT_ADMIN_ROLE
      */
-    function removeMinter(address account) public onlyRole(DEFAULT_ADMIN_ROLE) {
-        revokeRole(Constants.MINTER_ROLE, account);
-        emit MinterRemoved(account);
-    }
+    //function removeMinter(address account) public onlyRole(DEFAULT_ADMIN_ROLE) {
+    //    revokeRole(Constants.MINTER_ROLE, account);
+    //    emit MinterRemoved(account);
+    //}
 
     /**
      * @dev Adds a new burner with rights to burn tokens
@@ -330,21 +313,39 @@ contract TeachToken is
     }
 
     /**
-     * @dev Returns the chain ID of the current blockchain.
-     * @return chainId of the current blockchain
+    * @dev Hook that is called before any transfer of tokens.
+     * Prevents transfers when the contract is paused.
      */
-    function getChainId() public view returns (uint256) {
-        return block.chainid;
+    function _update(address from, address to, uint256 amount) internal override whenContractNotPaused
+    {
+        super._update(from, to, amount);
     }
 
     /**
-     * @dev Check if the initial distribution has been completed
-     * @return Boolean indicating if initial distribution is done
+ * @dev Pauses all token transfers
+     * Requirements: Caller must have the ADMIN_ROLE
      */
-    function isInitialDistributionComplete() public view returns (bool) {
-        return initialDistributionDone;
+    function pause() public onlyRole(Constants.ADMIN_ROLE){
+        paused=true;
     }
 
+    /**
+     * @dev Unpauses all token transfers
+     * Requirements: Caller must have the ADMIN_ROLE
+     */
+    function unpause() public onlyRole(Constants.ADMIN_ROLE) {
+        // Check if system is still paused before unpausing locally
+        if (address(registry) != address(0)) {
+            try registry.isSystemPaused() returns (bool systemPaused) {
+                require(!systemPaused, "TokenStaking: system still paused");
+            } catch {
+                // If registry call fails, proceed with unpause
+            }
+        }
+
+        paused = false;
+    }
+    
     /**
      * @dev Set whether a token is allowed to be recovered
      * @param _token Address of the token

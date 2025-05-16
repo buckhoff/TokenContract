@@ -3,7 +3,7 @@ pragma solidity ^0.8.29;
 
 library Constants{
     // Constants for contract names (can be in a shared Constants.sol file)
-    bytes32 internal constant TOKEN_NAME = keccak256("_TEACH_TOKEN");
+    bytes32 internal constant TOKEN_NAME = keccak256("TEACH_TOKEN");
     bytes32 internal constant STABILITY_FUND_NAME = keccak256("PLATFORM_STABILITY_FUND");
     bytes32 internal constant STAKING_NAME = keccak256("TOKEN_STAKING");
     bytes32 internal constant GOVERNANCE_NAME = keccak256("PLATFORM_GOVERNANCE");

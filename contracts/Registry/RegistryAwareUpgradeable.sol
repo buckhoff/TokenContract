@@ -30,58 +30,61 @@ abstract contract RegistryAwareUpgradeable is Initializable, AccessControlEnumer
     event FallbackAddressSet(bytes32 indexed contractName,address indexed fallbackaddress);
     event RegistryOfflineModeEnabled();
     event RegistryOfflineModeDisabled();
-    event RegistryCallFailed(string action, string reason);
     event EmergencyNotificationFailed(bytes32 indexed contractName);
     
-   /* *//**
+    error SystemPaused();
+    error RegistryNotSet();
+    error ContractNotActive();
+    error ZeroContractAddress();
+    error FailedToRetrieveContractAddress();
+    error NotAuthorized();
+    error RegistryCallFailed();
+    error FailedToRetrieveContractStatus();
+    
+   /**
      * @dev Modifier to check if the system is not paused
-     *//*
+     */
     modifier whenSystemNotPaused() {
         if (address(registry) != address(0) && !registryOfflineMode) {
             try registry.isSystemPaused() returns (bool paused) {
-                require(!paused, "RegistryAware: system is paused");
+                if(paused) revert SystemPaused();
             } catch {
                 // If registry call fails, proceed as not paused
                 if (!registryOfflineMode) {
-                    emit RegistryCallFailed("isSystemPaused", "Registry call failed");
-                    revert("RegistryAware: registry call failed");
+                    revert RegistryCallFailed();
                 }
             }
         }
         _;
-    }*/
+    }
     
     /**
      * @dev Modifier to check if the caller is a specific contract from registry
      * @param _contractNameBytes32 Name of the expected contract
      */
     modifier onlyFromRegistry(bytes32 _contractNameBytes32) {
-        require(address(registry) != address(0), "RegistryAware: registry not set");
+        if(address(registry) == address(0)) revert RegistryNotSet();
 
         address expectedCaller;
         try registry.isContractActive(_contractNameBytes32) returns (bool isActive) {
             if (!isActive) {
-                emit RegistryCallFailed("onlyFromRegistry", "Contract not active");
-                revert("RegistryAware: contract not active");
+                revert ContractNotActive();
             }
 
             try registry.getContractAddress(_contractNameBytes32) returns (address contractAddress) {
                 if (contractAddress == address(0)) {
-                    emit RegistryCallFailed("onlyFromRegistry", "Zero contract address");
-                    revert("RegistryAware: zero contract address");
+                    revert ZeroContractAddress();
                 }
                 expectedCaller = contractAddress;
             } catch {
-                emit RegistryCallFailed("onlyFromRegistry", "Failed to get address");
-                revert("RegistryAware: failed to get contract address");
+                revert FailedToRetrieveContractAddress();
             }
         } catch {
-            emit RegistryCallFailed("onlyFromRegistry", "Failed to check active status");
-            revert("RegistryAware: failed to check contract active status");
+            revert FailedToRetrieveContractStatus();
         }
 
         // Verify caller matches expected address
-        require(msg.sender == expectedCaller, "RegistryAware: caller not authorized contract");
+        if (msg.sender != expectedCaller) revert NotAuthorized();
         _;
     }
 
@@ -91,7 +94,7 @@ abstract contract RegistryAwareUpgradeable is Initializable, AccessControlEnumer
      * @param _contractNameBytes32 Name of this contract in the registry
      */
     function _setRegistry(address _registry, bytes32 _contractNameBytes32) internal {
-        require(_registry != address(0), "RegistryAware: zero registry address");
+        if(_registry == address(0)) revert ZeroContractAddress();
         address oldRegistry = address(registry);
         registry = IContractRegistry(_registry);
         contractName = _contractNameBytes32;
@@ -126,7 +129,7 @@ abstract contract RegistryAwareUpgradeable is Initializable, AccessControlEnumer
      * @return Whether the contract is active
      */
     function isContractActive(bytes32 _contractNameBytes32) internal view returns (bool) {
-        require(address(registry) != address(0), "RegistryAware: registry not set");
+        if (address(registry) == address(0)) revert RegistryNotSet();
         return registry.isContractActive(_contractNameBytes32);
     }
 

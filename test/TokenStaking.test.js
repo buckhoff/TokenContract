@@ -345,7 +345,7 @@ describe("TokenStaking Contract", function () {
             expect(await staking.registry()).to.equal(await registry.getAddress());
 
             // Register token in registry
-            const TOKEN_NAME = ethers.keccak256(ethers.toUtf8Bytes("_TEACH_TOKEN"));
+            const TOKEN_NAME = ethers.keccak256(ethers.toUtf8Bytes("TEACH_TOKEN"));
             await registry.registerContract(TOKEN_NAME, await teachToken.getAddress(), "0x00000000");
 
             // Update contract references

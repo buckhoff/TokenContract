@@ -230,7 +230,9 @@ contract ContractRegistry is
      * @return Whether the contract is active
      */
     function isContractActive(bytes32 _name) external view returns (bool) {
-        require(contracts[_name] != address(0), "ContractRegistry: not registered");
+        if(contracts[_name] == address(0)){
+            return false;
+        }
         return contractActive[_name];
     }
 
@@ -261,32 +263,6 @@ contract ContractRegistry is
     function getAllContractNames() external view returns (bytes32[] memory) {
         return registeredContracts;
     }
-    
-    /**
-     * @dev Pause the entire system in case of emergency
-     */
-    function pauseSystem() external onlyRole(Constants.ADMIN_ROLE) onlyRole(Constants.EMERGENCY_ROLE) {
-        require(!systemPaused, "ContractRegistry: already paused");
-        systemPaused = true;
-        emit SystemPaused(msg.sender);
-    }
-
-    /**
-     * @dev Resume the system after emergency
-     */
-    function resumeSystem() external onlyRole(Constants.ADMIN_ROLE) {
-        require(systemPaused, "ContractRegistry: not paused");
-        systemPaused = false;
-        emit SystemResumed(msg.sender);
-    }
-
-    /**
-     * @dev Check if the system is paused
-     * @return Whether the system is paused
-     */
-    function isSystemPaused() external view returns (bool) {
-        return systemPaused;
-    }
 
     /**
      * @dev Utility to convert string to bytes32
@@ -296,6 +272,79 @@ contract ContractRegistry is
     function stringToBytes32(string memory _str) external pure returns (bytes32 result) {
         require(bytes(_str).length <= 32, "ContractRegistry: string too long");
         result = keccak256(abi.encodePacked(_str));
+
+    }
+
+    /**
+    * @dev Triggers system-wide emergency mode
+     * @param _reason Reason for the emergency
+     */
+    function triggerSystemEmergency(string memory _reason) external onlyRole(Constants.EMERGENCY_ROLE) {
+
+        // Pause the registry
+        try this.pauseSystem() {
+            emit SystemHasBeenPaused("Contract Registry");
+        } catch {
+
+        }
+
+        // Notify stability fund
+        if (this.isContractActive(Constants.STABILITY_FUND_NAME)) {
+            address stabilityFund = this.getContractAddress(Constants.STABILITY_FUND_NAME);
+            (bool success, ) = stabilityFund.call(
+                abi.encodeWithSignature("emergencyPause()")
+            );
+            if (!success) {
+                emit EmergencyNotificationFailed(Constants.STABILITY_FUND_NAME);
+            }
+        }
+
+        // Notify marketplace
+        if (this.isContractActive(Constants.MARKETPLACE_NAME)) {
+            address marketplace = this.getContractAddress(Constants.MARKETPLACE_NAME);
+            (bool success, ) = marketplace.call(
+                abi.encodeWithSignature("pauseMarketplace()")
+            );
+            if (!success) {
+                emit EmergencyNotificationFailed(Constants.STABILITY_FUND_NAME);
+            }
+        }
+
+        // Notify crowdsale
+        if (this.isContractActive(Constants.CROWDSALE_NAME)) {
+            address crowdsale = this.getContractAddress(Constants.CROWDSALE_NAME);
+            (bool success, ) = crowdsale.call(
+                abi.encodeWithSignature("pausePresale()")
+            );
+            if (!success) {
+                emit EmergencyNotificationFailed(Constants.STABILITY_FUND_NAME);
+            }
+        }
+
+        // Notify staking
+        if (this.isContractActive(Constants.STAKING_NAME)) {
+            address staking = this.getContractAddress(Constants.STAKING_NAME);
+            (bool success, ) = staking.call(
+                abi.encodeWithSignature("pauseStaking()")
+            );
+            if (!success) {
+                emit EmergencyNotificationFailed(Constants.STABILITY_FUND_NAME);
+            }
+
+        }
+
+        // Notify rewards
+        if (this.isContractActive(Constants.PLATFORM_REWARD_NAME)) {
+            address rewards = this.getContractAddress(Constants.PLATFORM_REWARD_NAME);
+            (bool success, ) = rewards.call(
+                abi.encodeWithSignature("pauseRewards()")
+            );
+            if (!success) {
+                emit EmergencyNotificationFailed(Constants.STABILITY_FUND_NAME);
+            }
+        }
+
+        emit SystemEmergencyTriggered(msg.sender, _reason);
     }
 
     // Add emergency recovery functions
@@ -351,8 +400,6 @@ contract ContractRegistry is
         emit RecoveryApprovalsUpdated(_required);
     }
 
-   
-
     /**
      * @dev Set timeout
      * @param _timeout new timeout to set
@@ -364,74 +411,28 @@ contract ContractRegistry is
     }
 
     /**
-     * @dev Triggers system-wide emergency mode
-     * @param _reason Reason for the emergency
+    * @dev Pause the entire system in case of emergency
      */
-    function triggerSystemEmergency(string memory _reason) external onlyRole(Constants.EMERGENCY_ROLE) {
-        
-        // Pause the registry
-        try this.pauseSystem() {
-            emit SystemHasBeenPaused("Contract Registry");
-        } catch {
-           
-        }
+    function pauseSystem() external onlyRole(Constants.ADMIN_ROLE) onlyRole(Constants.EMERGENCY_ROLE) {
+        require(!systemPaused, "ContractRegistry: already paused");
+        systemPaused = true;
+        emit SystemPaused(msg.sender);
+    }
 
-        // Notify stability fund
-        if (this.isContractActive(Constants.STABILITY_FUND_NAME)) {
-            address stabilityFund = this.getContractAddress(Constants.STABILITY_FUND_NAME);
-            (bool success, ) = stabilityFund.call(
-                abi.encodeWithSignature("emergencyPause()")
-            );
-            if (!success) {
-                emit EmergencyNotificationFailed(Constants.STABILITY_FUND_NAME);
-            }
-        }
+    /**
+     * @dev Resume the system after emergency
+     */
+    function resumeSystem() external onlyRole(Constants.ADMIN_ROLE) {
+        require(systemPaused, "ContractRegistry: not paused");
+        systemPaused = false;
+        emit SystemResumed(msg.sender);
+    }
 
-        // Notify marketplace
-        if (this.isContractActive(Constants.MARKETPLACE_NAME)) {
-            address marketplace = this.getContractAddress(Constants.MARKETPLACE_NAME);
-            (bool success, ) = marketplace.call(
-                abi.encodeWithSignature("pauseMarketplace()")
-            );
-            if (!success) {
-                emit EmergencyNotificationFailed(Constants.STABILITY_FUND_NAME);
-            }
-        }
-
-        // Notify crowdsale
-        if (this.isContractActive(Constants.CROWDSALE_NAME)) {
-            address crowdsale = this.getContractAddress(Constants.CROWDSALE_NAME);
-            (bool success, ) = crowdsale.call(
-                abi.encodeWithSignature("pausePresale()")
-            );
-            if (!success) {
-                emit EmergencyNotificationFailed(Constants.STABILITY_FUND_NAME);
-            }
-        }
-
-        // Notify staking
-        if (this.isContractActive(Constants.STAKING_NAME)) {
-            address staking = this.getContractAddress(Constants.STAKING_NAME);
-            (bool success, ) = staking.call(
-                abi.encodeWithSignature("pauseStaking()")
-            );
-            if (!success) {
-                emit EmergencyNotificationFailed(Constants.STABILITY_FUND_NAME);
-            }
-            
-        }
-
-        // Notify rewards
-        if (this.isContractActive(Constants.PLATFORM_REWARD_NAME)) {
-            address rewards = this.getContractAddress(Constants.PLATFORM_REWARD_NAME);
-            (bool success, ) = rewards.call(
-                abi.encodeWithSignature("pauseRewards()")
-            );
-            if (!success) {
-                emit EmergencyNotificationFailed(Constants.STABILITY_FUND_NAME);
-            }
-        }
-
-        emit SystemEmergencyTriggered(msg.sender, _reason);
+    /**
+     * @dev Check if the system is paused
+     * @return Whether the system is paused
+     */
+    function isSystemPaused() external view returns (bool) {
+        return systemPaused;
     }
 }

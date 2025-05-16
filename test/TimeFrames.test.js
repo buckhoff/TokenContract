@@ -135,7 +135,7 @@ describe("Time-Dependent Functions", function () {
         await governance.deployed();
 
         // Register contracts in registry
-        const TOKEN_NAME = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("_TEACH_TOKEN"));
+        const TOKEN_NAME = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("TEACH_TOKEN"));
         const STABILITY_FUND_NAME = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("PLATFORM_STABILITY_FUND"));
         const STAKING_NAME = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("TOKEN_STAKING"));
         const GOVERNANCE_NAME = ethers.utils.keccak256(ethers.utils.toUtf8Bytes("PLATFORM_GOVERNANCE"));

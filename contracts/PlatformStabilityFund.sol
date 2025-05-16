@@ -158,11 +158,9 @@ UUPSUpgradeable
     error BelowMinReturn();
     error ThresholdMustBeGreaterThan100();
     error ThresholdTooHigh();
-    error NotAuthorized();
     error ContractPaused();
     error AlreadyPaused();
     error NotPaused();
-    error SystemPaused();
     error ReservesStillCritical();
     error InvalidFeeRange();
     error InvalidDropThresholds();
@@ -175,7 +173,6 @@ UUPSUpgradeable
     error PriceChangeTooLarge();
     error InvalidWindowSize();
     error IntervalCannotBeZero();
-    error RegistryNotSet();
     error RegistryOffline();
     error TokenAddressUnavailable();
     error BurnPercentTooHigh();

@@ -60,7 +60,7 @@ describe("RegistryAwareUpgradeable", function () {
 
     describe("Fallback Address Management", function () {
         it("Should set fallback address", async function () {
-            const TOKEN_NAME = ethers.keccak256(ethers.toUtf8Bytes("_TEACH_TOKEN"));
+            const TOKEN_NAME = ethers.keccak256(ethers.toUtf8Bytes("TEACH_TOKEN"));
 
             // Set fallback address
             await mockRegistryAware.setFallbackAddress(TOKEN_NAME, await mockToken.getAddress());
@@ -72,7 +72,7 @@ describe("RegistryAwareUpgradeable", function () {
         });
 
         it("Should require admin role to set fallback address", async function () {
-            const TOKEN_NAME = ethers.keccak256(ethers.toUtf8Bytes("_TEACH_TOKEN"));
+            const TOKEN_NAME = ethers.keccak256(ethers.toUtf8Bytes("TEACH_TOKEN"));
             const ADMIN_ROLE = ethers.keccak256(ethers.toUtf8Bytes("ADMIN_ROLE"));
 
             // Revoke admin role from owner
@@ -147,7 +147,7 @@ describe("RegistryAwareUpgradeable", function () {
         beforeEach(async function () {
             // Set up registry with our contracts
             const STAKING_NAME = ethers.keccak256(ethers.toUtf8Bytes("TOKEN_STAKING"));
-            const TOKEN_NAME = ethers.keccak256(ethers.toUtf8Bytes("_TEACH_TOKEN"));
+            const TOKEN_NAME = ethers.keccak256(ethers.toUtf8Bytes("TEACH_TOKEN"));
 
             await registry.registerContract(STAKING_NAME, await mockRegistryAware.getAddress(), "0x00000000");
             await registry.registerContract(TOKEN_NAME, await mockToken.getAddress(), "0x00000000");
@@ -169,7 +169,7 @@ describe("RegistryAwareUpgradeable", function () {
         });
 
         it("Should detect deactivated contracts", async function () {
-            const TOKEN_NAME = ethers.keccak256(ethers.toUtf8Bytes("_TEACH_TOKEN"));
+            const TOKEN_NAME = ethers.keccak256(ethers.toUtf8Bytes("TEACH_TOKEN"));
 
             // Deactivate token contract
             await registry.setContractStatus(TOKEN_NAME, false);
@@ -186,7 +186,7 @@ describe("RegistryAwareUpgradeable", function () {
                 { initializer: "initialize", kind: "uups" }
             );
 
-            const TOKEN_NAME = ethers.keccak256(ethers.toUtf8Bytes("_TEACH_TOKEN"));
+            const TOKEN_NAME = ethers.keccak256(ethers.toUtf8Bytes("TEACH_TOKEN"));
 
             // Update token in registry
             await registry.updateContract(TOKEN_NAME, await newToken.getAddress(), "0x00000000");

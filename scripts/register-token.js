@@ -18,7 +18,7 @@ async function main() {
     const registry = ContractRegistry.attach(registryAddress);
 
     // Create constants for contract name
-    const TOKEN_NAME = ethers.keccak256(ethers.toUtf8Bytes("_TEACH_TOKEN"));
+    const TOKEN_NAME = ethers.keccak256(ethers.toUtf8Bytes("TEACH_TOKEN"));
 
     // Register the TeachToken contract
     console.log("Registering TeachToken in the Registry...");

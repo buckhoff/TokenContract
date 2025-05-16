@@ -49,7 +49,7 @@ describe("TeachToken Ecosystem", function () {
         );
 
         // Register contracts
-        const TOKEN_NAME = ethers.keccak256(ethers.toUtf8Bytes("_TEACH_TOKEN"));
+        const TOKEN_NAME = ethers.keccak256(ethers.toUtf8Bytes("TEACH_TOKEN"));
         const STABILITY_FUND_NAME = ethers.keccak256(ethers.toUtf8Bytes("PLATFORM_STABILITY_FUND"));
 
         await registry.registerContract(TOKEN_NAME, await teachToken.getAddress(), "0x00000000");
@@ -62,7 +62,7 @@ describe("TeachToken Ecosystem", function () {
 
     describe("Cross-Contract Functionality", function () {
         it("Should allow registry lookups from contracts", async function () {
-            const TOKEN_NAME = ethers.keccak256(ethers.toUtf8Bytes("_TEACH_TOKEN"));
+            const TOKEN_NAME = ethers.keccak256(ethers.toUtf8Bytes("TEACH_TOKEN"));
 
             // Check if stability fund can find token through registry
             await stabilityFund.updateContractReferences();

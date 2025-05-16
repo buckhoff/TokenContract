@@ -179,7 +179,6 @@ contract PlatformGovernance is
     error NotGuardian(address caller);
     error AlreadyVotedForCancellation(uint256 proposalId, address guardian);
     error EmergencyPeriodExpired(uint256 currentTime, uint256 deadline);
-    error RegistryNotSet();
     error StakingContractNotSet();
     error NotStakingContract();
     error ZeroTokenAddress();
@@ -358,7 +357,7 @@ contract PlatformGovernance is
     function castVote(uint256 _proposalId, uint8 _voteType, string memory _reason) external nonReentrant {
         if(_voteType > uint8(VoteType.Abstain)) revert InvalidVoteType();
         if(_proposalId > _proposalIdCounter) revert InvalidProposalId(_proposalId, _proposalIdCounter);
-        if(bytes(_reason).length <= 200) revert ReasonTooLong(bytes(_reason).length, 200);
+        if(bytes(_reason).length > 200) revert ReasonTooLong(bytes(_reason).length, 200);
         
         Proposal storage proposal = proposals[_proposalId];
         if(block.timestamp < proposal.startTime) 
@@ -368,7 +367,7 @@ contract PlatformGovernance is
         if(proposal.receipts[msg.sender].hasVoted) revert AlreadyVoted(_proposalId, msg.sender);
         
         uint256 votes = getVotingPower(msg.sender); 
-        if(votes > 0) revert NoVotingPower(msg.sender);
+        if(votes == 0) revert NoVotingPower(msg.sender);
         
         // Update voter receipt
         proposal.receipts[msg.sender] = Receipt({
