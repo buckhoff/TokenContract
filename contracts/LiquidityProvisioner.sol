@@ -517,4 +517,8 @@ ILiquidityProvisioner
 
         if (!recoveryToken.transfer(owner(), balance)) revert TransferFailed();
     }
+
+    function getTargetPrice() external override view returns (uint96 _targetPrice){
+        _targetPrice=targetPrice;
+    }
 }

@@ -16,24 +16,6 @@ interface ITokenPriceFeed {
     function getTokenPrice(address token, address stablecoin) external view returns (uint96);
 }
 
-// Interface to pair contract
-interface IPair {
-    function token0() external view returns (address);
-    function token1() external view returns (address);
-    function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
-}
-
-// Interface to router contract
-interface IRouter {
-    function swapExactTokensForTokens(
-        uint256 amountIn,
-        uint256 amountOutMin,
-        address[] calldata path,
-        address to,
-        uint256 deadline
-    ) external returns (uint256[] memory amounts);
-}
-
 // Interface to router
 interface IRouter {
     function addLiquidity(
@@ -46,6 +28,13 @@ interface IRouter {
         address to,
         uint256 deadline
     ) external returns (uint256 amountA, uint256 amountB, uint256 liquidity);
+    function swapExactTokensForTokens(
+        uint256 amountIn,
+        uint256 amountOutMin,
+        address[] calldata path,
+        address to,
+        uint256 deadline
+    ) external returns (uint256[] memory amounts);
 }
 
 interface IPair {
@@ -89,14 +78,13 @@ ILiquidityManager
     error InvalidTargetPrice();
     error InvalidPriceFloor();
     error NoAvailablePhases();
-    error PhaseDeadlinePassed(uint96 phaseId, uint40 deadline);
+    error PhaseDeadlinePassed(uint96 phaseId, uint96 deadline);
     error PhaseAlreadyExecuted(uint96 phaseId);
     error InvalidDexId(uint16 dexId);
     error DexNotActive(uint16 dexId);
     error ZeroAmount();
     error BelowMinReturn(uint96 received, uint96 minimum);
     error PriceFloorBreached(uint96 currentPrice, uint96 floor);
-    error NotAuthorized();
     error TransferFailed();
     error SwapFailed();
 
@@ -525,6 +513,10 @@ ILiquidityManager
         dexRegistry = _registry;
     }
 
+    function getDexRegistry() external view returns (address){
+        return dexRegistry;
+    }
+    
     /**
      * @dev Set the liquidity provisioner address
      * @param _provisioner Provisioner address
@@ -533,6 +525,10 @@ ILiquidityManager
         liquidityProvisioner = _provisioner;
     }
 
+    function getLiquidityProvisioner() external view returns (address){
+        return liquidityProvisioner;
+    }
+    
     /**
      * @dev Set the liquidity rebalancer address
      * @param _rebalancer Rebalancer address
@@ -541,6 +537,11 @@ ILiquidityManager
         liquidityRebalancer = _rebalancer;
     }
 
+    function getLiquidityRebalancer() external view returns (address){
+        return liquidityRebalancer;
+    }
+
+    
     /**
      * @dev Set the token price feed address
      * @param _priceFeed Price feed address
@@ -549,14 +550,19 @@ ILiquidityManager
         tokenPriceFeed = _priceFeed;
     }
 
+    function getTokenPriceFeed() external view returns (address)
+    {
+        return tokenPriceFeed;
+    }   
+    
     /**
      * @dev Set the registry contract address
      * @param _registry Address of the registry contract
      */
     function setRegistry(address _registry) external onlyRole(Constants.ADMIN_ROLE) {
         _setRegistry(_registry, Constants.LIQUIDITY_MANAGER_NAME);
-    }
-
+    } 
+    
     /**
      * @dev Emergency function to recover tokens sent to this contract by mistake
      * @param _token Token address to recover

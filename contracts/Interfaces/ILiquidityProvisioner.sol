@@ -48,5 +48,6 @@ interface ILiquidityProvisioner {
     function getTokenAndStablecoin() external view returns (address token, address stablecoin);
     function setToken(address _token) external;
     function setStablecoin(address _stablecoin) external;
+    function getTargetPrice() external view returns (uint96 _targetPrice);
 }
 

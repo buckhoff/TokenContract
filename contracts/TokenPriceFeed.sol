@@ -116,11 +116,11 @@ UUPSUpgradeable
         __AccessControl_init();
         __UUPSUpgradeable_init();
 
-// Set registry and oracle
+        // Set registry and oracle
         dexRegistry = _dexRegistry;
         externalPriceOracle = _externalPriceOracle;
 
-// Default TWAP settings
+        // Default TWAP settings
         twapWindow = 1 hours;
         twapEnabled = true;
 
@@ -129,15 +129,15 @@ UUPSUpgradeable
         _grantRole(Constants.ORACLE_ROLE, msg.sender);
     }
 
-/**
- * @dev Required override for UUPS proxy pattern
+    /**
+     * @dev Required override for UUPS proxy pattern
      */
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(Constants.ADMIN_ROLE) {
-// Additional upgrade logic can be added here
+        // Additional upgrade logic can be added here
     }
 
-/**
- * @dev Configure pricing settings for a token pair
+    /**
+     * @dev Configure pricing settings for a token pair
      * @param _token Token address
      * @param _stablecoin Stablecoin address
      * @param _enabled Whether the pair is enabled
@@ -218,7 +218,7 @@ UUPSUpgradeable
         uint96 newPrice = 0;
         string memory source = "";
 
-    // Get price from DEXes
+        // Get price from DEXes
         (uint96 dexPrice, string memory dexSource) = _getPriceFromDexes(_token, _stablecoin);
 
         if (dexPrice > 0) {
@@ -226,7 +226,7 @@ UUPSUpgradeable
             source = dexSource;
         }
 
-    // If DEX price is not available, try external oracle
+        // If DEX price is not available, try external oracle
         if (newPrice == 0 && externalPriceOracle != address(0)) {
             try IPriceOracle(externalPriceOracle).getLatestPrice(_token, _stablecoin) returns (uint256 oraclePrice, uint256 timestamp) {
                 if (oraclePrice > 0 && block.timestamp - timestamp < 24 hours) {
@@ -234,17 +234,17 @@ UUPSUpgradeable
                     source = "Oracle";
                 }
             } catch {
-    // Continue if oracle call fails
+            // Continue if oracle call fails
             }
         }
 
-    // If no price available, use fallback
+        // If no price available, use fallback
         if (newPrice == 0) {
             newPrice = priceSettings[_token][_stablecoin].fallbackPrice;
             source = "Fallback";
         }
 
-    // Verify price doesn't deviate too much from previous (if previous exists)
+        // Verify price doesn't deviate too much from previous (if previous exists)
         if (oldPrice > 0) {
             uint16 maxDeviation = priceSettings[_token][_stablecoin].maxPriceDeviation;
             uint96 deviation;

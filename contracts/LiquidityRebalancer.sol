@@ -32,11 +32,8 @@ interface ISwapRouter {
 
 interface IUniswapV2Pair {
     function token0() external view returns (address);
-
     function token1() external view returns (address);
-
     function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
-
     function totalSupply() external view returns (uint96);
 }
 
@@ -54,7 +51,7 @@ ILiquidityRebalancer
     // DEX management
     IDexRegistry public dexRegistry;
     ILiquidityProvisioner public liquidityProvisioner;
-
+    
     // Rebalancing parameters
     uint16 public maxPriceDivergence;    // Maximum allowed price divergence between DEXes (100 = 1%)
     uint16 public maxReserveImbalance;   // Maximum allowed reserve imbalance (100 = 1%)
@@ -71,7 +68,6 @@ ILiquidityRebalancer
     error SwapFailed();
     error InvalidDexId(uint16 dexId);
     error NotEnoughDivergence();
-    error NotAuthorized();
 
     // Events
     event RebalancingParametersUpdated(uint16 maxPriceDivergence, uint16 maxReserveImbalance, uint40 rebalanceCooldown);

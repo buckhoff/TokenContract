@@ -33,10 +33,6 @@ IDexRegistry
     address public liquidityManager;
 
     // Events
-    event DexAdded(uint16 indexed dexId, string name, address router, uint8 allocationPercentage);
-    event DexUpdated(uint16 indexed dexId, string name, address router, uint8 allocationPercentage);
-    event DexActivated(uint16 indexed dexId);
-    event DexDeactivated(uint16 indexed dexId);
     event LiquidityManagerSet(address indexed manager);
     event RouterSupported(address indexed router, bool supported);
     event FactorySupported(address indexed factory, bool supported);
