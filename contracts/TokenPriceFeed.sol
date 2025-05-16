@@ -1,538 +1,645 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.29;
 
-import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlEnumerableUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import "./Registry/RegistryAwareUpgradeable.sol";
-import {Constants} from "./Libraries/Constants.sol";
 
-interface ILiquidityManager {
-    function getTokenPrice(address _token, address _stablecoin) external view returns (uint96 price);
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {Constants} from "./Libraries/Constants.sol";
+import "./Registry/RegistryAwareUpgradeable.sol";
+
+// DEX registry interface
+interface IDexRegistry {
+    struct DexInfo {
+        string name;
+        address router;
+        address factory;
+        address pair;
+        address stakingRewards;
+        uint8 allocationPercentage;
+        bool active;
+    }
+
+    function getDexInfo(uint16 _dexId) external view returns (DexInfo memory);
+
+    function getAllActiveDexes() external view returns (uint16[] memory);
 }
 
-interface IPlatformStabilityFund {
-    function getVerifiedPrice() external view returns (uint96);
+// Price oracle interface (external price feed)
+interface IPriceOracle {
+    function getLatestPrice(address base, address quote) external view returns (uint256 price, uint256 timestamp);
+}
+
+// Interface to pair contract
+interface IUniswapPair {
+    function token0() external view returns (address);
+
+    function token1() external view returns (address);
+
+    function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
 }
 
 /**
  * @title TokenPriceFeed
- * @dev Manages token pricing, conversion, and payment token support for the crowdsale
+ * @dev Enhanced price feed for token/stablecoin pairs across multiple DEXes
  */
 contract TokenPriceFeed is
-AccessControlEnumerableUpgradeable,
+OwnableUpgradeable,
 ReentrancyGuardUpgradeable,
 RegistryAwareUpgradeable,
 UUPSUpgradeable
 {
-    // Mapping of supported payment tokens to their details
-    struct PaymentTokenInfo {
-        bool isActive;           // Whether the token is active
-        uint256 minAmount;       // Minimum purchase amount in USD
-        uint256 maxAmount;       // Maximum purchase amount in USD
-        address priceOracle;     // Custom price oracle (if any)
-        uint8 decimals;          // Token decimals (cached)
-        uint256 totalCollected;  // Total amount collected
+    // Pricing settings
+    struct PriceSettings {
+        bool enabled;              // Whether this token pair is enabled
+        uint96 fallbackPrice;      // Fallback price to use when no DEX data available
+        uint40 lastUpdateTime;     // Last time the price was updated
+        uint40 priceValidPeriod;   // How long a price is considered valid for
+        uint16 maxPriceDeviation;  // Maximum allowed price deviation between updates (100 = 1%)
+        address[] supportedDexes;  // List of DEX pairs to check
     }
 
-    // Payment token mapping and tracking
-    mapping(address => PaymentTokenInfo) public paymentTokens;
-    address[] public supportedPaymentTokensArray;
-
-    // Default stablecoin (reference for prices)
-    address public defaultStablecoin;
-
-    // LiquidityManager reference for price discovery
-    ILiquidityManager public liquidityManager;
-
-    // Dynamic pricing settings
-    bool public useDynamicPricing;
-    uint32 public priceCacheTimeout;
-    uint16 public maxPriceDeviationThreshold;
-
-    // Price caching
-    mapping(address => uint256) public cachedPriceRates;
-    mapping(address => uint256) public lastPriceUpdate;
-    mapping(address => uint256) public fallbackPriceRates;
-
-    // USD price scaling factor (6 decimal places)
-    uint256 public constant PRICE_DECIMALS = 1e6;
-
-    // Crowdsale reference
-    address public crowdsaleContract;
-
-    // Events
-    event PaymentTokenAdded(address indexed token, uint256 minAmount, uint256 maxAmount);
-    event PaymentTokenRemoved(address indexed token);
-    event PaymentTokenUpdated(address indexed token, uint256 minAmount, uint256 maxAmount);
-    event PriceOracleSet(address indexed token, address indexed oracle);
-    event PriceRateUpdated(address indexed token, uint256 oldRate, uint256 newRate);
-    event LiquidityManagerSet(address indexed liquidityManager);
-    event CrowdsaleSet(address indexed crowdsale);
-
-    // Errors
-    error UnauthorizedCaller();
-    error NoPriceSourceAvailable(address token);
-    error UnsupportedPaymentToken(address token);
-    error ZeroPriceRate();
-    error InvalidPriceOracle(address oracle);
-    error PriceDeviationTooHigh(uint256 oraclePrice, uint256 fallbackPrice, uint256 deviation);
-
-    modifier onlyCrowdsale() {
-        if (msg.sender != crowdsaleContract) revert UnauthorizedCaller();
-        _;
+    // Price history data
+    struct PriceData {
+        uint96 price;              // Price value
+        uint40 timestamp;          // When price was recorded
+        string source;             // Source of the price (DEX name, oracle, etc.)
     }
 
-    /**
-     * @dev Initializer function to replace constructor
-     * @param _defaultStablecoin Address of the default stablecoin
+    // Currently active prices per token pair
+    mapping(address => mapping(address => uint96)) public currentPrices;
+
+    // Price settings per token pair
+    mapping(address => mapping(address => PriceSettings)) public priceSettings;
+
+    // Recent price history (circular buffer, last 10 prices)
+    mapping(address => mapping(address => PriceData[10])) public priceHistory;
+    mapping(address => mapping(address => uint8)) public historyIndex;
+
+    // Time-weighted average price (TWAP) settings
+    uint32 public twapWindow;         // Window for TWAP calculation (in seconds)
+    bool public twapEnabled;          // Whether to enable TWAP calculations
+
+// Registry addresses
+    address public dexRegistry;
+    address public externalPriceOracle;
+
+// Events
+    event PriceUpdated(address indexed token, address indexed stablecoin, uint96 oldPrice, uint96 newPrice, string source);
+    event PairConfigured(address indexed token, address indexed stablecoin, bool enabled);
+    event FallbackPriceSet(address indexed token, address indexed stablecoin, uint96 fallbackPrice);
+    event TWAPConfigUpdated(uint32 window, bool enabled);
+    event DexRegistrySet(address indexed registry);
+    event PriceOracleSet(address indexed oracle);
+
+// Errors
+    error ZeroAddress();
+    error PairNotEnabled();
+    error InvalidPriceDeviation(uint96 oldPrice, uint96 newPrice, uint16 maxDeviation);
+    error NoValidPrice();
+    error InvalidPrice();
+    error InvalidDex(uint16 dexId);
+    error InvalidParameters();
+
+/**
+ * @dev Initializer replaces constructor
+     * @param _dexRegistry The DEX registry address
+     * @param _externalPriceOracle External price oracle (optional)
      */
     function initialize(
-        address _defaultStablecoin
+        address _dexRegistry,
+        address _externalPriceOracle
     ) initializer public {
-        __AccessControl_init();
+        __Ownable_init(msg.sender);
         __ReentrancyGuard_init();
+        __AccessControl_init();
         __UUPSUpgradeable_init();
 
-        defaultStablecoin = _defaultStablecoin;
+// Set registry and oracle
+        dexRegistry = _dexRegistry;
+        externalPriceOracle = _externalPriceOracle;
+
+// Default TWAP settings
+        twapWindow = 1 hours;
+        twapEnabled = true;
 
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(Constants.ADMIN_ROLE, msg.sender);
-
-        // Default settings
-        priceCacheTimeout = 1 hours;
-        maxPriceDeviationThreshold = 1000; // 10%
-        useDynamicPricing = true;
-
-        // Setup default stablecoin
-        uint8 decimals = ERC20Upgradeable(_defaultStablecoin).decimals();
-
-        paymentTokens[_defaultStablecoin] = PaymentTokenInfo({
-            isActive: true,
-            minAmount: 100 * PRICE_DECIMALS, // $100 min
-            maxAmount: 50_000 * PRICE_DECIMALS, // $50,000 max
-            priceOracle: address(0),
-            decimals: decimals,
-            totalCollected: 0
-        });
-
-        supportedPaymentTokensArray.push(_defaultStablecoin);
-        fallbackPriceRates[_defaultStablecoin] = 10**decimals; // 1:1 rate for stablecoin
+        _grantRole(Constants.ORACLE_ROLE, msg.sender);
     }
 
-    /**
-     * @dev Required override for UUPS proxy pattern
+/**
+ * @dev Required override for UUPS proxy pattern
      */
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(Constants.ADMIN_ROLE) {
-        // Additional upgrade logic can be added here
+// Additional upgrade logic can be added here
     }
 
-    /**
-     * @dev Set the crowdsale contract address
-     * @param _crowdsale Address of the crowdsale contract
-     */
-    function setCrowdsale(address _crowdsale) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_crowdsale != address(0), "Zero address");
-        crowdsaleContract = _crowdsale;
-        emit CrowdsaleSet(_crowdsale);
-    }
-
-    /**
-     * @dev Set the LiquidityManager for price discovery
-     * @param _liquidityManager Address of the LiquidityManager contract
-     */
-    function setLiquidityManager(address _liquidityManager) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_liquidityManager != address(0), "Zero address");
-        liquidityManager = ILiquidityManager(_liquidityManager);
-        emit LiquidityManagerSet(_liquidityManager);
-    }
-
-    /**
-     * @dev Configure dynamic pricing settings
-     * @param _useDynamicPricing Whether to use dynamic pricing
-     * @param _priceCacheTimeout Cache timeout in seconds
-     * @param _maxDeviationThreshold Max deviation threshold (scaled by 10000)
-     */
-    function configureDynamicPricing(
-        bool _useDynamicPricing,
-        uint32 _priceCacheTimeout,
-        uint16 _maxDeviationThreshold
-    ) external onlyRole(Constants.ADMIN_ROLE) {
-        useDynamicPricing = _useDynamicPricing;
-        priceCacheTimeout = _priceCacheTimeout;
-        maxPriceDeviationThreshold = _maxDeviationThreshold;
-    }
-
-    /**
-     * @dev Add a payment token with custom configurations
+/**
+ * @dev Configure pricing settings for a token pair
      * @param _token Token address
-     * @param _minAmount Minimum purchase amount in USD
-     * @param _maxAmount Maximum purchase amount in USD
-     * @param _priceOracle Custom price oracle (can be zero)
+     * @param _stablecoin Stablecoin address
+     * @param _enabled Whether the pair is enabled
+     * @param _fallbackPrice Fallback price if no DEX data available
+     * @param _priceValidPeriod How long a price is valid for
+     * @param _maxPriceDeviation Maximum allowed price deviation
+     * @param _supportedDexIds Array of DEX IDs to include
      */
-    function addPaymentToken(
+    function configurePricePair(
         address _token,
-        uint256 _minAmount,
-        uint256 _maxAmount,
-        address _priceOracle
+        address _stablecoin,
+        bool _enabled,
+        uint96 _fallbackPrice,
+        uint40 _priceValidPeriod,
+        uint16 _maxPriceDeviation,
+        uint16[] calldata _supportedDexIds
     ) external onlyRole(Constants.ADMIN_ROLE) {
-        _addPaymentToken(_token, _minAmount, _maxAmount, _priceOracle);
-    }
+        if (_token == address(0) || _stablecoin == address(0)) revert ZeroAddress();
 
-    /**
-     * @dev Internal function to add payment token
-     */
-    function _addPaymentToken(
-        address _token,
-        uint256 _minAmount,
-        uint256 _maxAmount,
-        address _priceOracle
-    ) internal {
-        require(_token != address(0), "Zero token address");
-        require(_minAmount > 0, "Min amount must be > 0");
-        require(_maxAmount >= _minAmount, "Max amount must be >= min");
+        // Convert DEX IDs to addresses
+        address[] memory supportedDexes = new address[](_supportedDexIds.length);
 
-        // Check if token is already supported
-        if (!paymentTokens[_token].isActive) {
-            supportedPaymentTokensArray.push(_token);
+        if (dexRegistry != address(0)) {
+            IDexRegistry registry = IDexRegistry(dexRegistry);
+
+            for (uint16 i = 0; i < _supportedDexIds.length; i++) {
+                try registry.getDexInfo(_supportedDexIds[i]) returns (IDexRegistry.DexInfo memory dex) {
+                    supportedDexes[i] = dex.pair;
+                } catch {
+                    revert InvalidDex(_supportedDexIds[i]);
+                }
+            }
         }
 
-        // Get token decimals
-        uint8 decimals = ERC20Upgradeable(_token).decimals();
-
-        // Store token info
-        paymentTokens[_token] = PaymentTokenInfo({
-            isActive: true,
-            minAmount: _minAmount,
-            maxAmount: _maxAmount,
-            priceOracle: _priceOracle,
-            decimals: decimals,
-            totalCollected: 0
+        // Update price settings
+        priceSettings[_token][_stablecoin] = PriceSettings({
+            enabled: _enabled,
+            fallbackPrice: _fallbackPrice,
+            lastUpdateTime: uint40(block.timestamp),
+            priceValidPeriod: _priceValidPeriod,
+            maxPriceDeviation: _maxPriceDeviation,
+            supportedDexes: supportedDexes
         });
 
-        // Set fallback price rate (1:1 for stablecoins, 0 for others)
-        if (_token == defaultStablecoin) {
-            // Default stablecoin has 1:1 rate
-            fallbackPriceRates[_token] = 10**decimals;
-        } else {
-            // Other tokens will use oracle pricing
-            fallbackPriceRates[_token] = 0;
+        // Also set a default current price if none exists
+        if (currentPrices[_token][_stablecoin] == 0) {
+            currentPrices[_token][_stablecoin] = _fallbackPrice;
+
+            // Record in history
+            uint8 index = historyIndex[_token][_stablecoin];
+            priceHistory[_token][_stablecoin][index] = PriceData({
+                price: _fallbackPrice,
+                timestamp: uint40(block.timestamp),
+                source: "Fallback"
+            });
+
+            // Update history index
+            historyIndex[_token][_stablecoin] = (index + 1) % 10;
         }
 
-        // Emit event
-        emit PaymentTokenAdded(_token, _minAmount, _maxAmount);
-
-        // If custom price oracle provided
-        if (_priceOracle != address(0)) {
-            emit PriceOracleSet(_token, _priceOracle);
-        }
+        emit PairConfigured(_token, _stablecoin, _enabled);
+        emit FallbackPriceSet(_token, _stablecoin, _fallbackPrice);
     }
 
     /**
-     * @dev Remove a payment token
-     * @param _token Token address to remove
-     */
-    function removePaymentToken(address _token) external onlyRole(Constants.ADMIN_ROLE) {
-        // Cannot remove default stablecoin
-        require(_token != defaultStablecoin, "Cannot remove default stablecoin");
-
-        // Deactivate token
-        paymentTokens[_token].isActive = false;
-
-        // Remove from array (swap and pop)
-        for (uint i = 0; i < supportedPaymentTokensArray.length; i++) {
-            if (supportedPaymentTokensArray[i] == _token) {
-                // Swap with last element and pop
-                supportedPaymentTokensArray[i] = supportedPaymentTokensArray[supportedPaymentTokensArray.length - 1];
-                supportedPaymentTokensArray.pop();
-                break;
-            }
-        }
-
-        emit PaymentTokenRemoved(_token);
-    }
-
-    /**
-     * @dev Set fallback price rate for a token
+     * @dev Update price for a token pair using on-chain DEX data and/or external oracle
      * @param _token Token address
-     * @param _rate Price rate relative to USD (scaled by token decimals)
+     * @param _stablecoin Stablecoin address
+     * @return price Updated token price
      */
-    function setFallbackPriceRate(address _token, uint256 _rate) external onlyRole(Constants.ADMIN_ROLE) {
-        require(paymentTokens[_token].isActive, "Token not active");
-        require(_rate > 0, "Rate must be > 0");
+    function updatePrice(
+        address _token,
+        address _stablecoin
+    ) public onlyRole(Constants.ORACLE_ROLE) returns (uint96 price) {
+        if (!priceSettings[_token][_stablecoin].enabled) revert PairNotEnabled();
 
-        uint256 oldRate = fallbackPriceRates[_token];
-        fallbackPriceRates[_token] = _rate;
+        uint96 oldPrice = currentPrices[_token][_stablecoin];
+        uint96 newPrice = 0;
+        string memory source = "";
 
-        emit PriceRateUpdated(_token, oldRate, _rate);
-    }
+    // Get price from DEXes
+        (uint96 dexPrice, string memory dexSource) = _getPriceFromDexes(_token, _stablecoin);
 
-    /**
-     * @dev Get current USD price of a token
-     * @param _token Token address
-     * @return price Token price in USD (scaled by PRICE_DECIMALS)
-     */
-    function getTokenUsdPrice(address _token) public view returns (uint256 price) {
-        // For default stablecoin, return 1:1
-        if (_token == defaultStablecoin) {
-            return 10**6; // $1 with 6 decimals precision
+        if (dexPrice > 0) {
+            newPrice = dexPrice;
+            source = dexSource;
         }
 
-        // Check if we should use dynamic pricing
-        if (!useDynamicPricing) {
-            // Use fallback rates directly
-            return _convertTokenPriceToUsd(_token, fallbackPriceRates[_token]);
-        }
-
-        // Check if we have a cached price that's still valid
-        if (lastPriceUpdate[_token] > 0 &&
-            block.timestamp < lastPriceUpdate[_token] + priceCacheTimeout) {
-            return cachedPriceRates[_token];
-        }
-
-        // Try to get price from custom oracle if available
-        if (paymentTokens[_token].priceOracle != address(0)) {
-            try ILiquidityManager(paymentTokens[_token].priceOracle).getTokenPrice(
-                _token, defaultStablecoin
-            ) returns (uint96 oraclePrice) {
-                return _convertTokenPriceToUsd(_token, oraclePrice);
-            } catch {
-                // Oracle failed, continue to next price source
-            }
-        }
-
-        // Try to get price from liquidity manager if available
-        if (address(liquidityManager) != address(0)) {
-            try liquidityManager.getTokenPrice(_token, defaultStablecoin) returns (uint96 lmPrice) {
-                return _convertTokenPriceToUsd(_token, lmPrice);
-            } catch {
-                // Liquidity manager failed, continue to next price source
-            }
-        }
-
-        // Try to get price from StabilityFund if this is a main token
-        if (address(registry) != address(0)) {
-            try registry.getContractAddress(Constants.STABILITY_FUND_NAME) returns (address stabilityFund) {
-                try IPlatformStabilityFund(stabilityFund).getVerifiedPrice() returns (uint96 sfPrice) {
-                    return _convertTokenPriceToUsd(_token, sfPrice);
-                } catch {
-                    // Stability fund failed, continue to fallback
+    // If DEX price is not available, try external oracle
+        if (newPrice == 0 && externalPriceOracle != address(0)) {
+            try IPriceOracle(externalPriceOracle).getLatestPrice(_token, _stablecoin) returns (uint256 oraclePrice, uint256 timestamp) {
+                if (oraclePrice > 0 && block.timestamp - timestamp < 24 hours) {
+                    newPrice = uint96(oraclePrice);
+                    source = "Oracle";
                 }
             } catch {
-                // Registry lookup failed, continue to fallback
+    // Continue if oracle call fails
             }
         }
 
-        // Fall back to manual rate if all oracles fail
-        if (fallbackPriceRates[_token] > 0) {
-            return _convertTokenPriceToUsd(_token, fallbackPriceRates[_token]);
+    // If no price available, use fallback
+        if (newPrice == 0) {
+            newPrice = priceSettings[_token][_stablecoin].fallbackPrice;
+            source = "Fallback";
         }
 
-        // If we get here, we cannot price the token
-        revert NoPriceSourceAvailable(_token);
-    }
+    // Verify price doesn't deviate too much from previous (if previous exists)
+        if (oldPrice > 0) {
+            uint16 maxDeviation = priceSettings[_token][_stablecoin].maxPriceDeviation;
+            uint96 deviation;
 
-    /**
-     * @dev Convert token amount to USD equivalent
-     * @param _token Token address
-     * @param _amount Amount of tokens
-     * @return usdAmount USD equivalent (scaled by PRICE_DECIMALS)
-     */
-    function convertTokenToUsd(address _token, uint256 _amount) public view returns (uint256 usdAmount) {
-        if (!paymentTokens[_token].isActive) revert UnsupportedPaymentToken(_token);
-
-        // Get token's USD price
-        uint256 tokenUsdPrice = getTokenUsdPrice(_token);
-
-        // Get token decimals
-        uint8 decimals = paymentTokens[_token].decimals;
-
-        // Calculate USD amount
-        // usdAmount = _amount * tokenUsdPrice / 10^decimals
-        usdAmount = (_amount * tokenUsdPrice) / (10**decimals);
-
-        return usdAmount;
-    }
-
-    /**
-     * @dev Convert USD amount to token amount
-     * @param _token Token address
-     * @param _usdAmount USD amount (scaled by PRICE_DECIMALS)
-     * @return tokenAmount Equivalent token amount
-     */
-    function convertUsdToToken(address _token, uint256 _usdAmount) public view returns (uint256 tokenAmount) {
-        if (!paymentTokens[_token].isActive) revert UnsupportedPaymentToken(_token);
-
-        // Get token's USD price
-        uint256 tokenUsdPrice = getTokenUsdPrice(_token);
-
-        // Get token decimals
-        uint8 decimals = paymentTokens[_token].decimals;
-
-        // Calculate token amount
-        // tokenAmount = _usdAmount * 10^decimals / tokenUsdPrice
-        tokenAmount = (_usdAmount * (10**decimals)) / tokenUsdPrice;
-
-        return tokenAmount;
-    }
-
-    /**
-     * @dev Helper function to convert token price to USD format
-     * @param _token Token address
-     * @param _tokenPrice Token price
-     * @return usdPrice USD price (scaled by PRICE_DECIMALS)
-     */
-    function _convertTokenPriceToUsd(address _token, uint256 _tokenPrice) internal view returns (uint256 usdPrice) {
-        // Get token decimals
-        uint8 decimals = paymentTokens[_token].decimals;
-
-        // Convert price to our standard USD format with 6 decimals
-        if (decimals > PRICE_DECIMALS) {
-            usdPrice = _tokenPrice / (10**(decimals - PRICE_DECIMALS));
-        } else if (decimals < PRICE_DECIMALS) {
-            usdPrice = _tokenPrice * (10**(PRICE_DECIMALS - decimals));
-        } else {
-            usdPrice = _tokenPrice;
-        }
-
-        return usdPrice;
-    }
-
-    /**
-     * @dev Update cached token price
-     * @param _token Token address
-     */
-    function updateTokenPrice(address _token) external {
-        require(paymentTokens[_token].isActive, "Token not active");
-
-        // Check if timeout has elapsed
-        if (lastPriceUpdate[_token] > 0 &&
-            block.timestamp < lastPriceUpdate[_token] + priceCacheTimeout) {
-            revert("Cache too recent");
-        }
-
-        // Get current price
-        uint256 price = getTokenUsdPrice(_token);
-
-        // Check for large deviation from fallback price
-        if (fallbackPriceRates[_token] > 0) {
-            uint256 fallbackUsdPrice = _convertTokenPriceToUsd(_token, fallbackPriceRates[_token]);
-
-            uint256 deviation;
-            if (price > fallbackUsdPrice) {
-                deviation = ((price - fallbackUsdPrice) * 10000) / fallbackUsdPrice;
+            if (newPrice > oldPrice) {
+                deviation = uint96(((newPrice - oldPrice) * 10000) / oldPrice);
             } else {
-                deviation = ((fallbackUsdPrice - price) * 10000) / fallbackUsdPrice;
+                deviation = uint96(((oldPrice - newPrice) * 10000) / oldPrice);
             }
 
-            // If deviation is too high, revert or use fallback
-            if (deviation > maxPriceDeviationThreshold) {
-                revert PriceDeviationTooHigh(price, fallbackUsdPrice, deviation);
+            if (deviation > maxDeviation) {
+                // Calculate limited new price
+                if (newPrice > oldPrice) {
+                    newPrice = uint96(oldPrice + ((oldPrice * maxDeviation) / 10000));
+                } else {
+                    newPrice = uint96(oldPrice - ((oldPrice * maxDeviation) / 10000));
+                }
+                source = string(abi.encodePacked(source, " (Limited)"));
             }
         }
 
-        // Update cache
-        cachedPriceRates[_token] = price;
-        lastPriceUpdate[_token] = block.timestamp;
+        // Update price
+        currentPrices[_token][_stablecoin] = newPrice;
+        priceSettings[_token][_stablecoin].lastUpdateTime = uint40(block.timestamp);
 
-        emit PriceRateUpdated(_token, cachedPriceRates[_token], price);
+        // Record in history
+        uint8 index = historyIndex[_token][_stablecoin];
+        priceHistory[_token][_stablecoin][index] = PriceData({
+            price: newPrice,
+            timestamp: uint40(block.timestamp),
+            source: source
+        });
+
+        // Update history index
+        historyIndex[_token][_stablecoin] = (index + 1) % 10;
+
+        emit PriceUpdated(_token, _stablecoin, oldPrice, newPrice, source);
+
+        return newPrice;
     }
 
     /**
-     * @dev Update payment token configuration
+     * @dev Get the current price of a token in terms of stablecoin
      * @param _token Token address
-     * @param _minAmount New minimum purchase amount
-     * @param _maxAmount New maximum purchase amount
-     * @param _priceOracle New price oracle (or zero for default)
+     * @param _stablecoin Stablecoin address
+     * @return price Current price
      */
-    function updatePaymentToken(
+    function getTokenPrice(
         address _token,
-        uint256 _minAmount,
-        uint256 _maxAmount,
-        address _priceOracle
-    ) external onlyRole(Constants.ADMIN_ROLE) {
-        require(paymentTokens[_token].isActive, "Token not active");
-        require(_minAmount > 0, "Min amount must be > 0");
-        require(_maxAmount >= _minAmount, "Max amount must be >= min");
+        address _stablecoin
+    ) public view returns (uint96 price) {
+        if (!priceSettings[_token][_stablecoin].enabled) revert PairNotEnabled();
 
-        // Update token info
-        paymentTokens[_token].minAmount = _minAmount;
-        paymentTokens[_token].maxAmount = _maxAmount;
-
-        // Update price oracle if provided
-        if (_priceOracle != paymentTokens[_token].priceOracle) {
-            paymentTokens[_token].priceOracle = _priceOracle;
-            emit PriceOracleSet(_token, _priceOracle);
+        // If TWAP is enabled, calculate and use TWAP
+        if (twapEnabled) {
+            uint96 twapPrice = calculateTWAP(_token, _stablecoin);
+            if (twapPrice > 0) {
+                return twapPrice;
+            }
         }
 
-        emit PaymentTokenUpdated(_token, _minAmount, _maxAmount);
+        // Use current price if valid
+        uint40 lastUpdate = priceSettings[_token][_stablecoin].lastUpdateTime;
+        uint40 validPeriod = priceSettings[_token][_stablecoin].priceValidPeriod;
+
+        if (block.timestamp <= lastUpdate + validPeriod) {
+            return currentPrices[_token][_stablecoin];
+        }
+
+        // If current price is not valid, try to get a fresh price
+        (uint96 dexPrice,) = _getPriceFromDexes(_token, _stablecoin);
+        if (dexPrice > 0) {
+            return dexPrice;
+        }
+
+        // If no fresh price available, use fallback
+        return priceSettings[_token][_stablecoin].fallbackPrice;
     }
 
     /**
-     * @dev Record payment collection for a token
+     * @dev Calculate Time-Weighted Average Price (TWAP) for a token pair
      * @param _token Token address
-     * @param _amount Amount collected
+     * @param _stablecoin Stablecoin address
+     * @return twapPrice The time-weighted average price
      */
-    function recordPaymentCollection(address _token, uint256 _amount) external onlyCrowdsale {
-        require(paymentTokens[_token].isActive, "Token not active");
-        paymentTokens[_token].totalCollected += _amount;
+    function calculateTWAP(
+        address _token,
+        address _stablecoin
+    ) public view returns (uint96 twapPrice) {
+        if (!priceSettings[_token][_stablecoin].enabled) revert PairNotEnabled();
+
+        uint256 totalWeight = 0;
+        uint256 weightedPriceSum = 0;
+        uint40 windowStart = uint40(block.timestamp) - uint40(twapWindow);
+
+        for (uint8 i = 0; i < 10; i++) {
+            PriceData memory data = priceHistory[_token][_stablecoin][i];
+
+            // Skip if no data or outside window
+            if (data.price == 0 || data.timestamp < windowStart) {
+                continue;
+            }
+
+            // Calculate weight (time difference from previous valid data point)
+            uint40 prevTimestamp = 0;
+            for (uint8 j = 1; j < 10; j++) {
+                uint8 prevIndex = (i + 10 - j) % 10;
+                if (priceHistory[_token][_stablecoin][prevIndex].price > 0 &&
+                    priceHistory[_token][_stablecoin][prevIndex].timestamp >= windowStart) {
+                    prevTimestamp = priceHistory[_token][_stablecoin][prevIndex].timestamp;
+                    break;
+                }
+            }
+
+            uint40 weight;
+            if (prevTimestamp == 0) {
+                // First data point in window, use time from window start
+                weight = data.timestamp - windowStart;
+            } else {
+                // Use time difference from previous data point
+                weight = data.timestamp - prevTimestamp;
+            }
+
+            // Add to weighted sum
+            weightedPriceSum += uint256(data.price) * weight;
+            totalWeight += weight;
+        }
+
+        // Calculate TWAP
+        if (totalWeight > 0) {
+            return uint96(weightedPriceSum / totalWeight);
+        }
+
+        // If no valid data points in window, return 0
+        return 0;
     }
 
     /**
-     * @dev Get list of supported payment tokens
-     * @return tokens Array of supported payment token addresses
-     */
-    function getSupportedPaymentTokens() public view returns (address[] memory) {
-        return supportedPaymentTokensArray;
-    }
-
-    /**
-     * @dev Get payment token details
+     * @dev Internal function to get price from DEXes
      * @param _token Token address
-     * @return isActive Whether token is active
-     * @return minAmount Minimum purchase amount in USD
-     * @return maxAmount Maximum purchase amount in USD
-     * @return priceOracle Address of custom price oracle
-     * @return totalCollected Total amount collected in this token
-     * @return currentPrice Current USD price (scaled by PRICE_DECIMALS)
+     * @param _stablecoin Stablecoin address
+     * @return price The price from DEXes
+     * @return source Source of the price
      */
-    function getPaymentTokenDetails(address _token) external view returns (
-        bool isActive,
-        uint256 minAmount,
-        uint256 maxAmount,
-        address priceOracle,
-        uint256 totalCollected,
-        uint256 currentPrice
-    ) {
-        PaymentTokenInfo storage tokenInfo = paymentTokens[_token];
+    function _getPriceFromDexes(
+        address _token,
+        address _stablecoin
+    ) internal view returns (uint96 price, string memory source) {
+        if (dexRegistry == address(0)) {
+            return (0, "");
+        }
 
-        return (
-            tokenInfo.isActive,
-            tokenInfo.minAmount,
-            tokenInfo.maxAmount,
-            tokenInfo.priceOracle,
-            tokenInfo.totalCollected,
-            getTokenUsdPrice(_token)
-        );
+        address[] storage supportedDexes = priceSettings[_token][_stablecoin].supportedDexes;
+
+        if (supportedDexes.length == 0) {
+            // If no specific DEXes configured, use all active DEXes
+            IDexRegistry registry = IDexRegistry(dexRegistry);
+            uint16[] memory activeDexes;
+
+            try registry.getAllActiveDexes() returns (uint16[] memory dexes) {
+                activeDexes = dexes;
+            } catch {
+                return (0, "");
+            }
+
+            if (activeDexes.length == 0) {
+                return (0, "");
+            }
+
+            uint96 totalPrice = 0;
+            uint16 validPrices = 0;
+            string memory bestSource = "";
+            uint96 bestLiquidity = 0;
+
+            for (uint16 i = 0; i < activeDexes.length; i++) {
+                try registry.getDexInfo(activeDexes[i]) returns (IDexRegistry.DexInfo memory dex) {
+                    if (dex.active && dex.pair != address(0)) {
+                        (uint96 dexPrice, uint96 liquidity) = _getPriceFromPair(dex.pair, _token, _stablecoin);
+
+                        if (dexPrice > 0) {
+                            totalPrice += dexPrice;
+                            validPrices++;
+
+                            // Track the DEX with the most liquidity as the source
+                            if (liquidity > bestLiquidity) {
+                                bestLiquidity = liquidity;
+                                bestSource = dex.name;
+                            }
+                        }
+                    }
+                } catch {
+                // Skip on error
+                }
+            }
+
+            if (validPrices > 0) {
+                return (uint96(totalPrice / validPrices), bestSource);
+            }
+        } else {
+            // Use configured DEXes
+            uint96 totalPrice = 0;
+            uint16 validPrices = 0;
+            uint96 bestLiquidity = 0;
+
+            for (uint16 i = 0; i < supportedDexes.length; i++) {
+                address pair = supportedDexes[i];
+                if (pair != address(0)) {
+                    (uint96 dexPrice, uint96 liquidity) = _getPriceFromPair(pair, _token, _stablecoin);
+
+                    if (dexPrice > 0) {
+                        totalPrice += dexPrice;
+                        validPrices++;
+
+                        // Track the DEX with the most liquidity as the source
+                        if (liquidity > bestLiquidity) {
+                            bestLiquidity = liquidity;
+                            source = string(abi.encodePacked("DEX ", toString(i)));
+                        }
+                    }
+                }
+            }
+
+            if (validPrices > 0) {
+                return (uint96(totalPrice / validPrices), source);
+            }
+        }
+
+        return (0, "");
     }
 
     /**
-     * @dev Check if a token is supported for payment
+     * @dev Get price from a DEX pair
+     * @param _pair Pair address
      * @param _token Token address
-     * @return isSupported Whether the token is supported
+     * @param _stablecoin Stablecoin address
+     * @return price Price from the pair
+     * @return liquidity Liquidity value (used to weight sources)
      */
-    function isTokenSupported(address _token) external view returns (bool) {
-        return paymentTokens[_token].isActive;
+    function _getPriceFromPair(
+        address _pair,
+        address _token,
+        address _stablecoin
+    ) internal view returns (uint96 price, uint96 liquidity) {
+
+        try IUniswapPair(_pair).token0() returns (address token0) {
+            try IUniswapPair(_pair).token1() returns (address token1) {
+                // Verify pair contains our tokens
+                bool containsToken = (token0 == _token || token1 == _token);
+                bool containsStable = (token0 == _stablecoin || token1 == _stablecoin);
+
+                if (containsToken && containsStable) {
+                    try IUniswapPair(_pair).getReserves() returns (uint112 reserve0, uint112 reserve1, uint32 /*blockTimestampLast*/) {
+                        bool token0IsToken = token0 == _token;
+
+                        uint112 tokenReserve = token0IsToken ? reserve0 : reserve1;
+                        uint112 stableReserve = token0IsToken ? reserve1 : reserve0;
+
+                        if (tokenReserve > 0) {
+                            // Calculate price
+                            price = uint96((uint256(stableReserve) * 1e18) / uint256(tokenReserve));
+
+                            // Calculate liquidity (in stablecoin terms)
+                            liquidity = uint96(stableReserve * 2);
+
+                            return (price, liquidity);
+                        }
+                    } catch {
+                        // Continue if getReserves fails
+                    }
+                }
+            } catch {
+                // Continue if token1 call fails
+            }
+        } catch {
+            // Continue if token0 call fails
+        }
+
+        return (0, 0);
     }
 
     /**
-     * @dev Get token decimals
-     * @param _token Token address
-     * @return decimals Number of decimals
+     * @dev Set the DEX registry address
+     * @param _registry New registry address
      */
-    function getTokenDecimals(address _token) external view returns (uint8) {
-        require(paymentTokens[_token].isActive, "Token not active");
-        return paymentTokens[_token].decimals;
+    function setDexRegistry(address _registry) external onlyRole(Constants.ADMIN_ROLE) {
+        dexRegistry = _registry;
+        emit DexRegistrySet(_registry);
+    }
+
+    /**
+     * @dev Set the external price oracle address
+     * @param _oracle New oracle address
+     */
+    function setExternalPriceOracle(address _oracle) external onlyRole(Constants.ADMIN_ROLE) {
+        externalPriceOracle = _oracle;
+        emit PriceOracleSet(_oracle);
+    }
+
+    /**
+     * @dev Configure TWAP settings
+     * @param _window TWAP window in seconds
+     * @param _enabled Whether TWAP is enabled
+     */
+    function configureTWAP(uint32 _window, bool _enabled) external onlyRole(Constants.ADMIN_ROLE) {
+        if (_window == 0) revert InvalidParameters();
+
+        twapWindow = _window;
+        twapEnabled = _enabled;
+
+        emit TWAPConfigUpdated(_window, _enabled);
+    }
+
+    /**
+     * @dev Set the fallback price for a token pair
+     * @param _token Token address
+     * @param _stablecoin Stablecoin address
+     * @param _fallbackPrice New fallback price
+     */
+    function setFallbackPrice(
+        address _token,
+        address _stablecoin,
+        uint96 _fallbackPrice
+    ) external onlyRole(Constants.ADMIN_ROLE) {
+        if (_token == address(0) || _stablecoin == address(0)) revert ZeroAddress();
+        if (_fallbackPrice == 0) revert InvalidPrice();
+
+        priceSettings[_token][_stablecoin].fallbackPrice = _fallbackPrice;
+
+        emit FallbackPriceSet(_token, _stablecoin, _fallbackPrice);
+    }
+
+    /**
+     * @dev Force update price for a token pair (emergency function)
+     * @param _token Token address
+     * @param _stablecoin Stablecoin address
+     * @param _price New price
+     */
+    function forceUpdatePrice(
+        address _token,
+        address _stablecoin,
+        uint96 _price
+    ) external onlyRole(Constants.ADMIN_ROLE) {
+        if (_token == address(0) || _stablecoin == address(0)) revert ZeroAddress();
+        if (_price == 0) revert InvalidPrice();
+
+        uint96 oldPrice = currentPrices[_token][_stablecoin];
+        currentPrices[_token][_stablecoin] = _price;
+        priceSettings[_token][_stablecoin].lastUpdateTime = uint40(block.timestamp);
+
+        // Record in history
+        uint8 index = historyIndex[_token][_stablecoin];
+        priceHistory[_token][_stablecoin][index] = PriceData({
+            price: _price,
+            timestamp: uint40(block.timestamp),
+            source: "Admin"
+        });
+
+        // Update history index
+        historyIndex[_token][_stablecoin] = (index + 1) % 10;
+
+        emit PriceUpdated(_token, _stablecoin, oldPrice, _price, "Admin");
+    }
+
+    /**
+     * @dev Set the registry contract address
+     * @param _registry Address of the registry contract
+     */
+    function setRegistry(address _registry) external onlyRole(Constants.ADMIN_ROLE) {
+        _setRegistry(_registry, Constants.TOKEN_PRICE_FEED_NAME);
+    }
+
+    /**
+     * @dev Helper function to convert uint to string
+     */
+    function toString(uint256 value) internal pure returns (string memory) {
+        if (value == 0) {
+            return "0";
+        }
+
+        uint256 temp = value;
+        uint256 digits;
+
+        while (temp != 0) {
+            digits++;
+            temp /= 10;
+        }
+
+        bytes memory buffer = new bytes(digits);
+
+        while (value != 0) {
+            digits -= 1;
+            buffer[digits] = bytes1(uint8(48 + uint256(value % 10)));
+            value /= 10;
+        }
+
+        return string(buffer);
     }
 }

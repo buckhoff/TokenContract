@@ -10,7 +10,12 @@ library Constants{
     bytes32 internal constant MARKETPLACE_NAME = keccak256("PLATFORM_MARKETPLACE");
     bytes32 internal constant PLATFORM_REWARD_NAME = keccak256("PLATFORM_REWARD");
     bytes32 internal constant CROWDSALE_NAME = keccak256("TOKEN_CROWDSALE");
-
+    bytes32 internal constant DEX_REGISTRY_NAME = keccak256("DEX_REGISTRY");
+    bytes32 internal constant LIQUIDITY_MANAGER_NAME = keccak256("LIQUIDITY_MANAGER");
+    bytes32 internal constant LIQUIDITY_PROVISIONER_NAME = keccak256("LIQUIDITY_PROVISIONER");
+    bytes32 internal constant LIQUIDITY_REBALANCER_NAME = keccak256("LIQUIDITY_REBALANCER");
+    bytes32 internal constant TOKEN_PRICE_FEED_NAME = keccak256("TOKEN_PRICE_FEED");
+    
     //Role constants
     bytes32 internal constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
     bytes32 internal constant VERIFIER_ROLE = keccak256("VERIFIER_ROLE");
