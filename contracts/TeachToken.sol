@@ -8,6 +8,22 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
 import {Constants} from "./Libraries/Constants.sol";
 
+interface IImmutableTokenContract {
+    function MAX_SUPPLY() external pure returns (uint256);
+    function TOKEN_NAME() external pure returns (string memory);
+    function TOKEN_SYMBOL() external pure returns (string memory);
+    function calculateAllocation(uint256 allocationBPS) external pure returns (uint256);
+
+    // Allocation constants
+    function PUBLIC_PRESALE_ALLOCATION_BPS() external pure returns (uint256);
+    function COMMUNITY_INCENTIVES_ALLOCATION_BPS() external pure returns (uint256);
+    function PLATFORM_ECOSYSTEM_ALLOCATION_BPS() external pure returns (uint256);
+    function INITIAL_LIQUIDITY_ALLOCATION_BPS() external pure returns (uint256);
+    function TEAM_DEV_ALLOCATION_BPS() external pure returns (uint256);
+    function EDUCATIONAL_PARTNERS_ALLOCATION_BPS() external pure returns (uint256);
+    function RESERVE_ALLOCATION_BPS() external pure returns (uint256);
+}
+
 /**
  * @title TeachToken
  * @dev Implementation of the TEACH Token for the TeacherSupport Platform on Polygon
@@ -19,11 +35,9 @@ contract TeachToken is
     UUPSUpgradeable,
     RegistryAwareUpgradeable
 {
-
-    ERC20Upgradeable internal token;
+    IImmutableTokenContract public immutableConstants;
     
-    // Maximum supply cap
-    uint256 public constant MAX_SUPPLY = 5_000_000_000 * 10**18; // 5 billion tokens
+    ERC20Upgradeable internal token;
 
     // Track if initial distribution has been performed
     bool private initialDistributionDone;
@@ -55,7 +69,7 @@ contract TeachToken is
     event ERC20TokensRecovered(address indexed token, address indexed to, uint256 amount);
     event EmergencyRecoveryInitiated(address indexed recoveryAdmin, uint256 timestamp);
     event EmergencyRecoveryCompleted(address indexed recoveryAdmin);
-
+    event ImmutableConstantsSet(address indexed constantsContract);
     error TokenNotActiveOrRegistered();
     
     modifier whenContractNotPaused(){
@@ -84,8 +98,14 @@ contract TeachToken is
     /**
     * @dev Initializes the contract replacing the constructor
      */
-    function initialize() initializer public {
-        __ERC20_init("TeacherSupport Token", "TEACH");
+    function initialize(address _immutableConstants) initializer public {
+        if(_immutableConstants == address(0)) revert ZeroContractAddress();
+        immutableConstants = IImmutableTokenContract(_immutableConstants);
+        
+        __ERC20_init( 
+            immutableConstants.TOKEN_NAME(),
+            immutableConstants.TOKEN_SYMBOL()
+        );
         __ERC20Burnable_init();
         __AccessControl_init();
         __ReentrancyGuard_init();
@@ -97,6 +117,8 @@ contract TeachToken is
         _grantRole(Constants.BURNER_ROLE, msg.sender);
         initialDistributionDone = false;
         requiredRecoveryApprovals = 3;
+
+        emit ImmutableConstantsSet(_immutableConstants);
     }
 
     /**
@@ -152,15 +174,34 @@ contract TeachToken is
             educationalPartnersAddress != reserveAddress,
             "Duplicate addresses not allowed"
         );
-        
-        // Define allocation amounts
-        uint256 publicPresaleAmount = 1_250_000_000 * 10**18; // 25%
-        uint256 communityIncentivesAmount = 1_200_000_000 * 10**18; // 24%
-        uint256 platformEcosystemAmount = 1_000_000_000 * 10**18; // 20%
-        uint256 initialLiquidityAmount = 600_000_000 * 10**18; // 12%
-        uint256 teamAndDevAmount = 400_000_000 * 10**18; // 8%
-        uint256 educationalPartnersAmount = 350_000_000 * 10**18; // 7%
-        uint256 reserveAmount = 200_000_000 * 10**18; // 4%
+
+        uint256 publicPresaleAmount = immutableConstants.calculateAllocation(
+            immutableConstants.PUBLIC_PRESALE_ALLOCATION_BPS()
+        );
+
+        uint256 communityIncentivesAmount = immutableConstants.calculateAllocation(
+            immutableConstants.COMMUNITY_INCENTIVES_ALLOCATION_BPS()
+        );
+
+        uint256 platformEcosystemAmount = immutableConstants.calculateAllocation(
+            immutableConstants.PLATFORM_ECOSYSTEM_ALLOCATION_BPS()
+        );
+
+        uint256 initialLiquidityAmount = immutableConstants.calculateAllocation(
+            immutableConstants.INITIAL_LIQUIDITY_ALLOCATION_BPS()
+        );
+
+        uint256 teamAndDevAmount = immutableConstants.calculateAllocation(
+            immutableConstants.TEAM_DEV_ALLOCATION_BPS()
+        );
+
+        uint256 educationalPartnersAmount = immutableConstants.calculateAllocation(
+            immutableConstants.EDUCATIONAL_PARTNERS_ALLOCATION_BPS()
+        );
+
+        uint256 reserveAmount = immutableConstants.calculateAllocation(
+            immutableConstants.RESERVE_ALLOCATION_BPS()
+        );
 
         // Validate that the sum of all allocations equals MAX_SUPPLY
         uint256 totalAllocation = platformEcosystemAmount + communityIncentivesAmount +
@@ -168,7 +209,7 @@ contract TeachToken is
                     teamAndDevAmount + educationalPartnersAmount +
                     reserveAmount;
 
-        require(totalAllocation == MAX_SUPPLY, "Total allocation must equal MAX_SUPPLY");
+        require(totalAllocation == immutableConstants.MAX_SUPPLY(), "Total allocation must equal MAX_SUPPLY");
         
         // Public Presale (25%)
         _mint(publicPresaleAddress, publicPresaleAmount);
@@ -194,24 +235,13 @@ contract TeachToken is
         initialDistributionDone = true;
         emit InitialDistributionComplete(block.timestamp);
     }
-
+    
     /**
      * @dev Check if the initial distribution has been completed
      * @return Boolean indicating if initial distribution is done
      */
     function isInitialDistributionComplete() public view returns (bool) {
         return initialDistributionDone;
-    }
-
-    
-    /**
-     * @dev Creates `amount` new tokens for `to`.
-     * Requirements: Caller must have the MINTER_ROLE
-     * Total supply must not exceed MAX_SUPPLY
-     */
-    function mint(address to, uint256 amount) public onlyRole(Constants.MINTER_ROLE) {
-        require(totalSupply() + amount <= MAX_SUPPLY, "TeachToken: Max supply exceeded");
-        _mint(to, amount);
     }
 
     /**

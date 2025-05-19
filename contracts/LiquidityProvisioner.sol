@@ -86,6 +86,7 @@ ILiquidityProvisioner
     // Target price for token in USD (scaled by 1e6)
     uint96 public targetPrice;
 
+    event DetailedLiquidityProvided(uint16 dexId, uint96 tokenAdded, uint96 stableAdded, uint96 liquidity);
     // Error declarations
     error ZeroAddress();
     error InvalidDexId(uint16 dexId);
@@ -175,6 +176,7 @@ ILiquidityProvisioner
                     dexTokenAmount,
                     dexStablecoinAmount
                 );
+                emit DetailedLiquidityProvided(dexId, tokenAdded, stableAdded, liquidity);
             }
         }
     }

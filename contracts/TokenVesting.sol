@@ -10,10 +10,10 @@ import {Constants} from "./Libraries/Constants.sol";
 import {VestingCalculations} from "./Libraries/VestingCalculations.sol";
 
 /**
- * @title TeachTokenVesting
- * @dev Vesting contract for the TEACH token with support for multiple schedules
+ * @title TokenVesting
+ * @dev Vesting contract for the token with support for multiple schedules
  */
-contract TeachTokenVesting is
+contract TokenVesting is
 OwnableUpgradeable,
 ReentrancyGuardUpgradeable,
 RegistryAwareUpgradeable,
@@ -106,30 +106,30 @@ UUPSUpgradeable
     
     // Modifiers
     modifier whenNotPaused() {
-        require(!paused, "TeachTokenVesting: paused");
+        require(!paused, "TokenVesting: paused");
         _;
     }
 
     modifier onlyAfterTGE() {
-        require(tgeOccurred, "TeachTokenVesting: TGE not occurred yet");
+        require(tgeOccurred, "TokenVesting: TGE not occurred yet");
         _;
     }
 
     modifier onlyScheduleOwner(uint256 scheduleId) {
-        require(vestingSchedules[scheduleId].beneficiary == msg.sender, "TeachTokenVesting: not schedule owner");
+        require(vestingSchedules[scheduleId].beneficiary == msg.sender, "TokenVesting: not schedule owner");
         _;
     }
     
     /**
      * @dev Initializes the contract with initial parameters
-     * @param _token Address of the TEACH token
+     * @param _token Address of the vesting token
      */
     function initialize(address _token) initializer public {
         __Ownable_init(msg.sender);
         __ReentrancyGuard_init();
         __AccessControl_init();
 
-        require(_token != address(0), "TeachTokenVesting: zero token address");
+        require(_token != address(0), "TokenVesting: zero token address");
         token = ERC20Upgradeable(_token);
 
         _scheduleIdCounter = 1;
@@ -151,8 +151,8 @@ UUPSUpgradeable
      * @param _tgeTime Timestamp of the TGE
      */
     function setTGE(uint40 _tgeTime) external onlyRole(Constants.ADMIN_ROLE) {
-        require(!tgeOccurred, "TeachTokenVesting: TGE already set");
-        require(_tgeTime > 0, "TeachTokenVesting: invalid TGE time");
+        require(!tgeOccurred, "TokenVesting: TGE already set");
+        require(_tgeTime > 0, "TokenVesting: invalid TGE time");
 
         tgeTime = _tgeTime;
         tgeOccurred = true;
@@ -188,10 +188,10 @@ UUPSUpgradeable
         BeneficiaryGroup _group,
         bool _revocable
     ) public onlyRole(Constants.CREATOR_ROLE) returns (uint256) {
-        require(_beneficiary != address(0), "TeachTokenVesting: zero beneficiary address");
-        require(_amount > 0, "TeachTokenVesting: zero amount");
-        require(_duration > 0, "TeachTokenVesting: zero duration");
-        require(_tgePercentage <= 100, "TeachTokenVesting: TGE percentage too high");
+        require(_beneficiary != address(0), "TokenVesting: zero beneficiary address");
+        require(_amount > 0, "TokenVesting: zero amount");
+        require(_duration > 0, "TokenVesting: zero duration");
+        require(_tgePercentage <= 100, "TokenVesting: TGE percentage too high");
 
         uint256 scheduleId = _scheduleIdCounter++;
 
@@ -212,7 +212,7 @@ UUPSUpgradeable
         beneficiarySchedules[_beneficiary].push(scheduleId);
 
         // Verify we have enough tokens for the vesting
-        require(token.balanceOf(address(this)) >= _amount, "TeachTokenVesting: insufficient token balance");
+        require(token.balanceOf(address(this)) >= _amount, "TokenVesting: insufficient token balance");
 
         emit ScheduleCreated(scheduleId, _beneficiary, _group, _amount);
 
@@ -239,11 +239,11 @@ UUPSUpgradeable
         BeneficiaryGroup _group,
         bool _revocable
     ) public onlyRole(Constants.CREATOR_ROLE) returns (uint256) {
-        require(_beneficiary != address(0), "TeachTokenVesting: zero beneficiary address");
-        require(_totalAmount > 0, "TeachTokenVesting: zero amount");
-        require(_initialAmount < _totalAmount, "TeachTokenVesting: initial amount too high");
-        require(_releasesCount > 0, "TeachTokenVesting: zero releases count");
-        require(_firstReleaseTime > block.timestamp, "TeachTokenVesting: first release in the past");
+        require(_beneficiary != address(0), "TokenVesting: zero beneficiary address");
+        require(_totalAmount > 0, "TokenVesting: zero amount");
+        require(_initialAmount < _totalAmount, "TokenVesting: initial amount too high");
+        require(_releasesCount > 0, "TokenVesting: zero releases count");
+        require(_firstReleaseTime > block.timestamp, "TokenVesting: first release in the past");
 
         uint256 scheduleId = _scheduleIdCounter++;
 
@@ -285,7 +285,7 @@ UUPSUpgradeable
         }
 
         // Verify we have enough tokens for the vesting
-        require(token.balanceOf(address(this)) >= _totalAmount, "TeachTokenVesting: insufficient token balance");
+        require(token.balanceOf(address(this)) >= _totalAmount, "TokenVesting: insufficient token balance");
 
         emit ScheduleCreated(scheduleId, _beneficiary, _group, _totalAmount);
 
@@ -308,9 +308,9 @@ UUPSUpgradeable
         BeneficiaryGroup _group,
         bool _revocable
     ) external onlyRole(Constants.CREATOR_ROLE) returns (uint256) {
-        require(_beneficiary != address(0), "TeachTokenVesting: zero beneficiary address");
-        require(_totalAmount > 0, "TeachTokenVesting: zero amount");
-        require(_tgePercentage <= 100, "TeachTokenVesting: TGE percentage too high");
+        require(_beneficiary != address(0), "TokenVesting: zero beneficiary address");
+        require(_totalAmount > 0, "TokenVesting: zero amount");
+        require(_tgePercentage <= 100, "TokenVesting: TGE percentage too high");
 
         uint256 scheduleId = _scheduleIdCounter++;
 
@@ -331,7 +331,7 @@ UUPSUpgradeable
         beneficiarySchedules[_beneficiary].push(scheduleId);
 
         // Verify we have enough tokens for the vesting
-        require(token.balanceOf(address(this)) >= _totalAmount, "TeachTokenVesting: insufficient token balance");
+        require(token.balanceOf(address(this)) >= _totalAmount, "TokenVesting: insufficient token balance");
 
         emit ScheduleCreated(scheduleId, _beneficiary, _group, _totalAmount);
 
@@ -349,8 +349,8 @@ UUPSUpgradeable
         string memory _description,
         uint8 _percentage
     ) external onlyRole(Constants.ADMIN_ROLE) {
-        require(vestingSchedules[_scheduleId].vestingType == VestingType.MILESTONE, "TeachTokenVesting: not milestone-based");
-        require(_percentage > 0 && _percentage <= 100, "TeachTokenVesting: invalid percentage");
+        require(vestingSchedules[_scheduleId].vestingType == VestingType.MILESTONE, "TokenVesting: not milestone-based");
+        require(_percentage > 0 && _percentage <= 100, "TokenVesting: invalid percentage");
 
         // Calculate total percentage across all milestones
         uint8 totalPercentage = vestingSchedules[_scheduleId].tgePercentage;
@@ -361,7 +361,7 @@ UUPSUpgradeable
         }
 
         // Ensure we don't exceed 100%
-        require(totalPercentage + _percentage <= 100, "TeachTokenVesting: total percentage exceeds 100%");
+        require(totalPercentage + _percentage <= 100, "TokenVesting: total percentage exceeds 100%");
 
         // Add the new milestone
         milestones.push(Milestone({
@@ -382,11 +382,11 @@ UUPSUpgradeable
         uint256 _scheduleId,
         uint256 _milestoneIndex
     ) external onlyRole(Constants.ADMIN_ROLE) {
-        require(vestingSchedules[_scheduleId].vestingType == VestingType.MILESTONE, "TeachTokenVesting: not milestone-based");
+        require(vestingSchedules[_scheduleId].vestingType == VestingType.MILESTONE, "TokenVesting: not milestone-based");
 
         Milestone[] storage milestones = scheduleMilestones[_scheduleId];
-        require(_milestoneIndex < milestones.length, "TeachTokenVesting: invalid milestone index");
-        require(!milestones[_milestoneIndex].achieved, "TeachTokenVesting: milestone already achieved");
+        require(_milestoneIndex < milestones.length, "TokenVesting: invalid milestone index");
+        require(!milestones[_milestoneIndex].achieved, "TokenVesting: milestone already achieved");
 
         milestones[_milestoneIndex].achieved = true;
 
@@ -549,7 +549,7 @@ UUPSUpgradeable
      */
     function claimTokens(uint256 _scheduleId) external nonReentrant whenNotPaused onlyAfterTGE onlyScheduleOwner(_scheduleId) returns (uint256 claimable) {
          claimable = this.calculateClaimableAmount(_scheduleId);
-        require(claimable > 0, "TeachTokenVesting: no tokens claimable");
+        require(claimable > 0, "TokenVesting: no tokens claimable");
 
         VestingSchedule storage schedule = vestingSchedules[_scheduleId];
 
@@ -569,7 +569,7 @@ UUPSUpgradeable
         }
 
         // Transfer tokens to beneficiary
-        require(token.transfer(schedule.beneficiary, claimable), "TeachTokenVesting: transfer failed");
+        require(token.transfer(schedule.beneficiary, claimable), "TokenVesting: transfer failed");
 
         
         emit TokensClaimed(_scheduleId, schedule.beneficiary, claimable);
@@ -583,9 +583,9 @@ UUPSUpgradeable
     function revokeSchedule(uint256 _scheduleId) external onlyRole(Constants.ADMIN_ROLE) {
         VestingSchedule storage schedule = vestingSchedules[_scheduleId];
 
-        require(schedule.beneficiary != address(0), "TeachTokenVesting: schedule doesn't exist");
-        require(schedule.revocable, "TeachTokenVesting: not revocable");
-        require(!schedule.revoked, "TeachTokenVesting: already revoked");
+        require(schedule.beneficiary != address(0), "TokenVesting: schedule doesn't exist");
+        require(schedule.revocable, "TokenVesting: not revocable");
+        require(!schedule.revoked, "TokenVesting: already revoked");
 
         // Calculate vested amount
         uint256 vestedAmount;
@@ -603,7 +603,7 @@ UUPSUpgradeable
 
         if (unclaimedAmount > 0) {
             // Transfer unclaimed tokens back to owner
-            require(token.transfer(owner(), unclaimedAmount), "TeachTokenVesting: transfer failed");
+            require(token.transfer(owner(), unclaimedAmount), "TokenVesting: transfer failed");
         }
 
         // Mark schedule as revoked
@@ -631,7 +631,7 @@ UUPSUpgradeable
         BeneficiaryGroup _group,
         bool _revocable
     ) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_beneficiaries.length == _amounts.length, "TeachTokenVesting: arrays length mismatch");
+        require(_beneficiaries.length == _amounts.length, "TokenVesting: arrays length mismatch");
 
         uint256 totalAmount = 0;
         for (uint256 i = 0; i < _amounts.length; i++) {
@@ -639,7 +639,7 @@ UUPSUpgradeable
         }
 
         // Verify we have enough tokens for all the vestings
-        require(token.balanceOf(address(this)) >= totalAmount, "TeachTokenVesting: insufficient token balance");
+        require(token.balanceOf(address(this)) >= totalAmount, "TokenVesting: insufficient token balance");
 
         for (uint256 i = 0; i < _beneficiaries.length; i++) {
             createLinearVestingSchedule(
@@ -665,7 +665,7 @@ UUPSUpgradeable
         address[] calldata _beneficiaries,
         uint256[] calldata _amounts
     ) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_beneficiaries.length == _amounts.length, "TeachTokenVesting: arrays length mismatch");
+        require(_beneficiaries.length == _amounts.length, "TokenVesting: arrays length mismatch");
 
         uint256 totalAmount = 0;
         for (uint256 i = 0; i < _amounts.length; i++) {
@@ -673,7 +673,7 @@ UUPSUpgradeable
         }
 
         // Verify we have enough tokens for all the vestings
-        require(token.balanceOf(address(this)) >= totalAmount, "TeachTokenVesting: insufficient token balance");
+        require(token.balanceOf(address(this)) >= totalAmount, "TokenVesting: insufficient token balance");
 
         // Standard public sale parameters: 20% TGE unlock with 6-month vesting
         for (uint256 i = 0; i < _beneficiaries.length; i++) {
@@ -700,7 +700,7 @@ UUPSUpgradeable
         address[] calldata _beneficiaries,
         uint256[] calldata _amounts
     ) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_beneficiaries.length == _amounts.length, "TeachTokenVesting: arrays length mismatch");
+        require(_beneficiaries.length == _amounts.length, "TokenVesting: arrays length mismatch");
 
         uint256 totalAmount = 0;
         for (uint256 i = 0; i < _amounts.length; i++) {
@@ -708,7 +708,7 @@ UUPSUpgradeable
         }
 
         // Verify we have enough tokens for all the vestings
-        require(token.balanceOf(address(this)) >= totalAmount, "TeachTokenVesting: insufficient token balance");
+        require(token.balanceOf(address(this)) >= totalAmount, "TokenVesting: insufficient token balance");
 
         // Standard dev team parameters: quarterly release with 2-3M tokens at TGE
         for (uint256 i = 0; i < _beneficiaries.length; i++) {
@@ -739,7 +739,7 @@ UUPSUpgradeable
         address[] calldata _beneficiaries,
         uint256[] calldata _amounts
     ) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_beneficiaries.length == _amounts.length, "TeachTokenVesting: arrays length mismatch");
+        require(_beneficiaries.length == _amounts.length, "TokenVesting: arrays length mismatch");
 
         uint256 totalAmount = 0;
         for (uint256 i = 0; i < _amounts.length; i++) {
@@ -747,7 +747,7 @@ UUPSUpgradeable
         }
 
         // Verify we have enough tokens for all the vestings
-        require(token.balanceOf(address(this)) >= totalAmount, "TeachTokenVesting: insufficient token balance");
+        require(token.balanceOf(address(this)) >= totalAmount, "TokenVesting: insufficient token balance");
 
         // Standard advisor parameters: 1-year linear vesting with 3-month cliff
         for (uint256 i = 0; i < _beneficiaries.length; i++) {
@@ -774,7 +774,7 @@ UUPSUpgradeable
         address[] calldata _beneficiaries,
         uint256[] calldata _amounts
     ) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_beneficiaries.length == _amounts.length, "TeachTokenVesting: arrays length mismatch");
+        require(_beneficiaries.length == _amounts.length, "TokenVesting: arrays length mismatch");
 
         uint256 totalAmount = 0;
         for (uint256 i = 0; i < _amounts.length; i++) {
@@ -782,7 +782,7 @@ UUPSUpgradeable
         }
 
         // Verify we have enough tokens for all the vestings
-        require(token.balanceOf(address(this)) >= totalAmount, "TeachTokenVesting: insufficient token balance");
+        require(token.balanceOf(address(this)) >= totalAmount, "TokenVesting: insufficient token balance");
 
         // Standard partner parameters: 18-month linear vesting with 10% TGE
         for (uint256 i = 0; i < _beneficiaries.length; i++) {
@@ -924,7 +924,7 @@ UUPSUpgradeable
      * @param _token New token address
      */
     function setToken(address _token) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_token != address(0), "TeachTokenVesting: zero token address");
+        require(_token != address(0), "TokenVesting: zero token address");
         token = ERC20Upgradeable(_token);
     }
 
@@ -933,9 +933,9 @@ UUPSUpgradeable
      * @param _token Token address to recover
      */
     function recoverTokens(address _token) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_token != address(token), "TeachTokenVesting: cannot recover vesting token");
+        require(_token != address(token), "TokenVesting: cannot recover vesting token");
         uint96 balance = uint96(ERC20Upgradeable(_token).balanceOf(address(this)));
-        require(balance > 0, "TeachTokenVesting: no tokens to recover");
-        require(ERC20Upgradeable(_token).transfer(owner(), balance), "TeachTokenVesting: transfer failed");
+        require(balance > 0, "TokenVesting: no tokens to recover");
+        require(ERC20Upgradeable(_token).transfer(owner(), balance), "TokenVesting: transfer failed");
     }
 }

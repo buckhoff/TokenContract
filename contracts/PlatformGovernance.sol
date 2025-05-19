@@ -12,7 +12,7 @@ import "./Interfaces/IPlatformGovernance.sol";
 
 /**
  * @title PlatformGovernance
- * @dev Contract for decentralized governance of the TeacherSupport platform
+ * @dev Contract for decentralized governance of the platform
  */
 contract PlatformGovernance is
     RegistryAwareUpgradeable,
@@ -938,12 +938,12 @@ contract PlatformGovernance is
 
         // Update token reference
         if (registry.isContractActive(Constants.TOKEN_NAME)) {
-            address newTeachToken = registry.getContractAddress(Constants.TOKEN_NAME);
-            address oldTeachToken = address(token);
+            address newToken = registry.getContractAddress(Constants.TOKEN_NAME);
+            address oldToken = address(token);
 
-            if (newTeachToken != oldTeachToken) {
-                token = ERC20Upgradeable(newTeachToken);
-                emit ContractReferenceUpdated(Constants.TOKEN_NAME, oldTeachToken, newTeachToken);
+            if (newToken != oldToken) {
+                token = ERC20Upgradeable(newToken);
+                emit ContractReferenceUpdated(Constants.TOKEN_NAME, oldToken, newToken);
             }
         }
 

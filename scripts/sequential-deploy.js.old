@@ -87,7 +87,49 @@
                 envVars: ["TOKEN_CROWDSALE_ADDRESS"],
                 gasUsed: 0  // Will be populated during deployment
             }
-        ];
+        ,
+    {
+        name: "DexRegistry",
+        script: "scripts/deploy-dex-registry.js",
+        envVars: ["DEX_REGISTRY_ADDRESS"],
+        gasUsed: 0  // Will be populated during deployment
+    },
+    {
+        name: "TokenPriceFeed",
+        script: "scripts/deploy-token-price-feed.js",
+        envVars: ["TOKEN_PRICE_FEED_ADDRESS"],
+        gasUsed: 0  // Will be populated during deployment
+    },
+    {
+        name: "LiquidityProvisioner",
+        script: "scripts/deploy-liquidity-provisioner.js",
+        envVars: ["LIQUIDITY_PROVISIONER_ADDRESS"],
+        gasUsed: 0  // Will be populated during deployment
+    },
+    {
+        name: "LiquidityRebalancer",
+        script: "scripts/deploy-liquidity-rebalancer.js",
+        envVars: ["LIQUIDITY_REBALANCER_ADDRESS"],
+        gasUsed: 0  // Will be populated during deployment
+    },
+    {
+        name: "LiquidityManager",
+        script: "scripts/deploy-liquidity-manager.js",
+        envVars: ["LIQUIDITY_MANAGER_ADDRESS"],
+        gasUsed: 0  // Will be populated during deployment
+    },
+    {
+        name: "TierManager",
+        script: "scripts/deploy-tier-manager.js",
+        envVars: ["TIER_MANAGER_ADDRESS"],
+        gasUsed: 0  // Will be populated during deployment
+    },
+    {
+        name: "EmergencyManager",
+        script: "scripts/deploy-emergency-manager.js",
+        envVars: ["EMERGENCY_MANAGER_ADDRESS"],
+        gasUsed: 0  // Will be populated during deployment
+    }];
 
         // Helper function to update .env file
         function updateEnvFile(key, value) {

@@ -11,7 +11,7 @@ import {IPlatformStaking} from "./Interfaces/IPlatformStaking.sol";
 
 /**
  * @title TokenStaking
- * @dev Contract for staking TEACH tokens to earn rewards with 50/50 split between users and schools
+ * @dev Contract for staking tokens to earn rewards with 50/50 split between users and schools
  */
 contract TokenStaking is
     OwnableUpgradeable,
@@ -181,7 +181,7 @@ contract TokenStaking is
     function updateContractReferences() external onlyRole(Constants.ADMIN_ROLE) {
         require(address(registry) != address(0), "TokenStaking: registry not set");
 
-        // Update TeachToken reference
+        // Update Token reference
         if (registry.isContractActive(Constants.TOKEN_NAME)) {
             address newToken = registry.getContractAddress(Constants.TOKEN_NAME);
             address oldToken = address(token);

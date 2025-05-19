@@ -163,7 +163,6 @@ IDexRegistry
         DexInfo storage dex = dexes[_dexId];
 
         // Calculate new total allocation
-        uint8 oldAllocation = dex.active ? dex.allocationPercentage : 0;
         uint8 totalAllocation = _allocationPercentage;
 
         for (uint16 i = 0; i < dexes.length; i++) {

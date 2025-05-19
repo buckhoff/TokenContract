@@ -1,5 +1,5 @@
-// scripts/deploy-crowdsale.js
-const { ethers , upgrades} = require("hardhat");
+// scripts/deploy-crowdsale-updated.js
+const { ethers, upgrades } = require("hardhat");
 require("dotenv").config();
 
 async function main() {
@@ -10,7 +10,9 @@ async function main() {
     const teachTokenAddress = process.env.TOKEN_ADDRESS;
     const stableCoinAddress = process.env.STABLE_COIN_ADDRESS;
     const registryAddress = process.env.REGISTRY_ADDRESS;
-    const treasuryAddress = process.env.TREASURY_ADDRESS;
+    const treasuryAddress = process.env.TREASURY_ADDRESS || deployer.address;
+    const tierManagerAddress = process.env.TIER_MANAGER_ADDRESS;
+    const emergencyManagerAddress = process.env.EMERGENCY_MANAGER_ADDRESS;
 
     if (!teachTokenAddress || !stableCoinAddress) {
         console.error("Please set TOKEN_ADDRESS and STABLE_COIN_ADDRESS in your .env file");
@@ -19,21 +21,16 @@ async function main() {
 
     // Deploy the TokenCrowdSale contract
     const TokenCrowdSale = await ethers.getContractFactory("TokenCrowdSale");
-    const crowdsale = await upgrades.deployProxy(TokenCrowdSale,[stableCoinAddress, treasuryAddress],{ initializer: 'initialize' });
+    const crowdsale = await upgrades.deployProxy(TokenCrowdSale, [
+        stableCoinAddress,
+        treasuryAddress
+    ], { initializer: 'initialize' });
 
     await crowdsale.waitForDeployment();
     const deploymentTx = await ethers.provider.getTransactionReceipt(crowdsale.deploymentTransaction().hash);
     totalGas += deploymentTx.gasUsed;
     const crowdsaleAddress = await crowdsale.getAddress();
     console.log("TokenCrowdSale deployed to:", crowdsaleAddress);
-
-    // Initialize the crowdsale contract
-    //console.log("Initializing TokenCrowdSale...");
-    //const initTx = await crowdsale.initialize(
-     //   stableCoinAddress, // Payment token (USDC)
-    //    deployer.address   // Treasury address (for now)
-    //);
-    //await initTx.wait();
     console.log("TokenCrowdSale initialized");
 
     // Set the sale token
@@ -42,6 +39,36 @@ async function main() {
     const setTokenReceipt = await setTokenTx.wait();
     totalGas += setTokenReceipt.gasUsed;
     console.log("Sale token set successfully");
+
+    // Set TierManager if available
+    if (tierManagerAddress) {
+        console.log("Setting TierManager for TokenCrowdSale...");
+        const setTierManagerTx = await crowdsale.setTierManager(tierManagerAddress);
+        const setTierManagerReceipt = await setTierManagerTx.wait();
+        totalGas += setTierManagerReceipt.gasUsed;
+        console.log("TierManager set successfully");
+
+        // Set Crowdsale in TierManager
+        const TierManager = await ethers.getContractFactory("TierManager");
+        const tierManager = TierManager.attach(tierManagerAddress);
+        await tierManager.setCrowdsale(crowdsaleAddress);
+        console.log("Crowdsale set in TierManager");
+    }
+
+    // Set EmergencyManager if available
+    if (emergencyManagerAddress) {
+        console.log("Setting EmergencyManager for TokenCrowdSale...");
+        const setEmergencyManagerTx = await crowdsale.setEmergencyManager(emergencyManagerAddress);
+        const setEmergencyManagerReceipt = await setEmergencyManagerTx.wait();
+        totalGas += setEmergencyManagerReceipt.gasUsed;
+        console.log("EmergencyManager set successfully");
+
+        // Set Crowdsale in EmergencyManager
+        const EmergencyManager = await ethers.getContractFactory("EmergencyManager");
+        const emergencyManager = EmergencyManager.attach(emergencyManagerAddress);
+        await emergencyManager.setCrowdsale(crowdsaleAddress);
+        console.log("Crowdsale set in EmergencyManager");
+    }
 
     // Set presale times (example: start in 1 day, end in 30 days)
     const now = Math.floor(Date.now() / 1000);
@@ -54,12 +81,16 @@ async function main() {
     totalGas += setTimesReceipt.gasUsed;
     console.log("Presale times set successfully");
 
-    // Activate first tier
-    console.log("Activating first tier...");
-    const activateTierTx = await crowdsale.setTierStatus(0, true);
-    const activateTierReceipt = await activateTierTx.wait();
-    totalGas +=activateTierReceipt.gasUsed;
-    console.log("First tier activated");
+    // Activate first tier if TierManager is set
+    if (tierManagerAddress) {
+        console.log("Activating first tier...");
+        const TierManager = await ethers.getContractFactory("TierManager");
+        const tierManager = TierManager.attach(tierManagerAddress);
+        const activateTierTx = await tierManager.setTierStatus(0, true);
+        const activateTierReceipt = await activateTierTx.wait();
+        totalGas += activateTierReceipt.gasUsed;
+        console.log("First tier activated");
+    }
 
     // Set registry
     if (registryAddress) {

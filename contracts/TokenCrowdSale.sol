@@ -48,7 +48,7 @@ interface IEmergencyManager {
     function processEmergencyWithdrawal(address user, uint256 amount) external;
 }
 
-interface ITeachTokenVesting {
+interface ITokenVesting {
     enum BeneficiaryGroup { TEAM, ADVISORS, PARTNERS, PUBLIC_SALE, ECOSYSTEM }
 
     function createLinearVestingSchedule(
@@ -85,7 +85,7 @@ UUPSUpgradeable
     ITokenPriceFeed public priceFeed;
     ITierManager public tierManager;
     IEmergencyManager public emergencyManager;
-    ITeachTokenVesting public vestingContract;
+    ITokenVesting public vestingContract;
 
     // Purchase tracking
     struct Purchase {
@@ -273,7 +273,7 @@ UUPSUpgradeable
      */
     function setVestingContract(address _vestingContract) external onlyRole(Constants.ADMIN_ROLE) {
         if (_vestingContract == address(0)) revert ZeroComponentAddress();
-        vestingContract = ITeachTokenVesting(_vestingContract);
+        vestingContract = ITokenVesting(_vestingContract);
         emit ComponentSet("VestingContract", _vestingContract);
     }
 
@@ -356,7 +356,7 @@ UUPSUpgradeable
             : usdAmount;
         if (userTierTotal > tier.maxPurchase) revert ExceedsMaxTierPurchase(userTierTotal, tier.maxPurchase);
 
-        // Calculate TEACH token amount based on USD value
+        // Calculate token amount based on USD value
         uint256 tokenAmount = (usdAmount * 10**18) / tier.price;
 
         // Check total address limit
@@ -415,7 +415,7 @@ UUPSUpgradeable
                 0, // No cliff
                 vestingMonths * 30 days,
                 tgePercentage,
-                ITeachTokenVesting.BeneficiaryGroup.PUBLIC_SALE,
+                ITokenVesting.BeneficiaryGroup.PUBLIC_SALE,
                 false // Not revocable
             );
             userPurchase.vestingScheduleId = scheduleId;

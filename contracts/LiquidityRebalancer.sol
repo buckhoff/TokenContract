@@ -401,7 +401,7 @@ ILiquidityRebalancer
 
         // Get token and stablecoin
         (address tokenAddress, address stablecoinAddress) = liquidityProvisioner.getTokenAndStablecoin();
-
+        
         IUniswapV2Pair pair = IUniswapV2Pair(dex.pair);
 
         // Get reserves
@@ -409,6 +409,15 @@ ILiquidityRebalancer
 
         // Determine token order
         address token0 = pair.token0();
+        address token1 = pair.token1();
+        
+        bool containsToken = (token0 == tokenAddress || token1 == tokenAddress);
+        bool containsStable = (token0 == stablecoinAddress || token1 == stablecoinAddress);
+
+        if (!containsToken || !containsStable) {
+            return (0, 0, 0, 0);
+        }
+        
         bool isToken0 = token0 == tokenAddress;
 
         tokenReserve = uint96(isToken0 ? reserve0 : reserve1);
@@ -508,7 +517,7 @@ ILiquidityRebalancer
  * @dev This contract doesn't use a token price feed directly, but implements this
      * function to maintain interface compatibility
      */
-    function getTokenPriceFeed() external view override returns (address) {
+    function getTokenPriceFeed() external pure override returns (address) {
         return address(0);
     }
 

@@ -138,7 +138,9 @@ UUPSUpgradeable
     event EmergencyRecoveryCompleted(address indexed recoveryAdmin, uint40 timestamp);
     event AddressPlacedInCooldown(address indexed suspiciousAddress, uint96 endTime);
     event AddressRemovedFromCooldown(address indexed cooldownAddress);
-
+    event FunctionCallFailed(bytes4 indexed selector);
+    event EtherReceived(address indexed sender, uint256 amount);
+    
     // Error declarations for PlatformStabilityFund
     error ZeroTokenAddress();
     error ZeroStableCoinAddress();
@@ -1235,8 +1237,12 @@ UUPSUpgradeable
 
         revert("Function not found");
     }
+    
+    receive() external payable {
+        // Either revert with a clear message
+        revert("PlatformStabilityFund: ETH transfers not accepted");
 
-    // Add this event
-    event FunctionCallFailed(bytes4 indexed selector);
-
+        // Accept the ETH (uncomment if needed):
+        // emit EtherReceived(msg.sender, msg.value);
+    }
 }
