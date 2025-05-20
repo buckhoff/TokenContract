@@ -35,7 +35,7 @@ contract TeachToken is
     UUPSUpgradeable,
     RegistryAwareUpgradeable
 {
-    IImmutableTokenContract public immutableConstants;
+    IImmutableTokenContract public immutableContract;
     
     ERC20Upgradeable internal token;
 
@@ -69,7 +69,7 @@ contract TeachToken is
     event ERC20TokensRecovered(address indexed token, address indexed to, uint256 amount);
     event EmergencyRecoveryInitiated(address indexed recoveryAdmin, uint256 timestamp);
     event EmergencyRecoveryCompleted(address indexed recoveryAdmin);
-    event ImmutableConstantsSet(address indexed constantsContract);
+    event immutableContractSet(address indexed immutableContract);
     error TokenNotActiveOrRegistered();
     
     modifier whenContractNotPaused(){
@@ -98,13 +98,13 @@ contract TeachToken is
     /**
     * @dev Initializes the contract replacing the constructor
      */
-    function initialize(address _immutableConstants) initializer public {
-        if(_immutableConstants == address(0)) revert ZeroContractAddress();
-        immutableConstants = IImmutableTokenContract(_immutableConstants);
+    function initialize(address _immutableContract) initializer public {
+        if(_immutableContract == address(0)) revert ZeroContractAddress();
+        immutableContract = IImmutableTokenContract(_immutableContract);
         
         __ERC20_init( 
-            immutableConstants.TOKEN_NAME(),
-            immutableConstants.TOKEN_SYMBOL()
+            immutableContract.TOKEN_NAME(),
+            immutableContract.TOKEN_SYMBOL()
         );
         __ERC20Burnable_init();
         __AccessControl_init();
@@ -118,7 +118,7 @@ contract TeachToken is
         initialDistributionDone = false;
         requiredRecoveryApprovals = 3;
 
-        emit ImmutableConstantsSet(_immutableConstants);
+        emit immutableContractSet(_immutableContract);
     }
 
     /**
@@ -175,32 +175,32 @@ contract TeachToken is
             "Duplicate addresses not allowed"
         );
 
-        uint256 publicPresaleAmount = immutableConstants.calculateAllocation(
-            immutableConstants.PUBLIC_PRESALE_ALLOCATION_BPS()
+        uint256 publicPresaleAmount = immutableContract.calculateAllocation(
+            immutableContract.PUBLIC_PRESALE_ALLOCATION_BPS()
         );
 
-        uint256 communityIncentivesAmount = immutableConstants.calculateAllocation(
-            immutableConstants.COMMUNITY_INCENTIVES_ALLOCATION_BPS()
+        uint256 communityIncentivesAmount = immutableContract.calculateAllocation(
+            immutableContract.COMMUNITY_INCENTIVES_ALLOCATION_BPS()
         );
 
-        uint256 platformEcosystemAmount = immutableConstants.calculateAllocation(
-            immutableConstants.PLATFORM_ECOSYSTEM_ALLOCATION_BPS()
+        uint256 platformEcosystemAmount = immutableContract.calculateAllocation(
+            immutableContract.PLATFORM_ECOSYSTEM_ALLOCATION_BPS()
         );
 
-        uint256 initialLiquidityAmount = immutableConstants.calculateAllocation(
-            immutableConstants.INITIAL_LIQUIDITY_ALLOCATION_BPS()
+        uint256 initialLiquidityAmount = immutableContract.calculateAllocation(
+            immutableContract.INITIAL_LIQUIDITY_ALLOCATION_BPS()
         );
 
-        uint256 teamAndDevAmount = immutableConstants.calculateAllocation(
-            immutableConstants.TEAM_DEV_ALLOCATION_BPS()
+        uint256 teamAndDevAmount = immutableContract.calculateAllocation(
+            immutableContract.TEAM_DEV_ALLOCATION_BPS()
         );
 
-        uint256 educationalPartnersAmount = immutableConstants.calculateAllocation(
-            immutableConstants.EDUCATIONAL_PARTNERS_ALLOCATION_BPS()
+        uint256 educationalPartnersAmount = immutableContract.calculateAllocation(
+            immutableContract.EDUCATIONAL_PARTNERS_ALLOCATION_BPS()
         );
 
-        uint256 reserveAmount = immutableConstants.calculateAllocation(
-            immutableConstants.RESERVE_ALLOCATION_BPS()
+        uint256 reserveAmount = immutableContract.calculateAllocation(
+            immutableContract.RESERVE_ALLOCATION_BPS()
         );
 
         // Validate that the sum of all allocations equals MAX_SUPPLY
@@ -209,7 +209,7 @@ contract TeachToken is
                     teamAndDevAmount + educationalPartnersAmount +
                     reserveAmount;
 
-        require(totalAllocation == immutableConstants.MAX_SUPPLY(), "Total allocation must equal MAX_SUPPLY");
+        require(totalAllocation == immutableContract.MAX_SUPPLY(), "Total allocation must equal MAX_SUPPLY");
         
         // Public Presale (25%)
         _mint(publicPresaleAddress, publicPresaleAmount);

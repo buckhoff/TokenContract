@@ -215,12 +215,10 @@ UUPSUpgradeable
     }
 
     /**
-     * @dev Initializer function to replace constructor
-     * @param _defaultStablecoin Address of the default payment token 
+     * @dev Initializer function to replace constructor 
      * @param _treasury Address to receive presale funds
      */
     function initialize(
-        address _defaultStablecoin,
         address _treasury
     ) initializer public {
         __Ownable_init(msg.sender);

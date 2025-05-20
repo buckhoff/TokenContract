@@ -16,24 +16,24 @@ async function main() {
     }
 
     // Deploy the TokenStaking contract
-    const TokenVesting = await ethers.getContractFactory("TeachTokenVesting");
+    const TokenVesting = await ethers.getContractFactory("TokenVesting");
     const vesting = await upgrades.deployProxy(TokenVesting,[teachTokenAddress],{initializer: 'initialize' });
 
     await vesting.waitForDeployment();
     const deploymentTx = await ethers.provider.getTransactionReceipt(vesting.deploymentTransaction().hash);
     totalGas += deploymentTx.gasUsed;
     const vestingAddress = await vesting.getAddress();
-    console.log("TeachTokenVesting deployed to:", vestingAddress);
+    console.log("TokenVesting deployed to:", vestingAddress);
     
-    console.log("TeachTokenVesting initialized");
+    console.log("TokenVesting initialized");
 
     // Set registry
     if (registryAddress) {
-        console.log("Setting Registry for TeachTokenVesting...");
+        console.log("Setting Registry for TokenVesting...");
         const setRegistryTx = await vesting.setRegistry(registryAddress);
         const setRegistryReceipt = await setRegistryTx.wait();
         totalGas += setRegistryReceipt.gasUsed;
-        console.log("Registry set for TeachTokenVesting");
+        console.log("Registry set for TokenVesting");
 
         // Register in registry
         const ContractRegistry = await ethers.getContractFactory("ContractRegistry");
@@ -41,11 +41,11 @@ async function main() {
 
         const VESTING_NAME = ethers.keccak256(ethers.toUtf8Bytes("TOKEN_VESTING"));
 
-        console.log("Registering TeachTokenVesting in Registry...");
+        console.log("Registering TokenVesting in Registry...");
         const registerTx = await registry.registerContract(VESTING_NAME, vestingAddress, "0x00000000");
         const registerReceipt = await registerTx.wait();
         totalGas += registerReceipt.gasUsed;
-        console.log("TeachTokenVesting registered in Registry");
+        console.log("TokenVesting registered in Registry");
     }
 
     console.log("Gas used:",totalGas.toString());

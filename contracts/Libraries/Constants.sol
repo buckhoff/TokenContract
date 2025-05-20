@@ -18,6 +18,7 @@ library Constants{
     bytes32 internal constant LIQUIDITY_PROVISIONER_NAME = keccak256("LIQUIDITY_PROVISIONER");
     bytes32 internal constant LIQUIDITY_REBALANCER_NAME = keccak256("LIQUIDITY_REBALANCER");
     bytes32 internal constant TOKEN_PRICE_FEED_NAME = keccak256("TOKEN_PRICE_FEED");
+    bytes32 internal constant IMMUTABLE_TOKEN_CONTRACT = keccak256("IMMUTABLE_TOKEN_CONTRACT");
     
     //Role constants
     bytes32 internal constant ADMIN_ROLE = keccak256("ADMIN_ROLE");

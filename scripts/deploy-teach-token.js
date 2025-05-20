@@ -4,16 +4,28 @@ require("dotenv").config();
 
 async function main() {
     // Get the deployer account
+    const immutableAddress = process.env.IMMUTABLE_TOKEN_CONTRACT;
+    
     const [deployer] = await ethers.getSigners();
 
     let totalGas = 0n;
+
+    if (!immutableAddress) {
+        console.error("Please set IMMUTABLE_TOKEN_CONTRACT in your .env file");
+        return;
+    }
+    
     console.log("Deploying contracts with the account:", deployer.address);
     console.log("Account balance:", (await deployer.provider.getBalance(deployer.address)).toString());
 
     // Deploy the TEACH token contract
     console.log("Deploying TeachToken...");
     const TeachToken = await ethers.getContractFactory("TeachToken");
-    const teachToken = await upgrades.deployProxy(TeachToken,[],{ initializer: 'initialize' });
+    const teachToken = await upgrades.deployProxy(
+        TeachToken,
+        [immutableAddress],
+        { initializer: 'initialize' }
+    );
 
     await teachToken.waitForDeployment();
     const deploymentTx = await ethers.provider.getTransactionReceipt(teachToken.deploymentTransaction().hash);
@@ -21,10 +33,8 @@ async function main() {
     const teachTokenAddress = await teachToken.getAddress();
     console.log("TeachToken deployed to:", teachTokenAddress);
 
-    // Initialize the token
-    //console.log("Initializing TeachToken...");
-    //const initTx = await teachToken.initialize();
-    //await initTx.wait();
+    const tokenMaxSupply = await teachToken.immutableContract();
+    console.log("TeachToken references constants at:", tokenMaxSupply);
     console.log("TeachToken initialized");
 
     // Get wallet addresses for initial distribution

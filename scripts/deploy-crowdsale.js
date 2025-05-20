@@ -8,13 +8,12 @@ async function main() {
 
     let totalGas = 0n;
     const teachTokenAddress = process.env.TOKEN_ADDRESS;
-    const stableCoinAddress = process.env.STABLE_COIN_ADDRESS;
     const registryAddress = process.env.REGISTRY_ADDRESS;
     const treasuryAddress = process.env.TREASURY_ADDRESS || deployer.address;
     const tierManagerAddress = process.env.TIER_MANAGER_ADDRESS;
     const emergencyManagerAddress = process.env.EMERGENCY_MANAGER_ADDRESS;
 
-    if (!teachTokenAddress || !stableCoinAddress) {
+    if (!teachTokenAddress) {
         console.error("Please set TOKEN_ADDRESS and STABLE_COIN_ADDRESS in your .env file");
         return;
     }
@@ -22,7 +21,6 @@ async function main() {
     // Deploy the TokenCrowdSale contract
     const TokenCrowdSale = await ethers.getContractFactory("TokenCrowdSale");
     const crowdsale = await upgrades.deployProxy(TokenCrowdSale, [
-        stableCoinAddress,
         treasuryAddress
     ], { initializer: 'initialize' });
 
