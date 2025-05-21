@@ -44,12 +44,11 @@ contract TeachToken is
 
     // Recovery mechanism for accidentally sent tokens
     mapping(address => bool) public recoveryAllowedTokens;
-
+    
     bool internal paused;
     bool public inEmergencyRecovery;
     mapping(address => bool) public emergencyRecoveryApprovals;
     uint256 public requiredRecoveryApprovals;
-    bool public isPaused;
 
     address private _cachedTokenAddress;
     address private _cachedStabilityFundAddress;
@@ -71,22 +70,6 @@ contract TeachToken is
     event EmergencyRecoveryCompleted(address indexed recoveryAdmin);
     event immutableContractSet(address indexed immutableContract);
     error TokenNotActiveOrRegistered();
-    
-    modifier whenContractNotPaused(){
-        if (address(registry) != address(0)) {
-            try registry.isSystemPaused() returns (bool systemPaused) {
-                require(!systemPaused, "TeachToken: Paused");
-            } 
-             catch{
-                 // If registry call fails, fall back to local pause state
-                 require(!paused, "TeachToken: Paused");
-             }
-            require(!registryOfflineMode, "TeachToken: registry Offline");
-        } else {
-            require(!paused, "TeachToken: Paused");
-        }
-        _;
-    }
     
     /**
      * @dev Constructor that initializes the token with name, symbol, and roles
@@ -132,7 +115,7 @@ contract TeachToken is
      * @dev Sets the registry contract address
      * @param _registry Address of the registry contract
      */
-    function setRegistry(address _registry) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setRegistry(address _registry) external onlyRole(Constants.ADMIN_ROLE) {
         _setRegistry(_registry, Constants.TOKEN_NAME);
         emit RegistrySet(_registry);
     }
@@ -159,21 +142,25 @@ contract TeachToken is
         address reserveAddress
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
         require(!initialDistributionDone, "Initial distribution already completed");
-        require(platformEcosystemAddress != address(0), "Zero address for platformEcosystem");
-        require(communityIncentivesAddress != address(0), "Zero address for communityIncentives");
-        require(initialLiquidityAddress != address(0), "Zero address for initialLiquidity");
-        require(publicPresaleAddress != address(0), "Zero address for publicPresale");
-        require(teamAndDevAddress != address(0), "Zero address for teamAndDev");
-        require(educationalPartnersAddress != address(0), "Zero address for educationalPartners");
-        require(reserveAddress != address(0), "Zero address for reserve");
+        address[7] memory addresses = [
+                    platformEcosystemAddress,
+                    communityIncentivesAddress,
+                    initialLiquidityAddress,
+                    publicPresaleAddress,
+                    teamAndDevAddress,
+                    educationalPartnersAddress,
+                    reserveAddress
+            ];
 
-        require(
-            platformEcosystemAddress != communityIncentivesAddress &&
-            platformEcosystemAddress != initialLiquidityAddress &&
-            platformEcosystemAddress != publicPresaleAddress &&
-            educationalPartnersAddress != reserveAddress,
-            "Duplicate addresses not allowed"
-        );
+        for (uint256 i = 0; i < addresses.length; i++) {
+            if(addresses[i] == address(0)) revert("Zero address not allowed");
+        }
+
+        for (uint256 i = 0; i < addresses.length - 1; i++) {
+            for (uint256 j = i + 1; j < addresses.length; j++) {
+                if(addresses[i] == addresses[j])  revert("Duplicate addresses not allowed");
+            }
+        }
 
         uint256 publicPresaleAmount = immutableContract.calculateAllocation(
             immutableContract.PUBLIC_PRESALE_ALLOCATION_BPS()
@@ -278,29 +265,33 @@ contract TeachToken is
      */
     function _notifyBurn(uint256 amount) internal {
 
-        if (address(registry) != address(0)) {
-            bytes32 stabilityFundName = "PLATFORM_STABILITY_FUND";
+        if(address(registry) == address(0)) revert ZeroContractAddress();
+        bytes32 stabilityFundName = "PLATFORM_STABILITY_FUND";
             
-            try registry.isContractActive(stabilityFundName) returns (bool isActive) {
-                if (isActive) {
-                    // Create the calldata
-                    bytes memory callData = abi.encodeWithSignature(
-                        "processBurnedTokens(uint256)",
-                        amount
-                    );
-                    // Call the stability fund's processBurnedTokens function
-                    (bool success, ) = _safeContractCall( stabilityFundName, callData);
-                    
-                    // We don't revert if this call fails to maintain the primary burn functionality
-                    if (success) {
-                        emit BurnNotificationSent(amount);
-                    } else {
-                        emit BurnNotificationFailed(amount, "Call to stability fund failed");
-                    }
+        try registry.isContractActive(stabilityFundName) returns (bool isActive) {
+            if (isActive) {
+                
+                // Create the calldata
+                bytes memory callData = abi.encodeWithSignature(
+                    "processBurnedTokens(uint256)",
+                    amount
+                );
+                // Call the stability fund's processBurnedTokens function
+                (bool success, ) = _safeContractCall( stabilityFundName, callData);
+                
+                // We don't revert if this call fails to maintain the primary burn functionality
+                if (success) {
+                    emit BurnNotificationSent(amount);
+                } else {
+                    revert("Call to stability fund failed");
+                    emit BurnNotificationFailed(amount, "Call to stability fund failed");
                 }
-            } catch{
-                emit BurnNotificationFailed(amount, "Failed to check stability fund status");
             }
+            else{
+                revert("SF not active");
+            }
+        } catch{
+            emit BurnNotificationFailed(amount, "Failed to check stability fund status");
         }
     }
     
@@ -374,6 +365,10 @@ contract TeachToken is
         }
 
         paused = false;
+    }
+
+    function _isContractPaused() internal override view returns (bool) {
+        return paused;
     }
     
     /**

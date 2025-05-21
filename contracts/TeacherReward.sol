@@ -107,21 +107,6 @@ contract TeacherReward is
     event ContractReferenceUpdated(bytes32 indexed contractName, address indexed oldAddress, address indexed newAddress);
     event AchievementAwarded(address indexed teacher, uint256 indexed achievementId, uint256 count);
     event PeerReviewSubmitted(address indexed teacher, address indexed reviewer, uint256 score);
-
-    modifier whenContractNotPaused(){
-        if (address(registry) != address(0)) {
-            try registry.isSystemPaused() returns (bool systemPaused) {
-                require(!systemPaused, "TeacherReward: system is paused");
-            } catch {
-                // If registry call fails, fall back to local pause state
-                require(!paused, "TeacherReward: contract is paused");
-            }
-            require(!registryOfflineMode, "TeacherReward: registry Offline");
-        } else {
-            require(!paused, "TeacherReward: contract is paused");
-        }
-        _;
-    }
     
     /**
      * @dev Constructor
@@ -504,6 +489,10 @@ contract TeacherReward is
         } else {
             require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "TeacherReward: not authorized");
         }
+    }
+
+    function _isContractPaused() internal override view returns (bool) {
+        return paused;
     }
 
     /**

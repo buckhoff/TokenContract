@@ -20,7 +20,7 @@ describe("TeachToken - Part 1: Basic Functionality", function () {
     
     // Deploy TeachToken
     const TeachToken = await ethers.getContractFactory("TeachToken");
-    teachToken = await upgrades.deployProxy(TeachToken, [mockImmutableContract.address], {
+    teachToken = await upgrades.deployProxy(TeachToken, [await mockImmutableContract.getAddress()], {
       initializer: "initialize",
     });
     
@@ -95,7 +95,7 @@ describe("TeachToken - Part 1: Basic Functionality", function () {
       const communityIncentives = user1.address;
       const initialLiquidity = user2.address;
       const publicPresale = owner.address;
-      const teamAndDev = ethers.constants.AddressZero; // Zero address
+      const teamAndDev = ethers.ZeroAddress; // Zero address
       const educationalPartners = minter.address;
       const reserve = burner.address;
       
@@ -110,7 +110,7 @@ describe("TeachToken - Part 1: Basic Functionality", function () {
           educationalPartners,
           reserve
         )
-      ).to.be.revertedWith("Zero address for teamAndDev");
+      ).to.be.revertedWith("Zero address not allowed");
     });
     
     it("should prevent duplicate addresses in distribution", async function () {
@@ -198,8 +198,8 @@ describe("TeachToken - Part 1: Basic Functionality", function () {
       await teachToken.transfer(user1.address, transferAmount);
       
       // Check balances after transfer
-      expect(await teachToken.balanceOf(owner.address)).to.equal(initialOwnerBalance.sub(transferAmount));
-      expect(await teachToken.balanceOf(user1.address)).to.equal(initialUser1Balance.add(transferAmount));
+      expect(await teachToken.balanceOf(owner.address)).to.equal(initialOwnerBalance - transferAmount);
+      expect(await teachToken.balanceOf(user1.address)).to.equal(initialUser1Balance + transferAmount);
     });
     
     it("should allow token transfers with allowance", async function () {
@@ -217,11 +217,11 @@ describe("TeachToken - Part 1: Basic Functionality", function () {
       await teachToken.connect(user1).transferFrom(owner.address, user1.address, transferAmount);
       
       // Check balances after transfer
-      expect(await teachToken.balanceOf(owner.address)).to.equal(initialOwnerBalance.sub(transferAmount));
-      expect(await teachToken.balanceOf(user1.address)).to.equal(initialUser1Balance.add(transferAmount));
+      expect(await teachToken.balanceOf(owner.address)).to.equal(initialOwnerBalance - transferAmount);
+      expect(await teachToken.balanceOf(user1.address)).to.equal(initialUser1Balance + transferAmount);
       
       // Check remaining allowance
-      expect(await teachToken.allowance(owner.address, user1.address)).to.equal(approveAmount.sub(transferAmount));
+      expect(await teachToken.allowance(owner.address, user1.address)).to.equal(approveAmount - transferAmount);
     });
     
     it("should prevent transfers when paused", async function () {

@@ -116,21 +116,6 @@ contract PlatformMarketplace is
     event SubscriptionPurchased(address indexed user, uint256 duration, uint256 endTime);
     event BulkPurchaseDiscountApplied(address indexed buyer, uint256 resourceCount, uint256 discountPercent);
     event ResourceResellableStatusChanged(uint256 indexed resourceId, bool isResellable);
-
-    modifier whenContractNotPaused(){
-        if (address(registry) != address(0)) {
-            try registry.isSystemPaused() returns (bool systemPaused) {
-                require(!systemPaused, "PlatformMarketplace: system is paused");
-            } catch {
-                // If registry call fails, fall back to local pause state
-                require(!paused, "PlatformMarketplace: contract is paused");
-            }
-            require(!registryOfflineMode, "PlatformMarketplace: registry Offline");
-        } else {
-            require(!paused, "PlatformMarketplace: contract is paused");
-        }
-        _;
-    }
     
     /**
      * @dev Constructor
@@ -393,6 +378,10 @@ contract PlatformMarketplace is
         paused = false;
     }
 
+    function _isContractPaused() internal override view returns (bool) {
+        return paused;
+    }
+    
     function setStabilityFund(address _stabilityFund) external onlyRole(Constants.ADMIN_ROLE) {
         require(_stabilityFund != address(0), "PlatformMarketplace: zero address");
         stabilityFund = IPlatformStabilityFund(_stabilityFund);

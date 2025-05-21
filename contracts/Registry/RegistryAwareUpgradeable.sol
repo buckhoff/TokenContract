@@ -40,20 +40,23 @@ abstract contract RegistryAwareUpgradeable is Initializable, AccessControlEnumer
     error NotAuthorized();
     error RegistryCallFailed();
     error FailedToRetrieveContractStatus();
+    error ContractPaused();
+    error RegistryOffline();
     
    /**
      * @dev Modifier to check if the system is not paused
      */
-    modifier whenSystemNotPaused() {
-        if (address(registry) != address(0) && !registryOfflineMode) {
-            try registry.isSystemPaused() returns (bool paused) {
-                if(paused) revert SystemPaused();
+    modifier whenContractNotPaused() {
+        if (address(registry) != address(0)) {
+            try registry.isSystemPaused() returns (bool systemPaused) {
+                if(systemPaused) revert SystemPaused();
             } catch {
-                // If registry call fails, proceed as not paused
-                if (!registryOfflineMode) {
-                    revert RegistryCallFailed();
-                }
+                if(_isContractPaused()) revert ContractPaused();
             }
+            if(registryOfflineMode) revert RegistryOffline();
+            if(_isContractPaused()) revert ContractPaused();
+        } else {
+            if(_isContractPaused()) revert ContractPaused();
         }
         _;
     }
@@ -228,5 +231,13 @@ abstract contract RegistryAwareUpgradeable is Initializable, AccessControlEnumer
             // Registry still not accessible
             revert("RegistryAware: registry not accessible");
         }
+    }
+
+    /**
+     * @dev Internal function that child contracts override to provide their pause state
+     * @return Whether the contract is paused
+     */
+    function _isContractPaused() internal virtual view returns (bool) {
+        return false; // Default implementation assumes not paused
     }
 }

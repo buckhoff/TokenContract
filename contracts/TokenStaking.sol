@@ -84,21 +84,6 @@ contract TokenStaking is
     address private _cachedTokenAddress;
     address private _cachedStabilityFundAddress;
     uint256 private _lastCacheUpdate;
-
-    modifier whenContractNotPaused() {
-        if (address(registry) != address(0)) {
-            try registry.isSystemPaused() returns (bool systemPaused) {
-                require(!systemPaused, "TokenStaking: system is paused");
-            } catch {
-                // If registry call fails, fall back to local pause state
-                require(!paused, "TokenStaking: contract is paused");
-            }
-            require(!registryOfflineMode, "TokenStaking: registry Offline");
-        } else {
-            require(!paused, "TokenStaking: contract is paused");
-        }
-        _;
-    }
     
     // Events
     event StakingPoolCreated(uint256 indexed poolId, string name, uint256 rewardRate, uint256 lockDuration);
@@ -242,8 +227,10 @@ contract TokenStaking is
 
         paused = false;
     }
-    
-    
+
+    function _isContractPaused() internal override view returns (bool) {
+        return paused;
+    }
     
     /**
      * @dev Creates a new staking pool

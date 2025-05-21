@@ -31,13 +31,9 @@ describe("TeachToken - Part 2: Burning Functionality", function () {
     const MockStabilityFund = await ethers.getContractFactory("MockStabilityFund");
     mockStabilityFund = await MockStabilityFund.deploy();
     
-    // Configure mock registry
-    await mockRegistry.setContractAddress(TOKEN_NAME, true, 1);
-    await mockRegistry.setContractAddress(STABILITY_FUND_NAME, mockStabilityFund.address, true);
-    
     // Deploy TeachToken
     const TeachToken = await ethers.getContractFactory("TeachToken");
-    teachToken = await upgrades.deployProxy(TeachToken, [mockImmutableContract.address], {
+    teachToken = await upgrades.deployProxy(TeachToken, [await mockImmutableContract.getAddress()], {
       initializer: "initialize",
     });
     
@@ -46,8 +42,10 @@ describe("TeachToken - Part 2: Burning Functionality", function () {
     await teachToken.grantRole(MINTER_ROLE, minter.address);
     await teachToken.grantRole(BURNER_ROLE, burner.address);
     
-    // Set registry and perform initial distribution
-    await teachToken.setRegistry(mockRegistry.address);
+    // Configure mock registry
+    await mockRegistry.setContractAddress(TOKEN_NAME, await teachToken.getAddress(), true);
+    await mockRegistry.setContractAddress(STABILITY_FUND_NAME, await mockStabilityFund.getAddress(), true);
+    await teachToken.setRegistry(await mockRegistry.getAddress());
     
     // Perform initial distribution
     await teachToken.performInitialDistribution(
@@ -64,7 +62,7 @@ describe("TeachToken - Part 2: Burning Functionality", function () {
   describe("Burning Tokens", function () {
     it("should allow users to burn their own tokens", async function () {
       const burnAmount = ethers.parseEther("1000");
-      
+     
       // Get initial balance and supply
       const initialBalance = await teachToken.balanceOf(owner.address);
       const initialSupply = await teachToken.totalSupply();
@@ -73,8 +71,8 @@ describe("TeachToken - Part 2: Burning Functionality", function () {
       await teachToken.burn(burnAmount);
       
       // Check balance and supply after burn
-      expect(await teachToken.balanceOf(owner.address)).to.equal(initialBalance.sub(burnAmount));
-      expect(await teachToken.totalSupply()).to.equal(initialSupply.sub(burnAmount));
+      expect(await teachToken.balanceOf(owner.address)).to.equal(initialBalance - burnAmount);
+      expect(await teachToken.totalSupply()).to.equal(initialSupply - burnAmount);
     });
     
     it("should allow authorized burners to burn tokens from others", async function () {
@@ -91,8 +89,8 @@ describe("TeachToken - Part 2: Burning Functionality", function () {
       await teachToken.connect(burner).burnFrom(owner.address, burnAmount);
       
       // Check balance and supply after burn
-      expect(await teachToken.balanceOf(owner.address)).to.equal(initialBalance.sub(burnAmount));
-      expect(await teachToken.totalSupply()).to.equal(initialSupply.sub(burnAmount));
+      expect(await teachToken.balanceOf(owner.address)).to.equal(initialBalance - burnAmount);
+      expect(await teachToken.totalSupply()).to.equal(initialSupply - burnAmount);
     });
     
     it("should notify stability fund when tokens are burned", async function () {
@@ -125,7 +123,7 @@ describe("TeachToken - Part 2: Burning Functionality", function () {
       // Attempt to burn tokens
       await expect(
         teachToken.burn(ethers.parseEther("1000"))
-      ).to.be.revertedWith("TeachToken: Paused");
+      ).to.be.revertedWithCustomError(teachToken, "ContractPaused");
     });
   });
 

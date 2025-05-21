@@ -25,7 +25,7 @@ describe("ContractRegistry", function () {
     const ADMIN_ROLE = ethers.keccak256(ethers.toUtf8Bytes("ADMIN_ROLE"));
     const UPGRADER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("UPGRADER_ROLE"));
     const EMERGENCY_ROLE = ethers.keccak256(ethers.toUtf8Bytes("EMERGENCY_ROLE"));
-
+    
     await contractRegistry.grantRole(ADMIN_ROLE, admin.address);
     await contractRegistry.grantRole(UPGRADER_ROLE, upgrader.address);
     await contractRegistry.grantRole(EMERGENCY_ROLE, emergency.address);
@@ -45,14 +45,13 @@ describe("ContractRegistry", function () {
     it("allows admin to register a contract", async function () {
       const contractName = ethers.keccak256(ethers.toUtf8Bytes("TEST_CONTRACT"));
       
-      console.log(contractName);
       await contractRegistry.connect(admin).registerContract(
         contractName,
-        contract1.address,
+        await contract1.getAddress(),
         "0x00000000" // No interface ID for this test
       );
 
-      expect(await contractRegistry.getContractAddress(contractName)).to.equal(contract1.address);
+      expect(await contractRegistry.getContractAddress(contractName)).to.equal(await contract1.getAddress());
       expect(await contractRegistry.getContractVersion(contractName)).to.equal(1);
       expect(await contractRegistry.isContractActive(contractName)).to.be.true;
     });
@@ -63,7 +62,7 @@ describe("ContractRegistry", function () {
       await expect(
         contractRegistry.connect(admin).registerContract(
           contractName,
-          ethers.constants.AddressZero,
+          ethers.ZeroAddress,
           "0x00000000"
         )
       ).to.be.revertedWith("ContractRegistry: zero address");
@@ -73,15 +72,15 @@ describe("ContractRegistry", function () {
       const contractName = ethers.keccak256(ethers.toUtf8Bytes("DUPLICATE_CONTRACT"));
       
       await contractRegistry.connect(admin).registerContract(
-        contractName,
-        contract1.address,
+        contractName, 
+        await contract1.getAddress(),
         "0x00000000"
       );
 
       await expect(
         contractRegistry.connect(admin).registerContract(
           contractName,
-          contract2.address,
+            await contract2.getAddress(),
           "0x00000000"
         )
       ).to.be.revertedWith("ContractRegistry: already registered");
@@ -96,7 +95,7 @@ describe("ContractRegistry", function () {
       
       await contractRegistry.connect(admin).registerContract(
         contractName,
-        contract1.address,
+        await contract1.getAddress(),
         "0x00000000"
       );
     });
@@ -104,11 +103,11 @@ describe("ContractRegistry", function () {
     it("allows upgrader to update a contract", async function () {
       await contractRegistry.connect(upgrader).updateContract(
         contractName,
-        contract2.address,
+        await contract2.getAddress(),
         "0x00000000"
       );
 
-      expect(await contractRegistry.getContractAddress(contractName)).to.equal(contract2.address);
+      expect(await contractRegistry.getContractAddress(contractName)).to.equal(await contract2.getAddress());
       expect(await contractRegistry.getContractVersion(contractName)).to.equal(2);
     });
 
@@ -116,7 +115,7 @@ describe("ContractRegistry", function () {
       await expect(
         contractRegistry.connect(upgrader).updateContract(
           contractName,
-          contract1.address,
+          await contract1.getAddress(),
           "0x00000000"
         )
       ).to.be.revertedWith("ContractRegistry: same address");
@@ -128,7 +127,7 @@ describe("ContractRegistry", function () {
       await expect(
         contractRegistry.connect(upgrader).updateContract(
           nonRegisteredName,
-          contract2.address,
+          await contract2.getAddress(),
           "0x00000000"
         )
       ).to.be.revertedWith("ContractRegistry: not registered");
@@ -143,7 +142,7 @@ describe("ContractRegistry", function () {
       
       await contractRegistry.connect(admin).registerContract(
         contractName,
-        contract1.address,
+        await contract1.getAddress(),
         "0x00000000"
       );
     });
@@ -192,7 +191,7 @@ describe("ContractRegistry", function () {
       // Use try/catch since the error is custom and not easily checked with expect().to.be.revertedWith
       let error;
       try {
-        await contractRegistry.connect(admin).resumeSystem();
+        await contractRegistry.connect(admin).pauseSystem();
       } catch (e) {
         error = e;
       }
@@ -210,7 +209,7 @@ describe("ContractRegistry", function () {
       
       await contractRegistry.connect(admin).registerContract(
         contractName,
-        contract1.address,
+        await contract1.getAddress(),
         "0x00000000"
       );
     });
@@ -219,14 +218,14 @@ describe("ContractRegistry", function () {
       // Update contract to add a new implementation
       await contractRegistry.connect(upgrader).updateContract(
         contractName,
-        contract2.address,
+        await contract2.getAddress(),
         "0x00000000"
       );
 
       const history = await contractRegistry.getImplementationHistory(contractName);
       expect(history.length).to.equal(2);
-      expect(history[0]).to.equal(contract1.address);
-      expect(history[1]).to.equal(contract2.address);
+      expect(history[0]).to.equal(await contract1.getAddress());
+      expect(history[1]).to.equal(await contract2.getAddress());
     });
   });
 
@@ -256,13 +255,13 @@ describe("ContractRegistry", function () {
       
       await contractRegistry.connect(admin).registerContract(
         contract1Name,
-        contract1.address,
+        await contract1.getAddress(),
         "0x00000000"
       );
       
       await contractRegistry.connect(admin).registerContract(
         contract2Name,
-        contract2.address,
+        await contract2.getAddress(),
         "0x00000000"
       );
     });

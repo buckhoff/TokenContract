@@ -85,7 +85,7 @@ contract ContractRegistry is
      * @param _address Address of the contract
      */
     function registerContract(bytes32 _name, address _address, bytes4 _interfaceId) external onlyRole(Constants.ADMIN_ROLE) nonReentrant {
-        require(_address != address(0), "ContractRegistry: zero address");
+        if(_address == address(0)) revert("ContractRegistry: zero address");
         require(contracts[_name] == address(0), "ContractRegistry: already registered");
 
         require(_address.code.length > 0, "ContractRegistry: not a contract");
@@ -413,10 +413,15 @@ contract ContractRegistry is
     /**
     * @dev Pause the entire system in case of emergency
      */
-    function pauseSystem() external onlyRole(Constants.ADMIN_ROLE) onlyRole(Constants.EMERGENCY_ROLE) {
-        require(!systemPaused, "ContractRegistry: already paused");
-        systemPaused = true;
-        emit SystemPaused(msg.sender);
+    function pauseSystem() external {
+        if (hasRole(Constants.ADMIN_ROLE, msg.sender) || hasRole(Constants.EMERGENCY_ROLE, msg.sender)) {
+            require(!systemPaused, "ContractRegistry: already paused");
+            systemPaused = true;
+            emit SystemPaused(msg.sender);
+        }
+        else{
+            revert();
+        }
     }
 
     /**

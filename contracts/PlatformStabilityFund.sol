@@ -160,7 +160,6 @@ UUPSUpgradeable
     error BelowMinReturn();
     error ThresholdMustBeGreaterThan100();
     error ThresholdTooHigh();
-    error ContractPaused();
     error AlreadyPaused();
     error NotPaused();
     error ReservesStillCritical();
@@ -175,26 +174,11 @@ UUPSUpgradeable
     error PriceChangeTooLarge();
     error InvalidWindowSize();
     error IntervalCannotBeZero();
-    error RegistryOffline();
     error TokenAddressUnavailable();
     error BurnPercentTooHigh();
     error FeePercentTooHigh();
     error NotInRecoveryMode();
     error EmergencyAlreadyApproved();
-    
-    modifier whenContractNotPaused(){
-        if (address(registry) != address(0)) {
-            try registry.isSystemPaused() returns (bool systemPaused) {
-                if(systemPaused) revert SystemPaused();
-            } catch {
-                if (paused) revert ContractPaused();
-            }
-            if(registryOfflineMode) revert RegistryOffline();
-        } else {
-            if (!paused) revert ContractPaused();
-        }
-        _;
-    }
 
     modifier flashLoanGuard(uint96 _amount) {
         if (flashLoanProtectionEnabled) {
@@ -678,6 +662,10 @@ UUPSUpgradeable
         emit EmergencyResumed(msg.sender);
     }
 
+    function _isContractPaused() internal override view returns (bool) {
+        return paused;
+    }
+    
     /**
     * @dev Sets the critical reserve threshold percentage
     * @param _threshold New threshold as percentage of min reserve ratio

@@ -187,21 +187,6 @@ contract PlatformGovernance is
     bool public stakingWeightEnabled;
     uint16 public maxStakingMultiplier; // multiplier scaled by 100 (e.g., 200 = 2x)
     uint16 public maxStakingPeriod; // in days
-
-    modifier whenContractNotPaused(){
-        if (address(registry) != address(0)) {
-            try registry.isSystemPaused() returns (bool systemPaused) {
-                require(!systemPaused, "PlatformGovernance: system is paused");
-            } catch {
-                // If registry call fails, fall back to local pause state
-                require(!paused, "PlatformGovernance: contract is paused");
-            }
-            require(!registryOfflineMode, "PlatformGovernance: registry Offline");
-        } else {
-            require(!paused, "PlatformGovernance: contract is paused");
-        }
-        _;
-    }
     
     /**
      * @dev Constructor
@@ -258,6 +243,10 @@ contract PlatformGovernance is
      */
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(Constants.ADMIN_ROLE) {
         // Additional upgrade logic can be added here
+    }
+
+    function _isContractPaused() internal override view returns (bool) {
+        return paused;
     }
     
     /**

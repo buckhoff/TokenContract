@@ -11,12 +11,12 @@ contract MockRegistry {
     mapping(bytes32 => address) private contracts;
     mapping(bytes32 => bool) private contractActive;
     mapping(bytes32 => uint256) private contractVersions;
-
+    
     // System pause flag
     bool public systemPaused;
 
     /**
-     * @dev Set a contract's address and active status
+     * @dev Set a contract's address, active status, and version
      */
     function setContractAddress(bytes32 _name, address _address, bool _isActive) external {
         contracts[_name] = _address;
@@ -25,9 +25,10 @@ contract MockRegistry {
     }
 
     /**
-     * @dev Overloaded version that accepts strings
+     * @dev Update a contract's status and version
+     * This is separate from setting the address and more clearly named
      */
-    function setContractAddress(bytes32 _name, bool _isActive, uint256 _version) external {
+    function updateContractStatus(bytes32 _name, bool _isActive, uint256 _version) external {
         contractActive[_name] = _isActive;
         contractVersions[_name] = _version;
     }
@@ -59,7 +60,7 @@ contract MockRegistry {
     function getContractVersion(bytes32 _name) external view returns (uint256) {
         return contractVersions[_name];
     }
-
+    
     /**
      * @dev Set system pause state
      */
