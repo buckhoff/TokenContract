@@ -231,7 +231,7 @@ describe("TeachToken - Part 1: Basic Functionality", function () {
       // Attempt to transfer
       await expect(
         teachToken.transfer(user1.address, ethers.parseEther("1000"))
-      ).to.be.revertedWith("TeachToken: Paused");
+      ).to.be.revertedWithCustomError(teachToken,"ContractPaused");
     });
   });
 });

@@ -266,7 +266,7 @@ contract TeachToken is
     function _notifyBurn(uint256 amount) internal {
 
         if(address(registry) == address(0)) revert ZeroContractAddress();
-        bytes32 stabilityFundName = "PLATFORM_STABILITY_FUND";
+        bytes32 stabilityFundName = Constants.STABILITY_FUND_NAME;
             
         try registry.isContractActive(stabilityFundName) returns (bool isActive) {
             if (isActive) {
