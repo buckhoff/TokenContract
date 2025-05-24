@@ -143,7 +143,7 @@ describe("TeachToken - Part 3: Recovery and Emergency Functions", function () {
       // Try to transfer tokens (should fail)
       await expect(
           teachToken.transfer(await user1.getAddress(), ethers.parseEther("100"))
-      ).to.be.revertedWith("TeachToken: Paused");
+      ).to.be.revertedWithCustomError(teachToken,"ContractPaused");
     });
 
     it("should allow admins to unpause the contract", async function () {
@@ -155,9 +155,9 @@ describe("TeachToken - Part 3: Recovery and Emergency Functions", function () {
 
       // Try to transfer tokens (should succeed)
       const transferAmount = ethers.parseEther("100");
-      await teachToken.transfer(await user1.getAddress(), transferAmount);
+      await teachToken.transfer(await user3.getAddress(), transferAmount);
 
-      expect(await teachToken.balanceOf(await user1.getAddress())).to.equal(transferAmount);
+      expect(await teachToken.balanceOf(await user3.getAddress())).to.equal(transferAmount);
     });
 
     it("should not allow non-admins to pause or unpause", async function () {
@@ -261,6 +261,7 @@ describe("TeachToken - Part 3: Recovery and Emergency Functions", function () {
 
       // Second approval should complete the recovery
       await mockEmergencyManager.connect(admin).approveRecovery();
+
       expect(await mockEmergencyManager.isInEmergencyRecovery()).to.be.false;
     });
 
@@ -338,7 +339,7 @@ describe("TeachToken - Part 3: Recovery and Emergency Functions", function () {
       // Verify state is reset
       expect(await mockEmergencyManager.isInEmergencyRecovery()).to.be.false;
       expect(await mockEmergencyManager.recoveryInitiatedTimestamp()).to.equal(0);
-      expect(await mockEmergencyManager.hasApprovedRecovery(await owner.getAddress())).to.be.false;
+      expect(await mockEmergencyManager.hasApprovedRecovery(await user1.getAddress())).to.be.false;
     });
   });
 

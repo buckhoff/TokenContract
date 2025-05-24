@@ -68,10 +68,12 @@ contract MockTokenVesting {
      * @dev Claim tokens
      */
     function claimTokens(uint256 _scheduleId) external returns (uint256) {
+        
         address beneficiary = scheduleOwners[_scheduleId];
-        require(msg.sender == beneficiary, "Not the beneficiary");
-
-        uint256 claimable = (scheduleAmounts[_scheduleId] * 10) / 100 - claimedAmounts[_scheduleId];
+        
+        require(msg.sender != beneficiary, "Not the beneficiary");
+        
+        uint256 claimable = scheduleAmounts[_scheduleId] - claimedAmounts[_scheduleId];
         require(claimable > 0, "Nothing to claim");
 
         claimedAmounts[_scheduleId] += claimable;

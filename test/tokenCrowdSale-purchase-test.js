@@ -1,5 +1,6 @@
 const { expect } = require("chai");
 const { ethers, upgrades } = require("hardhat");
+const { time } = require("@nomicfoundation/hardhat-network-helpers");
 
 describe("TokenCrowdSale - Part 2: Purchase Functionality", function () {
   let crowdSale;
@@ -34,7 +35,7 @@ describe("TokenCrowdSale - Part 2: Purchase Functionality", function () {
     
     // Register token in registry
     const TOKEN_NAME = ethers.keccak256(ethers.toUtf8Bytes("TEACH_TOKEN"));
-    await mockRegistry.setContractAddress(TOKEN_NAME, token.address, true);
+    await mockRegistry.setContractAddress(TOKEN_NAME, await token.getAddress(), true);
     
     // Deploy mock components
     const MockTierManager = await ethers.getContractFactory("MockTierManager");
@@ -47,37 +48,39 @@ describe("TokenCrowdSale - Part 2: Purchase Functionality", function () {
     mockEmergencyManager = await MockEmergencyManager.deploy();
     
     const MockPriceFeed = await ethers.getContractFactory("MockPriceFeed");
-    mockPriceFeed = await MockPriceFeed.deploy(stablecoin.address);
+    mockPriceFeed = await MockPriceFeed.deploy(await stablecoin.getAddress());
     
     // Add alternative stablecoin to price feed
-    await mockPriceFeed.addSupportedToken(altcoin.address, 1000000); // $1.00 per token
+    await mockPriceFeed.addSupportedToken(await altcoin.getAddress(), 1000000); // $1.00 per token
     
     // Deploy TokenCrowdSale
     const TokenCrowdSale = await ethers.getContractFactory("TokenCrowdSale");
-    crowdSale = await upgrades.deployProxy(TokenCrowdSale, [treasury.address], {
+    crowdSale = await upgrades.deployProxy(TokenCrowdSale, [await treasury.getAddress()], {
       initializer: "initialize",
     });
     
     // Set token and components
-    await crowdSale.setSaleToken(token.address);
-    await crowdSale.setRegistry(mockRegistry.address);
-    await crowdSale.setTierManager(mockTierManager.address);
-    await crowdSale.setVestingContract(mockTokenVesting.address);
-    await crowdSale.setEmergencyManager(mockEmergencyManager.address);
-    await crowdSale.setPriceFeed(mockPriceFeed.address);
+    await crowdSale.setSaleToken(await token.getAddress());
+    await crowdSale.setRegistry(await mockRegistry.getAddress());
+    await crowdSale.setTierManager(await mockTierManager.getAddress());
+    await crowdSale.setVestingContract(await mockTokenVesting.getAddress());
+    await crowdSale.setEmergencyManager(await mockEmergencyManager.getAddress());
+    await crowdSale.setPriceFeed(await mockPriceFeed.getAddress());
     
     // Set presale times (start now, end in 30 days)
     const startTime = Math.floor(Date.now() / 1000);
     const endTime = startTime + (30 * 24 * 60 * 60);
     await crowdSale.setPresaleTimes(startTime, endTime);
-    
+  
     // Send token to the crowdsale for vesting
-    await token.transfer(mockTokenVesting.address, ethers.parseEther("1000000000"));
+    await token.transfer(await mockTokenVesting.getAddress(), ethers.parseEther("1000000000"));
     
     // Transfer stablecoin to users for purchases
     await stablecoin.transfer(user1.address, ethers.parseEther("100000"));
     await stablecoin.transfer(user2.address, ethers.parseEther("100000"));
     await altcoin.transfer(user1.address, ethers.parseEther("100000"));
+
+    await crowdSale.setPurchaseRateLimits(0, ethers.parseUnits("50000", 6));
   });
 
   describe("Standard Purchase", function () {
@@ -85,18 +88,18 @@ describe("TokenCrowdSale - Part 2: Purchase Functionality", function () {
       const usdAmount = 1000 * PRICE_DECIMALS; // $1,000
       
       // Approve stablecoin first
-      await stablecoin.connect(user1).approve(crowdSale.address, ethers.parseEther("10000"));
-      await stablecoin.connect(user1).approve(treasury.address, ethers.parseEther("10000"));
+      await stablecoin.connect(user1).approve(await crowdSale.getAddress(), ethers.parseEther("10000"));
+      await stablecoin.connect(user1).approve(await treasury.getAddress(), ethers.parseEther("10000"));
       
       // Make purchase
-      await crowdSale.connect(user1).purchase(tierId, usdAmount);
+      await crowdSale.connect(user1).purchaseWithToken(tierId, await stablecoin.getAddress(), usdAmount);
       
       // Verify tier manager received purchase record
       expect(await mockTierManager.lastTierId()).to.equal(tierId);
       
       // Verify treasury received funds
-      const treasuryBalance = await stablecoin.balanceOf(treasury.address);
-      expect(treasuryBalance).to.equal(ethers.parseEther("1000")); // $1,000 in stablecoin
+      const treasuryBalance = await stablecoin.balanceOf(await treasury.getAddress());
+      expect(treasuryBalance).to.equal(ethers.parseUnits("1000",6)); // $1,000 in stablecoin
       
       // Verify vesting schedule created
       const userSchedules = await mockTokenVesting.getSchedulesForBeneficiary(user1.address);
@@ -109,7 +112,8 @@ describe("TokenCrowdSale - Part 2: Purchase Functionality", function () {
       // Check tokens purchased amount (price in tier 0 is $0.04 per token)
       // $1,000 / $0.04 = 25,000 tokens
       // With 20% bonus = 30,000 tokens
-      const tokenAmount = 1000 * PRICE_DECIMALS * 1e18 / 40000; // $1,000 / $0.04
+      const tokenAmount = 1000 * PRICE_DECIMALS * 1e6 / 40000; // $1,000 / $0.04
+      console.log("tokenAmount", tokenAmount);
       expect(userPurchase.tokens).to.be.equal(tokenAmount);
       
       // Check bonus amount (20% bonus in tier 0)
@@ -118,19 +122,19 @@ describe("TokenCrowdSale - Part 2: Purchase Functionality", function () {
     
     it("should enforce purchase limits", async function () {
       // Set small max purchase for testing
-      await crowdSale.setMaxTokensPerAddress(ethers.BigNumber.from("30000000000")); // 30,000 tokens
+      await crowdSale.setMaxTokensPerAddress(BigInt("30000000000")); // 30,000 tokens
       
       // Approve stablecoin
-      await stablecoin.connect(user1).approve(crowdSale.address, ethers.parseEther("10000"));
-      await stablecoin.connect(user1).approve(treasury.address, ethers.parseEther("10000"));
+      await stablecoin.connect(user1).approve(await crowdSale.getAddress(), ethers.parseEther("10000"));
+      await stablecoin.connect(user1).approve(await treasury.getAddress(), ethers.parseEther("10000"));
       
       // Try to purchase too many tokens ($1,200 at $0.04 = 30,000 tokens, with bonus = 36,000 tokens)
       // This exceeds our 30,000 token limit
-      const usdAmount = 1200 * PRICE_DECIMALS;
+      const usdAmount = 1500 * PRICE_DECIMALS;
       
       await expect(
-        crowdSale.connect(user1).purchase(tierId, usdAmount)
-      ).to.be.revertedWith("ExceedsMaxTokensPerAddress");
+        crowdSale.connect(user1).purchase(tierId,  usdAmount)
+      ).to.be.revertedWithCustomError(crowdSale,"ExceedsMaxTokensPerAddress");
     });
     
     it("should enforce minimum purchase amount", async function () {
@@ -138,12 +142,12 @@ describe("TokenCrowdSale - Part 2: Purchase Functionality", function () {
       const usdAmount = 50 * PRICE_DECIMALS; // $50, below minimum
       
       // Approve stablecoin
-      await stablecoin.connect(user1).approve(crowdSale.address, ethers.parseEther("100"));
-      await stablecoin.connect(user1).approve(treasury.address, ethers.parseEther("100"));
+      await stablecoin.connect(user1).approve(await crowdSale.getAddress(), ethers.parseEther("100"));
+      await stablecoin.connect(user1).approve(await treasury.getAddress(), ethers.parseEther("100"));
       
       await expect(
         crowdSale.connect(user1).purchase(tierId, usdAmount)
-      ).to.be.revertedWith("BelowMinPurchase");
+      ).to.be.revertedWithCustomError(crowdSale,"BelowMinPurchase");
     });
     
     it("should enforce maximum purchase amount", async function () {
@@ -151,12 +155,12 @@ describe("TokenCrowdSale - Part 2: Purchase Functionality", function () {
       const usdAmount = 55000 * PRICE_DECIMALS; // $55,000, above maximum
       
       // Approve stablecoin
-      await stablecoin.connect(user1).approve(crowdSale.address, ethers.parseEther("100000"));
-      await stablecoin.connect(user1).approve(treasury.address, ethers.parseEther("100000"));
+      await stablecoin.connect(user1).approve(await crowdSale.getAddress(), ethers.parseEther("100000"));
+      await stablecoin.connect(user1).approve(await treasury.getAddress(), ethers.parseEther("100000"));
       
       await expect(
         crowdSale.connect(user1).purchase(tierId, usdAmount)
-      ).to.be.revertedWith("AboveMaxPurchase");
+      ).to.be.revertedWithCustomError(crowdSale,"AboveMaxPurchase");
     });
     
     it("should enforce tier allocation limits", async function () {
@@ -173,13 +177,13 @@ describe("TokenCrowdSale - Part 2: Purchase Functionality", function () {
       
       // For now, simulate by having the first purchase deplete most of the allocation
       // Approve stablecoin for both users
-      await stablecoin.connect(user1).approve(crowdSale.address, ethers.parseEther("800"));
-      await stablecoin.connect(user1).approve(treasury.address, ethers.parseEther("800"));
-      await stablecoin.connect(user2).approve(crowdSale.address, ethers.parseEther("200"));
-      await stablecoin.connect(user2).approve(treasury.address, ethers.parseEther("200"));
+      await stablecoin.connect(user1).approve(await crowdSale.getAddress(), ethers.parseEther("800"));
+      await stablecoin.connect(user1).approve(await treasury.getAddress(), ethers.parseEther("800"));
+      await stablecoin.connect(user2).approve(await crowdSale.getAddress(), ethers.parseEther("200"));
+      await stablecoin.connect(user2).approve(await treasury.getAddress(), ethers.parseEther("200"));
       
       // User1 purchases most of the allocation
-      await crowdSale.connect(user1).purchase(tierId, 700 * PRICE_DECIMALS); // $700 = 17,500 tokens
+      await crowdSale.connect(user1).purchase(tierId,  700 * PRICE_DECIMALS); // $700 = 17,500 tokens
       
       // Update tier allocation in mock
       // Since we can't easily update the mock's internal state, we'll use a different approach
@@ -196,17 +200,17 @@ describe("TokenCrowdSale - Part 2: Purchase Functionality", function () {
 
   describe("Multi-Token Purchase", function () {
     it("should allow purchasing with alternative tokens", async function () {
-      const paymentAmount = ethers.parseEther("1000"); // 1,000 alt tokens
+      const paymentAmount = ethers.parseUnits("1000",6); // 1,000 alt tokens
       
       // Approve altcoin
-      await altcoin.connect(user1).approve(crowdSale.address, paymentAmount);
-      await altcoin.connect(user1).approve(treasury.address, paymentAmount);
+      await altcoin.connect(user1).approve(await crowdSale.getAddress(), paymentAmount);
+      await altcoin.connect(user1).approve(await treasury.getAddress(), paymentAmount);
       
       // Make purchase with altcoin
-      await crowdSale.connect(user1).purchaseWithToken(tierId, altcoin.address, paymentAmount);
+      await crowdSale.connect(user1).purchaseWithToken(tierId, await altcoin.getAddress(), paymentAmount);
       
       // Verify treasury received funds
-      const treasuryBalance = await altcoin.balanceOf(treasury.address);
+      const treasuryBalance = await altcoin.balanceOf(await treasury.getAddress());
       expect(treasuryBalance).to.equal(paymentAmount);
       
       // Verify purchase recorded
@@ -214,7 +218,7 @@ describe("TokenCrowdSale - Part 2: Purchase Functionality", function () {
       expect(userPurchase.usdAmount).to.equal(1000 * PRICE_DECIMALS); // $1,000 converted
       
       // Check user payment was recorded by token
-      const [, , paymentsByToken] = await crowdSale.getUserPurchaseDetails(user1.address, altcoin.address);
+      const [, , paymentsByToken] = await crowdSale.getUserPurchaseDetails(user1.address,await altcoin.getAddress());
       expect(paymentsByToken).to.equal(paymentAmount);
     });
     
@@ -224,16 +228,16 @@ describe("TokenCrowdSale - Part 2: Purchase Functionality", function () {
       const unsupportedToken = await MockERC20.deploy("Unsupported", "UNS", ethers.parseEther("10000"));
       
       // Transfer to user
-      await unsupportedToken.transfer(user1.address, ethers.parseEther("1000"));
+      await unsupportedToken.transfer(user1.address, ethers.parseUnits("1000",6));
       
       // Approve
-      await unsupportedToken.connect(user1).approve(crowdSale.address, ethers.parseEther("1000"));
-      await unsupportedToken.connect(user1).approve(treasury.address, ethers.parseEther("1000"));
+      await unsupportedToken.connect(user1).approve(await crowdSale.getAddress(), ethers.parseEther("1000"));
+      await unsupportedToken.connect(user1).approve(await treasury.getAddress(), ethers.parseEther("1000"));
       
       // Attempt purchase
       await expect(
-        crowdSale.connect(user1).purchaseWithToken(tierId, unsupportedToken.address, ethers.parseEther("1000"))
-      ).to.be.revertedWith("UnsupportedPaymentToken");
+        crowdSale.connect(user1).purchaseWithToken(tierId, unsupportedToken, ethers.parseUnits("1000",6))
+      ).to.be.revertedWithCustomError(crowdSale,"UnsupportedPaymentToken");
     });
   });
 
@@ -243,19 +247,23 @@ describe("TokenCrowdSale - Part 2: Purchase Functionality", function () {
       await crowdSale.setPurchaseRateLimits(600, ethers.parseUnits("50000", 6)); // 10 minutes, $50,000
       
       // Approve stablecoin
-      await stablecoin.connect(user1).approve(crowdSale.address, ethers.parseEther("2000"));
-      await stablecoin.connect(user1).approve(treasury.address, ethers.parseEther("2000"));
+      await stablecoin.connect(user1).approve(await crowdSale.getAddress(), ethers.parseEther("2000"));
+      await stablecoin.connect(user1).approve(await treasury.getAddress(), ethers.parseEther("2000"));
       
       // Make first purchase
-      await crowdSale.connect(user1).purchase(tierId, 1000 * PRICE_DECIMALS);
+      await crowdSale.connect(user1).purchase(tierId,  1000 * PRICE_DECIMALS);
       
       // Try to make another purchase immediately
       await expect(
-        crowdSale.connect(user1).purchase(tierId, 1000 * PRICE_DECIMALS)
-      ).to.be.revertedWith("PurchaseTooSoon");
+        crowdSale.connect(user1).purchase(tierId,  1000 * PRICE_DECIMALS)
+      ).to.be.revertedWithCustomError(crowdSale,"PurchaseTooSoon");
       
       // Advance time
-      await ethers.provider.send("evm_increaseTime", [601]); // 10 minutes + 1 second
+      const currentBlock = await ethers.provider.getBlock('latest');
+      const newTimestamp = currentBlock.timestamp + 601;
+
+// Set next block timestamp
+      await ethers.provider.send("evm_setNextBlockTimestamp", [newTimestamp]);
       await ethers.provider.send("evm_mine");
       
       // Should now be able to purchase

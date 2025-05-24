@@ -32,7 +32,7 @@ describe("TokenCrowdSale - Part 3: Token Withdrawal and Emergency Functions", fu
     
     // Register token in registry
     const TOKEN_NAME = ethers.keccak256(ethers.toUtf8Bytes("TEACH_TOKEN"));
-    await mockRegistry.setContractAddress(TOKEN_NAME, token.address, true);
+    await mockRegistry.setContractAddress(TOKEN_NAME,await token.getAddress(), true);
     
     // Deploy mock components
     const MockTierManager = await ethers.getContractFactory("MockTierManager");
@@ -45,21 +45,21 @@ describe("TokenCrowdSale - Part 3: Token Withdrawal and Emergency Functions", fu
     mockEmergencyManager = await MockEmergencyManager.deploy();
     
     const MockPriceFeed = await ethers.getContractFactory("MockPriceFeed");
-    mockPriceFeed = await MockPriceFeed.deploy(stablecoin.address);
+    mockPriceFeed = await MockPriceFeed.deploy(await stablecoin.getAddress());
     
     // Deploy TokenCrowdSale
     const TokenCrowdSale = await ethers.getContractFactory("TokenCrowdSale");
-    crowdSale = await upgrades.deployProxy(TokenCrowdSale, [treasury.address], {
+    crowdSale = await upgrades.deployProxy(TokenCrowdSale, [await treasury.getAddress()], {
       initializer: "initialize",
     });
     
     // Set token and components
-    await crowdSale.setSaleToken(token.address);
-    await crowdSale.setRegistry(mockRegistry.address);
-    await crowdSale.setTierManager(mockTierManager.address);
-    await crowdSale.setVestingContract(mockTokenVesting.address);
-    await crowdSale.setEmergencyManager(mockEmergencyManager.address);
-    await crowdSale.setPriceFeed(mockPriceFeed.address);
+    await crowdSale.setSaleToken(await token.getAddress());
+    await crowdSale.setRegistry(await mockRegistry.getAddress());
+    await crowdSale.setTierManager(await mockTierManager.getAddress());
+    await crowdSale.setVestingContract(await mockTokenVesting.getAddress());
+    await crowdSale.setEmergencyManager(await mockEmergencyManager.getAddress());
+    await crowdSale.setPriceFeed(await mockPriceFeed.getAddress());
     
     // Set presale times (start now, end in 30 days)
     const startTime = Math.floor(Date.now() / 1000);
@@ -67,28 +67,30 @@ describe("TokenCrowdSale - Part 3: Token Withdrawal and Emergency Functions", fu
     await crowdSale.setPresaleTimes(startTime, endTime);
     
     // Send token to the vesting contract for distributions
-    await token.transfer(mockTokenVesting.address, ethers.parseEther("1000000"));
+    await token.transfer(await mockTokenVesting.getAddress(), ethers.parseEther("1000000"));
     
     // Transfer stablecoin to users for purchases
     await stablecoin.transfer(user1.address, ethers.parseEther("100000"));
     
     // Perform a purchase so user has tokens to withdraw
-    await stablecoin.connect(user1).approve(crowdSale.address, ethers.parseEther("1000"));
-    await stablecoin.connect(user1).approve(treasury.address, ethers.parseEther("1000"));
+    await stablecoin.connect(user1).approve(await crowdSale.getAddress(), ethers.parseEther("1000"));
+    await stablecoin.connect(user1).approve(await treasury.getAddress(), ethers.parseEther("1000"));
     await crowdSale.connect(user1).purchase(tierId, 1000 * PRICE_DECIMALS);
     
     // Complete TGE (fast forward to after presale)
     await ethers.provider.send("evm_increaseTime", [31 * 24 * 60 * 60]); // 31 days
     await ethers.provider.send("evm_mine");
     await crowdSale.completeTGE();
+    
   });
 
   describe("Token Withdrawal", function () {
     it("should allow withdrawing tokens after TGE", async function () {
       // Configure mock vesting to have claimable tokens
       const schedules = await mockTokenVesting.getSchedulesForBeneficiary(user1.address);
+      console.log(schedules);
       const scheduleId = schedules[0];
-      const claimableAmount = ethers.parseEther("1000");
+      const claimableAmount = ethers.parseUnits("1000",6);
       
       // Set claimable amount in mock vesting
       await mockTokenVesting.setClaimableAmount(scheduleId, claimableAmount);
@@ -149,10 +151,10 @@ describe("TokenCrowdSale - Part 3: Token Withdrawal and Emergency Functions", fu
       const userUsdAmount = 1000 * PRICE_DECIMALS;
       
       // Transfer stablecoin to treasury to simulate refund
-      await stablecoin.transfer(treasury.address, ethers.parseEther("1000"));
+      await stablecoin.transfer(await treasury.getAddress(), ethers.parseEther("1000"));
       
       // Approve treasury to send tokens back (simulating treasury's approval)
-      await stablecoin.connect(treasury).approve(crowdSale.address, ethers.parseEther("1000"));
+      await stablecoin.connect(treasury).approve(await crowdSale.getAddress(), ethers.parseEther("1000"));
       
       // Initial balances
       const initialUserBalance = await stablecoin.balanceOf(user1.address);
@@ -166,7 +168,7 @@ describe("TokenCrowdSale - Part 3: Token Withdrawal and Emergency Functions", fu
       
       // Verify user received refund
       const finalUserBalance = await stablecoin.balanceOf(user1.address);
-      expect(finalUserBalance.sub(initialUserBalance)).to.equal(ethers.parseEther("1000"));
+      expect(finalUserBalance.sub(initialUserBalance)).to.equal(ethers.parseUnits("1000",6));
     });
     
     it("should not allow emergency withdrawal in normal state", async function () {
@@ -181,10 +183,10 @@ describe("TokenCrowdSale - Part 3: Token Withdrawal and Emergency Functions", fu
     
     it("should prevent double emergency withdrawals", async function () {
       // Transfer stablecoin to treasury to simulate refund
-      await stablecoin.transfer(treasury.address, ethers.parseEther("1000"));
+      await stablecoin.transfer(await treasury.getAddress(), ethers.parseEther("1000"));
       
       // Approve treasury to send tokens back
-      await stablecoin.connect(treasury).approve(crowdSale.address, ethers.parseEther("1000"));
+      await stablecoin.connect(treasury).approve(await crowdSale.getAddress(), ethers.parseEther("1000"));
       
       // First withdrawal succeeds
       await crowdSale.connect(user1).emergencyWithdraw();
@@ -206,12 +208,12 @@ describe("TokenCrowdSale - Part 3: Token Withdrawal and Emergency Functions", fu
       const wrongToken = await MockERC20.deploy("Wrong Token", "WTK", ethers.parseEther("1000"));
       
       // Send tokens to crowdsale by mistake
-      const amount = ethers.parseEther("100");
-      await wrongToken.transfer(crowdSale.address, amount);
+      const amount = ethers.parseUnits("100",6);
+      await wrongToken.transfer(await crowdSale.getAddress(), amount);
       
       // Admin recovers tokens
       const initialBalance = await wrongToken.balanceOf(owner.address);
-      await crowdSale.recoverTokens(wrongToken.address);
+      await crowdSale.recoverTokens(await wrongToken.getAddress());
       
       // Verify tokens recovered
       const finalBalance = await wrongToken.balanceOf(owner.address);
@@ -221,7 +223,7 @@ describe("TokenCrowdSale - Part 3: Token Withdrawal and Emergency Functions", fu
     it("should not allow recovering the crowdsale token", async function () {
       // Attempt to recover the actual token
       await expect(
-        crowdSale.recoverTokens(token.address)
+        crowdSale.recoverTokens(await token.getAddress())
       ).to.be.revertedWith("Cannot recover tokens");
     });
     
@@ -231,11 +233,11 @@ describe("TokenCrowdSale - Part 3: Token Withdrawal and Emergency Functions", fu
       const wrongToken = await MockERC20.deploy("Wrong Token", "WTK", ethers.parseEther("1000"));
       
       // Send tokens to crowdsale
-      await wrongToken.transfer(crowdSale.address, ethers.parseEther("100"));
+      await wrongToken.transfer(await crowdSale.getAddress(), ethers.parseEther("100"));
       
       // Attempt recovery as non-admin
       await expect(
-        crowdSale.connect(user1).recoverTokens(wrongToken.address)
+        crowdSale.connect(user1).recoverTokens(await wrongToken.getAddress())
       ).to.be.reverted; // Will revert due to role check
     });
   });
@@ -248,13 +250,13 @@ describe("TokenCrowdSale - Part 3: Token Withdrawal and Emergency Functions", fu
       
       // Update registry
       const TOKEN_NAME = ethers.keccak256(ethers.toUtf8Bytes("TEACH_TOKEN"));
-      await mockRegistry.setContractAddress(TOKEN_NAME, newToken.address, true);
+      await mockRegistry.setContractAddress(TOKEN_NAME, await newToken.getAddress(), true);
       
       // Update contract references
       await crowdSale.updateContractReferences();
       
       // Verify token address updated
-      expect(await crowdSale.token()).to.equal(newToken.address);
+      expect(await crowdSale.token()).to.equal(await newToken.getAddress());
     });
   });
 

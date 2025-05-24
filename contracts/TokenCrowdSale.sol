@@ -327,15 +327,12 @@ UUPSUpgradeable
         uint8 _tierId,
         address _paymentToken,
         uint256 _paymentAmount
-    ) public nonReentrant whenNotPaused {
+    ) public nonReentrant whenNotPaused  purchaseRateLimit(_paymentAmount){
         // Validate payment token
         if (!priceFeed.isTokenSupported(_paymentToken)) revert UnsupportedPaymentToken(_paymentToken);
 
         // Convert payment to USD
         uint256 usdAmount = priceFeed.convertTokenToUsd(_paymentToken, _paymentAmount);
-
-        // Check rate limit
-        _validateRateLimit(usdAmount);
 
         // Validate presale status and tier
         if (block.timestamp < presaleStart || block.timestamp > presaleEnd) revert PresaleNotActive();
@@ -355,7 +352,7 @@ UUPSUpgradeable
         if (userTierTotal > tier.maxPurchase) revert ExceedsMaxTierPurchase(userTierTotal, tier.maxPurchase);
 
         // Calculate token amount based on USD value
-        uint256 tokenAmount = (usdAmount * 10**18) / tier.price;
+        uint256 tokenAmount = (usdAmount * 10**6) / tier.price;
 
         // Check total address limit
         if (addressTokensPurchased[msg.sender] + tokenAmount > maxTokensPerAddress)
@@ -448,7 +445,7 @@ UUPSUpgradeable
      * @param _tierId Tier to purchase from
      * @param _usdAmount USD amount to spend (scaled by 1e6)
      */
-    function purchase(uint8 _tierId, uint256 _usdAmount) external nonReentrant whenNotPaused purchaseRateLimit(_usdAmount) {
+    function purchase(uint8 _tierId, uint256 _usdAmount) external whenNotPaused {
         // Get supported payment tokens
         address[] memory supportedTokens = priceFeed.getSupportedPaymentTokens();
 
@@ -461,25 +458,6 @@ UUPSUpgradeable
 
         // Call multi-token purchase function
         purchaseWithToken(_tierId, defaultToken, paymentAmount);
-    }
-
-    /**
-     * @dev Validate rate limiting based on USD amount
-     * @param _usdAmount USD amount to validate
-     */
-    function _validateRateLimit(uint256 _usdAmount) internal view {
-        address msgr = msg.sender;
-        uint256 userLastPurchase = lastPurchaseTime[msgr];
-
-        if (userLastPurchase > 0) {
-            if (block.timestamp < userLastPurchase + minTimeBetweenPurchases) {
-                revert PurchaseTooSoon(userLastPurchase + minTimeBetweenPurchases, block.timestamp);
-            }
-        }
-
-        if (_usdAmount > maxPurchaseAmount) {
-            revert AboveMaxPurchase(_usdAmount, maxPurchaseAmount);
-        }
     }
 
     /**
@@ -697,8 +675,9 @@ UUPSUpgradeable
     /**
      * @dev Update contract references from registry
      */
-    function updateContractReferences() external {
+    function updateContractReferences() external onlyRole(Constants.ADMIN_ROLE) {
         if (address(registry) == address(0)) return;
+
 
         // Update token reference
         if (registry.isContractActive(Constants.TOKEN_NAME)) {
@@ -708,6 +687,49 @@ UUPSUpgradeable
                 token = ERC20Upgradeable(tokenAddr);
                 emit ContractReferenceUpdated(Constants.TOKEN_NAME, oldToken, tokenAddr);
             }
+        }
+
+        // Update vesting contract reference
+        if (registry.isContractActive(Constants.VESTING_NAME)) {
+            address vestingAddr = registry.getContractAddress(Constants.VESTING_NAME);
+            if (vestingAddr != address(0) && vestingAddr != address(vestingContract)) {
+                address oldVesting = address(vestingContract);
+                vestingContract = ITokenVesting(vestingAddr);
+                emit ContractReferenceUpdated(Constants.VESTING_NAME, oldVesting, vestingAddr);
+            }
+        }
+
+        // Update tier manager reference
+        if (registry.isContractActive(Constants.TIER_MANAGER)) {
+            address tierAddr = registry.getContractAddress(Constants.TIER_MANAGER);
+            if (tierAddr != address(0) && tierAddr != address(tierManager)) {
+                address oldTierManager = address(tierManager);
+                tierManager = ITierManager(tierAddr);
+                emit ContractReferenceUpdated(Constants.TIER_MANAGER, oldTierManager, tierAddr);
+            }
+        }
+
+        // Update emergency manager reference
+        if (registry.isContractActive(Constants.EMERGENCY_MANAGER)) {
+            address emergencyAddr = registry.getContractAddress(Constants.EMERGENCY_MANAGER);
+            if (emergencyAddr != address(0) && emergencyAddr != address(emergencyManager)) {
+                address oldEmergencyManager = address(emergencyManager);
+                emergencyManager = IEmergencyManager(emergencyAddr);
+                emit ContractReferenceUpdated(Constants.EMERGENCY_MANAGER, oldEmergencyManager, emergencyAddr);
+            }
+        }
+
+        // Update price feed reference
+        if (registry.isContractActive(Constants.TOKEN_PRICE_FEED_NAME)) {
+            address priceFeedAddr = registry.getContractAddress(Constants.TOKEN_PRICE_FEED_NAME);
+            if (priceFeedAddr != address(0) && priceFeedAddr != address(priceFeed)) {
+                address oldPriceFeed = address(priceFeed);
+                priceFeed = ITokenPriceFeed(priceFeedAddr);
+                emit ContractReferenceUpdated(Constants.TOKEN_PRICE_FEED_NAME, oldPriceFeed, priceFeedAddr);
+            }
+        }
+        else{
+            revert("PF Contract inactive");
         }
     }
 }

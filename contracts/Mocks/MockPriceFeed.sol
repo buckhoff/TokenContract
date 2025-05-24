@@ -56,7 +56,7 @@ contract MockPriceFeed {
         require(supportedTokens[_token], "Token not supported");
 
         // Convert based on rate (1 token = rate USD)
-        return (_amount * tokenRates[_token]) / 1e18;
+        return (_amount * tokenRates[_token]) / 1e6;
     }
 
     /**
@@ -66,7 +66,7 @@ contract MockPriceFeed {
         require(supportedTokens[_token], "Token not supported");
 
         // Convert based on rate (rate USD = 1 token)
-        return (_usdAmount * 1e18) / tokenRates[_token];
+        return (_usdAmount * 1e6) / tokenRates[_token];
     }
 
     /**

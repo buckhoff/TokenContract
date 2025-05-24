@@ -21,7 +21,8 @@ contract MockEmergencyManager {
     bool public inEmergencyRecovery;
     uint256 public recoveryInitiatedTimestamp;
     uint256 public recoveryTimeout;
-
+    uint8 public recoveryApprovalsCount;
+    
     // Events
     event EmergencyRecoveryInitiated(address indexed initiator, uint256 timestamp);
     event EmergencyRecoveryCompleted(address indexed completer);
@@ -33,6 +34,7 @@ contract MockEmergencyManager {
     constructor() {
         requiredRecoveryApprovals = 3; // Default value
         recoveryTimeout = 24 hours;
+        recoveryApprovalsCount = 0;
     }
 
     /**
@@ -83,6 +85,16 @@ contract MockEmergencyManager {
     }
 
     /**
+     * @dev Reset recovery state (for testing)
+     */
+    function resetRecoveryState() external {
+        inEmergencyRecovery = false;
+        recoveryInitiatedTimestamp = 0;
+        // Reset all approvals - simplified for testing
+    }
+
+    
+    /**
      * @dev Initiate emergency recovery
      */
     function initiateEmergencyRecovery() external {
@@ -99,9 +111,11 @@ contract MockEmergencyManager {
         require(!emergencyRecoveryApprovals[msg.sender], "MockEmergencyManager: already approved");
 
         emergencyRecoveryApprovals[msg.sender] = true;
+        recoveryApprovalsCount ++;
 
-        if (_countRecoveryApprovals() >= requiredRecoveryApprovals) {
+        if (recoveryApprovalsCount  >= requiredRecoveryApprovals) {
             inEmergencyRecovery = false;
+            recoveryInitiatedTimestamp = 0;
             emit EmergencyRecoveryCompleted(msg.sender);
         }
     }
@@ -127,7 +141,7 @@ contract MockEmergencyManager {
      * @dev Get recovery approvals count (for testing)
      */
     function getRecoveryApprovalsCount() external view returns (uint256) {
-        return _countRecoveryApprovals();
+        return recoveryApprovalsCount;
     }
 
     /**
@@ -137,15 +151,7 @@ contract MockEmergencyManager {
         return emergencyRecoveryApprovals[_user];
     }
 
-    /**
-     * @dev Reset recovery state (for testing)
-     */
-    function resetRecoveryState() external {
-        inEmergencyRecovery = false;
-        recoveryInitiatedTimestamp = 0;
-        // Reset all approvals - simplified for testing
-    }
-
+    
     /**
      * @dev Check if in emergency recovery mode
      */
