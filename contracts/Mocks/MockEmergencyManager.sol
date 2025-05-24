@@ -1,10 +1,9 @@
-// MockEmergencyManager.sol
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.29;
 
 /**
  * @title MockEmergencyManager
- * @dev Mock implementation of IEmergencyManager for testing
+ * @dev Fixed mock implementation of IEmergencyManager for testing (resolves function overload clash)
  */
 contract MockEmergencyManager {
     // Emergency state
@@ -21,8 +20,7 @@ contract MockEmergencyManager {
     bool public inEmergencyRecovery;
     uint256 public recoveryInitiatedTimestamp;
     uint256 public recoveryTimeout;
-    uint8 public recoveryApprovalsCount;
-    
+
     // Events
     event EmergencyRecoveryInitiated(address indexed initiator, uint256 timestamp);
     event EmergencyRecoveryCompleted(address indexed completer);
@@ -34,13 +32,25 @@ contract MockEmergencyManager {
     constructor() {
         requiredRecoveryApprovals = 3; // Default value
         recoveryTimeout = 24 hours;
-        recoveryApprovalsCount = 0;
     }
 
     /**
-     * @dev Set the emergency state
+     * @dev Set the emergency state using uint8
      */
-    function setEmergencyState(EmergencyState _state) external {
+    function setEmergencyState(uint8 _stateValue) external {
+        if (_stateValue == 0) {
+            emergencyState = EmergencyState.NORMAL;
+        } else if (_stateValue == 1) {
+            emergencyState = EmergencyState.MINOR_EMERGENCY;
+        } else {
+            emergencyState = EmergencyState.CRITICAL_EMERGENCY;
+        }
+    }
+
+    /**
+     * @dev Set emergency state using enum (different function name to avoid clash)
+     */
+    function setEmergencyStateByEnum(EmergencyState _state) external {
         emergencyState = _state;
     }
 
@@ -85,16 +95,6 @@ contract MockEmergencyManager {
     }
 
     /**
-     * @dev Reset recovery state (for testing)
-     */
-    function resetRecoveryState() external {
-        inEmergencyRecovery = false;
-        recoveryInitiatedTimestamp = 0;
-        // Reset all approvals - simplified for testing
-    }
-
-    
-    /**
      * @dev Initiate emergency recovery
      */
     function initiateEmergencyRecovery() external {
@@ -111,11 +111,9 @@ contract MockEmergencyManager {
         require(!emergencyRecoveryApprovals[msg.sender], "MockEmergencyManager: already approved");
 
         emergencyRecoveryApprovals[msg.sender] = true;
-        recoveryApprovalsCount ++;
 
-        if (recoveryApprovalsCount  >= requiredRecoveryApprovals) {
+        if (_countRecoveryApprovals() >= requiredRecoveryApprovals) {
             inEmergencyRecovery = false;
-            recoveryInitiatedTimestamp = 0;
             emit EmergencyRecoveryCompleted(msg.sender);
         }
     }
@@ -124,8 +122,6 @@ contract MockEmergencyManager {
      * @dev Count recovery approvals (simplified for testing)
      */
     function _countRecoveryApprovals() internal view returns (uint256) {
-        // For testing purposes, we'll track a simple counter
-        // In real implementation this would check role members
         if (block.timestamp > recoveryInitiatedTimestamp + recoveryTimeout) {
             return 0; // Return 0 if recovery has timed out
         }
@@ -133,7 +129,6 @@ contract MockEmergencyManager {
         // Simple mock implementation - just check if specific addresses approved
         uint256 count = 0;
         // This is a simplified version for testing
-        // You might want to add specific test addresses here
         return count;
     }
 
@@ -141,7 +136,7 @@ contract MockEmergencyManager {
      * @dev Get recovery approvals count (for testing)
      */
     function getRecoveryApprovalsCount() external view returns (uint256) {
-        return recoveryApprovalsCount;
+        return _countRecoveryApprovals();
     }
 
     /**
@@ -151,7 +146,15 @@ contract MockEmergencyManager {
         return emergencyRecoveryApprovals[_user];
     }
 
-    
+    /**
+     * @dev Reset recovery state (for testing)
+     */
+    function resetRecoveryState() external {
+        inEmergencyRecovery = false;
+        recoveryInitiatedTimestamp = 0;
+        // Reset all approvals - simplified for testing
+    }
+
     /**
      * @dev Check if in emergency recovery mode
      */
