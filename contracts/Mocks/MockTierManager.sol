@@ -37,7 +37,7 @@ contract MockTierManager {
         // Set up default tiers
         tiers[0] = PresaleTier({
             price: 40000, // $0.04
-            allocation: 250_000_000 * 10**6,
+            allocation: 250_000_000 * 10**18,
             sold: 0,
             minPurchase: 100 * 10**6, // $100 min
             maxPurchase: 50_000 * 10**6, // $50,000 max
@@ -48,7 +48,7 @@ contract MockTierManager {
 
         tiers[1] = PresaleTier({
             price: 60000, // $0.06
-            allocation: 375_000_000 * 10**6,
+            allocation: 375_000_000 * 10**18,
             sold: 0,
             minPurchase: 100 * 10**6,
             maxPurchase: 50_000 * 10**6,

@@ -100,7 +100,7 @@ contract MockGovernance {
     /**
      * @dev Cast a vote on a proposal
      */
-    function castVote(uint256 _proposalId, VoteType _vote) external {
+    function castVote(uint256 _proposalId, VoteType _vote) public {
         require(!governancePaused, "Governance paused");
         require(proposals[_proposalId].id != 0, "Proposal does not exist");
         require(!hasVoted[_proposalId][msg.sender], "Already voted");

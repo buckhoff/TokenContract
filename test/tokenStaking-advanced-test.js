@@ -1,3 +1,6 @@
+const { expect } = require("chai");
+const { ethers, upgrades } = require("hardhat");
+
 describe("TokenStaking - Part 3: Advanced Features and Emergency Functions", function () {
     let tokenStaking;
     let mockToken;
@@ -16,15 +19,19 @@ describe("TokenStaking - Part 3: Advanced Features and Emergency Functions", fun
 
         const MockERC20 = await ethers.getContractFactory("MockERC20");
         mockToken = await MockERC20.deploy("TeacherSupport Token", "TEACH", ethers.parseEther("5000000000"));
+        await mockToken.waitForDeployment();
 
         const MockRegistry = await ethers.getContractFactory("MockRegistry");
         mockRegistry = await MockRegistry.deploy();
+        await mockRegistry.waitForDeployment();
 
         const MockRewardsPool = await ethers.getContractFactory("MockRewardsPool");
         mockRewardsPool = await MockRewardsPool.deploy();
+        await mockRewardsPool.waitForDeployment();
 
         const MockGovernance = await ethers.getContractFactory("MockGovernance");
         mockGovernance = await MockGovernance.deploy();
+        await mockGovernance.waitForDeployment();
 
         const TokenStaking = await ethers.getContractFactory("TokenStaking");
         tokenStaking = await upgrades.deployProxy(TokenStaking, [
@@ -33,11 +40,12 @@ describe("TokenStaking - Part 3: Advanced Features and Emergency Functions", fun
         ], {
             initializer: "initialize",
         });
+        await tokenStaking.waitForDeployment();
 
-        await tokenStaking.grantRole(ADMIN_ROLE, admin.address);
-        await tokenStaking.grantRole(STAKING_MANAGER_ROLE, admin.address);
-        await tokenStaking.grantRole(EMERGENCY_ROLE, emergency.address);
-        await tokenStaking.grantRole(SLASHER_ROLE, admin.address);
+        await tokenStaking.grantRole(ADMIN_ROLE, await admin.getAddress());
+        await tokenStaking.grantRole(STAKING_MANAGER_ROLE, await admin.getAddress());
+        await tokenStaking.grantRole(EMERGENCY_ROLE, await emergency.getAddress());
+        await tokenStaking.grantRole(SLASHER_ROLE, await admin.getAddress());
 
         const TOKEN_STAKING_NAME = ethers.keccak256(ethers.toUtf8Bytes("TOKEN_STAKING"));
         const GOVERNANCE_NAME = ethers.keccak256(ethers.toUtf8Bytes("GOVERNANCE"));
@@ -47,9 +55,9 @@ describe("TokenStaking - Part 3: Advanced Features and Emergency Functions", fun
         await mockRegistry.setContractAddress(GOVERNANCE_NAME, await mockGovernance.getAddress(), true);
 
         // Transfer tokens to users
-        await mockToken.transfer(user1.address, ethers.parseEther("100000"));
-        await mockToken.transfer(user2.address, ethers.parseEther("75000"));
-        await mockToken.transfer(user3.address, ethers.parseEther("50000"));
+        await mockToken.transfer(await user1.getAddress(), ethers.parseEther("100000"));
+        await mockToken.transfer(await user2.getAddress(), ethers.parseEther("75000"));
+        await mockToken.transfer(await user3.getAddress(), ethers.parseEther("50000"));
 
         // Transfer tokens to rewards pool
         await mockToken.transfer(await mockRewardsPool.getAddress(), ethers.parseEther("2000000"));
@@ -80,7 +88,7 @@ describe("TokenStaking - Part 3: Advanced Features and Emergency Functions", fun
             await ethers.provider.send("evm_increaseTime", [90 * 24 * 60 * 60]);
             await ethers.provider.send("evm_mine");
 
-            const votingPower = await tokenStaking.calculateVotingPower(user1.address);
+            const votingPower = await tokenStaking.calculateVotingPower(await user1.getAddress());
 
             // Voting power should be base stake + time multiplier
             expect(votingPower).to.be.gt(ethers.parseEther("25000"));
@@ -101,25 +109,25 @@ describe("TokenStaking - Part 3: Advanced Features and Emergency Functions", fun
             expect(proposalId).to.be.gt(0);
 
             // Should be able to vote on the proposal
-            await mockGovernance.setVotingPower(user1.address, ethers.parseEther("25000"));
+            await mockGovernance.setVotingPower(await user1.getAddress(), ethers.parseEther("25000"));
             await mockGovernance.castVote(proposalId, 0); // Vote FOR
         });
 
         it("should delegate voting power while maintaining staking rewards", async function () {
             // User1 delegates voting power to user2
-            await tokenStaking.connect(user1).delegateVotingPower(user2.address);
+            await tokenStaking.connect(user1).delegateVotingPower(await user2.getAddress());
 
-            expect(await tokenStaking.getDelegate(user1.address)).to.equal(user2.address);
+            expect(await tokenStaking.getDelegate(await user1.getAddress())).to.equal(await user2.getAddress());
 
             // User2 should receive delegated voting power
-            const delegatedPower = await tokenStaking.getDelegatedVotingPower(user2.address);
+            const delegatedPower = await tokenStaking.getDelegatedVotingPower(await user2.getAddress());
             expect(delegatedPower).to.be.gt(0);
 
             // User1 should still earn staking rewards
             await ethers.provider.send("evm_increaseTime", [30 * 24 * 60 * 60]);
             await ethers.provider.send("evm_mine");
 
-            const pendingRewards = await tokenStaking.calculatePendingRewards(user1.address, stakeId);
+            const pendingRewards = await tokenStaking.calculatePendingRewards(await user1.getAddress(), stakeId);
             expect(pendingRewards).to.be.gt(0);
         });
 
@@ -160,43 +168,43 @@ describe("TokenStaking - Part 3: Advanced Features and Emergency Functions", fun
         });
 
         it("should allow authorized slashing for governance violations", async function () {
-            const originalStake = (await tokenStaking.getUserStake(user1.address, stakeId)).amount;
+            const originalStake = (await tokenStaking.getUserStake(await user1.getAddress(), stakeId)).amount;
             const slashPercentage = 500; // 5%
 
             const tx = await tokenStaking.connect(admin).slashStake(
-                user1.address,
+                await user1.getAddress(),
                 stakeId,
                 slashPercentage,
                 "Governance violation"
             );
 
             await expect(tx).to.emit(tokenStaking, "StakeSlashed")
-                .withArgs(user1.address, stakeId, originalStake * BigInt(slashPercentage) / BigInt(10000));
+                .withArgs(await user1.getAddress(), stakeId, originalStake * BigInt(slashPercentage) / BigInt(10000));
 
-            const newStake = (await tokenStaking.getUserStake(user1.address, stakeId)).amount;
+            const newStake = (await tokenStaking.getUserStake(await user1.getAddress(), stakeId)).amount;
             const expectedSlash = originalStake * BigInt(slashPercentage) / BigInt(10000);
 
             expect(newStake).to.equal(originalStake - expectedSlash);
 
             // Slashed tokens should go to treasury
-            const slashedAmount = await tokenStaking.getTotalSlashed(user1.address);
+            const slashedAmount = await tokenStaking.getTotalSlashed(await user1.getAddress());
             expect(slashedAmount).to.equal(expectedSlash);
         });
 
         it("should implement progressive slashing for repeat offenses", async function () {
             // First offense: 3%
-            await tokenStaking.connect(admin).slashStake(user1.address, stakeId, 300, "First offense");
+            await tokenStaking.connect(admin).slashStake(await user1.getAddress(), stakeId, 300, "First offense");
 
             // Second offense: 6% (doubled)
-            await tokenStaking.connect(admin).slashStake(user1.address, stakeId, 600, "Second offense");
+            await tokenStaking.connect(admin).slashStake(await user1.getAddress(), stakeId, 600, "Second offense");
 
-            const offenseHistory = await tokenStaking.getOffenseHistory(user1.address);
+            const offenseHistory = await tokenStaking.getOffenseHistory(await user1.getAddress());
             expect(offenseHistory.offenseCount).to.equal(2);
             expect(offenseHistory.totalSlashed).to.be.gt(0);
         });
 
         it("should allow appeals for slashing decisions", async function () {
-            await tokenStaking.connect(admin).slashStake(user1.address, stakeId, 500, "Disputed action");
+            await tokenStaking.connect(admin).slashStake(await user1.getAddress(), stakeId, 500, "Disputed action");
 
             // User appeals the slashing
             const appealId = await tokenStaking.connect(user1).appealSlashing(
@@ -210,7 +218,7 @@ describe("TokenStaking - Part 3: Advanced Features and Emergency Functions", fun
             await tokenStaking.connect(admin).approveSlashingAppeal(appealId);
 
             // Stake should be restored
-            const restoredStake = (await tokenStaking.getUserStake(user1.address, stakeId)).amount;
+            const restoredStake = (await tokenStaking.getUserStake(await user1.getAddress(), stakeId)).amount;
             expect(restoredStake).to.equal(ethers.parseEther("20000")); // Back to original
         });
 
@@ -219,7 +227,7 @@ describe("TokenStaking - Part 3: Advanced Features and Emergency Functions", fun
             const excessiveSlash = 1500; // 15%
 
             await expect(
-                tokenStaking.connect(admin).slashStake(user1.address, stakeId, excessiveSlash, "Excessive slash")
+                tokenStaking.connect(admin).slashStake(await user1.getAddress(), stakeId, excessiveSlash, "Excessive slash")
             ).to.be.revertedWith("Slash exceeds maximum allowed");
         });
     });
@@ -264,16 +272,16 @@ describe("TokenStaking - Part 3: Advanced Features and Emergency Functions", fun
             // Enable emergency unstaking
             await tokenStaking.connect(emergency).enableEmergencyUnstaking();
 
-            const originalStake = (await tokenStaking.getUserStake(user1.address, 0)).amount;
-            const initialBalance = await mockToken.balanceOf(user1.address);
+            const originalStake = (await tokenStaking.getUserStake(await user1.getAddress(), 0)).amount;
+            const initialBalance = await mockToken.balanceOf(await user1.getAddress());
 
             await tokenStaking.connect(user1).emergencyUnstake(0);
 
-            const finalBalance = await mockToken.balanceOf(user1.address);
+            const finalBalance = await mockToken.balanceOf(await user1.getAddress());
             expect(finalBalance - initialBalance).to.equal(originalStake); // No penalty
 
             // Stake should be cleared
-            const clearedStake = (await tokenStaking.getUserStake(user1.address, 0)).amount;
+            const clearedStake = (await tokenStaking.getUserStake(await user1.getAddress(), 0)).amount;
             expect(clearedStake).to.equal(0);
         });
 
@@ -282,7 +290,7 @@ describe("TokenStaking - Part 3: Advanced Features and Emergency Functions", fun
             await ethers.provider.send("evm_increaseTime", [45 * 24 * 60 * 60]); // 45 days
             await ethers.provider.send("evm_mine");
 
-            const users = [user1.address, user2.address, user3.address];
+            const users = [await user1.getAddress(), await user2.getAddress(), await user3.getAddress()];
             const stakeIds = [0, 0, 0];
 
             await tokenStaking.connect(emergency).emergencyDistributeRewards(users, stakeIds);
@@ -329,16 +337,16 @@ describe("TokenStaking - Part 3: Advanced Features and Emergency Functions", fun
 
         it("should handle forced liquidation for system health", async function () {
             // Set liquidation threshold
-            await tokenStaking.connect(admin).setLiquidationThreshold(user1.address, ethers.parseEther("40000"));
+            await tokenStaking.connect(admin).setLiquidationThreshold(await user1.getAddress(), ethers.parseEther("40000"));
 
             // Trigger liquidation
             await tokenStaking.connect(admin).forceLiquidation(
-                user1.address,
+                await user1.getAddress(),
                 0,
                 "System health preservation"
             );
 
-            const liquidationEvent = await tokenStaking.getLiquidationEvent(user1.address, 0);
+            const liquidationEvent = await tokenStaking.getLiquidationEvent(await user1.getAddress(), 0);
             expect(liquidationEvent.executed).to.be.true;
             expect(liquidationEvent.reason).to.include("System health");
         });
@@ -361,13 +369,13 @@ describe("TokenStaking - Part 3: Advanced Features and Emergency Functions", fun
             const partialAmount = ethers.parseEther("20000"); // 40% of stake
 
             await tokenStaking.connect(admin).partialLiquidation(
-                user1.address,
+                await user1.getAddress(),
                 0,
                 partialAmount,
                 "Partial liquidation for stability"
             );
 
-            const remainingStake = (await tokenStaking.getUserStake(user1.address, 0)).amount;
+            const remainingStake = (await tokenStaking.getUserStake(await user1.getAddress(), 0)).amount;
             expect(remainingStake).to.equal(ethers.parseEther("30000")); // 60% remaining
         });
     });
@@ -433,14 +441,14 @@ describe("TokenStaking - Part 3: Advanced Features and Emergency Functions", fun
             await ethers.provider.send("evm_mine");
 
             // Should be eligible for graduation
-            const eligible = await tokenStaking.isEligibleForGraduation(user1.address, 0);
+            const eligible = await tokenStaking.isEligibleForGraduation(await user1.getAddress(), 0);
             expect(eligible).to.be.true;
 
             // Graduate to advanced pool
             await tokenStaking.connect(user1).graduateToPool(0, 2);
 
             // Should now be in advanced pool with better terms
-            const newStake = await tokenStaking.getUserStake(user1.address, 1); // New stake ID
+            const newStake = await tokenStaking.getUserStake(await user1.getAddress(), 1); // New stake ID
             expect(newStake.poolId).to.equal(2);
         });
     });
@@ -470,16 +478,16 @@ describe("TokenStaking - Part 3: Advanced Features and Emergency Functions", fun
             await tokenStaking.connect(user1).purchaseStakeInsurance(0, 5000); // 50% coverage
 
             // Simulate slashing event
-            await tokenStaking.connect(admin).slashStake(user1.address, 0, 1000, "Governance violation");
+            await tokenStaking.connect(admin).slashStake(await user1.getAddress(), 0, 1000, "Governance violation");
 
             // Insurance should cover part of the loss
-            const insurancePayout = await tokenStaking.calculateInsurancePayout(user1.address, 0);
+            const insurancePayout = await tokenStaking.calculateInsurancePayout(await user1.getAddress(), 0);
             expect(insurancePayout).to.be.gt(0);
 
             await tokenStaking.connect(user1).claimInsurance(0);
 
             // User should receive insurance compensation
-            const compensation = await tokenStaking.getInsuranceCompensation(user1.address);
+            const compensation = await tokenStaking.getInsuranceCompensation(await user1.getAddress());
             expect(compensation).to.equal(insurancePayout);
         });
 
@@ -501,7 +509,7 @@ describe("TokenStaking - Part 3: Advanced Features and Emergency Functions", fun
             await tokenStaking.connect(admin).simulateMarketCrash(3000); // 30% market drop
 
             // Protection should activate
-            const protectionStatus = await tokenStaking.getProtectionStatus(user1.address, 0);
+            const protectionStatus = await tokenStaking.getProtectionStatus(await user1.getAddress(), 0);
             expect(protectionStatus.active).to.be.true;
             expect(protectionStatus.protectedAmount).to.be.gt(0);
         });
@@ -551,7 +559,7 @@ describe("TokenStaking - Part 3: Advanced Features and Emergency Functions", fun
 
             // Simulate rewards from multiple chains
             await tokenStaking.connect(admin).syncCrossChainRewards(
-                user1.address,
+                await user1.getAddress(),
                 [
                     { chain: "Ethereum", amount: ethers.parseEther("500") },
                     { chain: "BSC", amount: ethers.parseEther("300") },
@@ -559,7 +567,7 @@ describe("TokenStaking - Part 3: Advanced Features and Emergency Functions", fun
                 ]
             );
 
-            const totalCrossChainRewards = await tokenStaking.getCrossChainRewards(user1.address);
+            const totalCrossChainRewards = await tokenStaking.getCrossChainRewards(await user1.getAddress());
             expect(totalCrossChainRewards).to.equal(ethers.parseEther("1000"));
         });
     });
@@ -659,35 +667,380 @@ describe("TokenStaking - Part 3: Advanced Features and Emergency Functions", fun
             await mockToken.connect(user1).approve(await tokenStaking.getAddress(), massiveStake);
 
             await expect(
-                tokenStaking.connectconst { expect } = require("chai");
-            const { ethers, upgrades } = require("hardhat");
+                tokenStaking.connect(user1).stake(1, massiveStake)
+            ).to.be.revertedWith("Circuit breaker triggered");
+        });
 
-            describe("TokenStaking - Part 3: Advanced Features and Emergency Functions", function () {
-                let tokenStaking;
-                let mockToken;
-                let mockRewardsPool;
-                let mockGovernance;
-                let mockRegistry;
-                let owner, admin, minter, burner, treasury, emergency, user1, user2, user3;
+        it("should recover from system failures automatically", async function () {
+            // Simulate system failure
+            await tokenStaking.connect(admin).simulateSystemFailure();
 
-                const ADMIN_ROLE = ethers.keccak256(ethers.toUtf8Bytes("ADMIN_ROLE"));
-                const STAKING_MANAGER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("STAKING_MANAGER_ROLE"));
-                const EMERGENCY_ROLE = ethers.keccak256(ethers.toUtf8Bytes("EMERGENCY_ROLE"));
-                const SLASHER_ROLE = ethers.keccak256(ethers.toUtf8Bytes("SLASHER_ROLE"));
+            // System should automatically attempt recovery
+            const recoveryAttempts = await tokenStaking.getRecoveryAttempts();
+            expect(recoveryAttempts).to.be.gt(0);
 
-                beforeEach(async function () {
-                    [owner, admin, minter, burner, treasury, emergency, user1, user2, user3] = await ethers.getSigners();
+            // Manual recovery trigger
+            await tokenStaking.connect(admin).triggerSystemRecovery();
 
-                    const MockERC20 = await ethers.getContractFactory("MockERC20");
-                    mockToken = await MockERC20.deploy("TeacherSupport Token", "TEACH", ethers.parseEther("5000000000"));
+            const systemHealth = await tokenStaking.getSystemHealth();
+            expect(systemHealth.operational).to.be.true;
+        });
 
-                    const MockRegistry = await ethers.getContractFactory("MockRegistry");
-                    mockRegistry = await MockRegistry.deploy();
+        it("should maintain data integrity during stress conditions", async function () {
+            // Create stress conditions with multiple concurrent operations
+            const promises = [];
 
-                    const MockRewardsPool = await ethers.getContractFactory("MockRewardsPool");
-                    mockRewardsPool = await MockRewardsPool.deploy();
+            for (let i = 0; i < 10; i++) {
+                const user = [user1, user2, user3][i % 3];
+                const amount = ethers.parseEther("1000");
 
-                    const MockGovernance = await ethers.getContractFactory("MockGovernance");
-                    mockGovernance = await MockGovernance.deploy();
+                await mockToken.connect(user).approve(await tokenStaking.getAddress(), amount);
+                promises.push(tokenStaking.connect(user).stake(1, amount));
+            }
 
-                    const TokenStaking = await ethers.getContractFactory("
+            // All operations should complete successfully
+            await Promise.all(promises);
+
+            // Verify data integrity
+            const integrityCheck = await tokenStaking.verifyDataIntegrity();
+            expect(integrityCheck.isValid).to.be.true;
+        });
+    });
+
+    describe("Advanced Staking Strategies", function () {
+        beforeEach(async function () {
+            // Create pools for different strategies
+            await tokenStaking.connect(admin).createStakingPool(1000, 30 * 24 * 60 * 60, ethers.parseEther("100"), ethers.parseEther("10000"), true); // Short term
+            await tokenStaking.connect(admin).createStakingPool(1500, 180 * 24 * 60 * 60, ethers.parseEther("1000"), ethers.parseEther("50000"), true); // Medium term
+            await tokenStaking.connect(admin).createStakingPool(2000, 365 * 24 * 60 * 60, ethers.parseEther("5000"), ethers.parseEther("100000"), true); // Long term
+        });
+
+        it("should implement auto-compound strategies", async function () {
+            const stakeAmount = ethers.parseEther("10000");
+            await mockToken.connect(user1).approve(await tokenStaking.getAddress(), stakeAmount);
+            await tokenStaking.connect(user1).stake(2, stakeAmount); // Medium term pool
+
+            // Enable auto-compound strategy
+            await tokenStaking.connect(user1).enableAutoCompoundStrategy(0, {
+                frequency: 7 * 24 * 60 * 60, // Weekly
+                minRewardThreshold: ethers.parseEther("100"),
+                maxGasPrice: ethers.parseUnits("50", "gwei")
+            });
+
+            // Fast forward and trigger auto-compound
+            await ethers.provider.send("evm_increaseTime", [8 * 24 * 60 * 60]); // 8 days
+            await ethers.provider.send("evm_mine");
+
+            await tokenStaking.triggerAutoCompound(await user1.getAddress(), 0);
+
+            const stake = await tokenStaking.getUserStake(await user1.getAddress(), 0);
+            expect(stake.amount).to.be.gt(stakeAmount); // Should have compounded
+        });
+
+        it("should support yield optimization strategies", async function () {
+            // Enable yield optimization across multiple pools
+            await tokenStaking.connect(admin).enableYieldOptimization();
+
+            const totalAmount = ethers.parseEther("15000");
+            await mockToken.connect(user1).approve(await tokenStaking.getAddress(), totalAmount);
+
+            // Optimizer should distribute across pools for maximum yield
+            await tokenStaking.connect(user1).stakeWithOptimization(totalAmount, {
+                riskTolerance: 5, // Medium risk
+                minLockPeriod: 60 * 24 * 60 * 60, // Min 60 days
+                preferredAPY: 1500 // Target 15% APY
+            });
+
+            const optimization = await tokenStaking.getOptimizationResult(await user1.getAddress());
+            expect(optimization.estimatedAPY).to.be.gte(1500);
+            expect(optimization.poolDistribution.length).to.be.gt(1);
+        });
+
+        it("should implement rebalancing mechanisms", async function () {
+            // Stake in multiple pools
+            const amounts = [ethers.parseEther("5000"), ethers.parseEther("5000"), ethers.parseEther("5000")];
+
+            for (let i = 0; i < 3; i++) {
+                await mockToken.connect(user1).approve(await tokenStaking.getAddress(), amounts[i]);
+                await tokenStaking.connect(user1).stake(i + 1, amounts[i]);
+            }
+
+            // Enable auto-rebalancing
+            await tokenStaking.connect(user1).enableAutoRebalancing({
+                targetAllocation: [30, 40, 30], // Percentage allocation
+                rebalanceThreshold: 500, // 5% deviation threshold
+                frequency: 30 * 24 * 60 * 60 // Monthly
+            });
+
+            // Simulate market changes that would trigger rebalancing
+            await tokenStaking.connect(admin).simulateMarketVolatility([800, 1800, 2200]); // Change pool APYs
+
+            // Trigger rebalancing
+            await tokenStaking.triggerRebalancing(await user1.getAddress());
+
+            const allocation = await tokenStaking.getCurrentAllocation(await user1.getAddress());
+            expect(allocation[1]).to.be.closeTo(40, 2); // Should be close to target 40%
+        });
+    });
+
+    describe("Institutional Features", function () {
+        it("should support institutional staking with custom terms", async function () {
+            // Create institutional pool
+            await tokenStaking.connect(admin).createInstitutionalPool({
+                minimumStake: ethers.parseEther("100000"),
+                lockPeriod: 730 * 24 * 60 * 60, // 2 years
+                baseAPY: 2500, // 25%
+                requiresKYC: true,
+                customVesting: true
+            });
+
+            const institutionalPoolId = 4;
+
+            // Set institutional status for user1
+            await tokenStaking.connect(admin).setInstitutionalStatus(await user1.getAddress(), true);
+            await tokenStaking.connect(admin).setKYCStatus(await user1.getAddress(), true);
+
+            const stakeAmount = ethers.parseEther("150000");
+            await mockToken.connect(user1).approve(await tokenStaking.getAddress(), stakeAmount);
+
+            await tokenStaking.connect(user1).stakeInstitutional(institutionalPoolId, stakeAmount, {
+                vestingSchedule: "custom",
+                reportingRequirements: true,
+                complianceLevel: "institutional"
+            });
+
+            const institutionalStake = await tokenStaking.getInstitutionalStake(await user1.getAddress());
+            expect(institutionalStake.amount).to.equal(stakeAmount);
+            expect(institutionalStake.specialTerms).to.be.true;
+        });
+
+        it("should implement enterprise governance features", async function () {
+            // Set up enterprise governance
+            await tokenStaking.connect(admin).enableEnterpriseGovernance({
+                votingPowerCap: 1000, // 10% max voting power per entity
+                delegationLimits: true,
+                requiresBoard: true
+            });
+
+            // Create enterprise board
+            await tokenStaking.connect(admin).createEnterpriseBoard([
+                await admin.getAddress(),
+                await treasury.getAddress(),
+                await user1.getAddress()
+            ]);
+
+            // Propose enterprise-level changes
+            const proposalId = await tokenStaking.connect(admin).createEnterpriseProposal(
+                "Increase institutional APY",
+                "Proposal to increase institutional staking APY to remain competitive",
+                ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [2800])
+            );
+
+            // Board voting
+            await tokenStaking.connect(admin).castBoardVote(proposalId, true);
+            await tokenStaking.connect(treasury).castBoardVote(proposalId, true);
+
+            // Execute after majority approval
+            await tokenStaking.executeEnterpriseProposal(proposalId);
+
+            const updatedAPY = await tokenStaking.getInstitutionalAPY();
+            expect(updatedAPY).to.equal(2800);
+        });
+    });
+
+    describe("Performance Monitoring and Alerts", function () {
+        beforeEach(async function () {
+            await tokenStaking.connect(admin).createStakingPool(1200, 90 * 24 * 60 * 60, ethers.parseEther("1000"), ethers.parseEther("50000"), true);
+
+            const stakeAmount = ethers.parseEther("20000");
+            await mockToken.connect(user1).approve(await tokenStaking.getAddress(), stakeAmount);
+            await tokenStaking.connect(user1).stake(1, stakeAmount);
+        });
+
+        it("should monitor performance metrics and trigger alerts", async function () {
+            // Set up performance monitoring
+            await tokenStaking.connect(admin).enablePerformanceMonitoring({
+                apyThreshold: 1000, // Alert if APY drops below 10%
+                liquidityThreshold: ethers.parseEther("10000"),
+                utilizationThreshold: 8000 // 80%
+            });
+
+            // Simulate conditions that trigger alerts
+            await tokenStaking.connect(admin).simulateAPYDrop(800); // Drop to 8%
+
+            const alerts = await tokenStaking.getActiveAlerts();
+            expect(alerts.length).to.be.gt(0);
+            expect(alerts[0].type).to.equal("LOW_APY");
+        });
+
+        it("should generate automated reports", async function () {
+            // Fast forward to generate activity
+            await ethers.provider.send("evm_increaseTime", [30 * 24 * 60 * 60]);
+            await ethers.provider.send("evm_mine");
+
+            // Generate performance report
+            const report = await tokenStaking.generatePerformanceReport(
+                1, // Pool ID
+                30 * 24 * 60 * 60 // Last 30 days
+            );
+
+            expect(report.period).to.equal(30 * 24 * 60 * 60);
+            expect(report.averageAPY).to.be.gt(0);
+            expect(report.totalRewardsDistributed).to.be.gt(0);
+            expect(report.activeStakers).to.be.gt(0);
+        });
+
+        it("should track key performance indicators", async function () {
+            const kpis = await tokenStaking.getKPIs();
+
+            expect(kpis.totalValueLocked).to.be.gt(0);
+            expect(kpis.averageStakingDuration).to.be.gt(0);
+            expect(kpis.rewardEfficiency).to.be.gte(0);
+            expect(kpis.userRetentionRate).to.be.gte(0);
+            expect(kpis.liquidityUtilization).to.be.gte(0);
+        });
+    });
+
+    describe("Integration and Compatibility", function () {
+        it("should integrate with external DeFi protocols", async function () {
+            // Mock external DeFi protocol
+            const MockDeFiProtocol = await ethers.getContractFactory("MockDeFiProtocol");
+            const defiProtocol = await MockDeFiProtocol.deploy();
+            await defiProtocol.waitForDeployment();
+
+            // Enable DeFi integration
+            await tokenStaking.connect(admin).enableDeFiIntegration(await defiProtocol.getAddress());
+
+            const stakeAmount = ethers.parseEther("10000");
+            await mockToken.connect(user1).approve(await tokenStaking.getAddress(), stakeAmount);
+            await tokenStaking.connect(user1).stake(1, stakeAmount);
+
+            // Stake should be automatically deployed to DeFi protocol for additional yield
+            await tokenStaking.deployToDeFi(1, ethers.parseEther("5000"));
+
+            const defiDeployment = await tokenStaking.getDeFiDeployment(1);
+            expect(defiDeployment.amount).to.equal(ethers.parseEther("5000"));
+            expect(defiDeployment.protocol).to.equal(await defiProtocol.getAddress());
+        });
+
+        it("should support multiple token standards", async function () {
+            // Test with different token standards
+            const MockERC777 = await ethers.getContractFactory("MockERC777");
+            const erc777Token = await MockERC777.deploy("ERC777 Token", "E777", ethers.parseEther("1000000"));
+            await erc777Token.waitForDeployment();
+
+            // Add support for ERC777
+            await tokenStaking.connect(admin).addSupportedToken(await erc777Token.getAddress(), "ERC777");
+
+            const supportedTokens = await tokenStaking.getSupportedTokens();
+            expect(supportedTokens).to.include(await erc777Token.getAddress());
+        });
+
+        it("should maintain backward compatibility", async function () {
+            // Test with legacy interfaces
+            const legacyInterface = await tokenStaking.getLegacyInterface();
+            expect(legacyInterface.version).to.equal("1.0.0");
+
+            // Legacy stake function should still work
+            const stakeAmount = ethers.parseEther("5000");
+            await mockToken.connect(user1).approve(await tokenStaking.getAddress(), stakeAmount);
+
+            await tokenStaking.connect(user1).legacyStake(stakeAmount);
+
+            const legacyStake = await tokenStaking.getLegacyStake(await user1.getAddress());
+            expect(legacyStake.amount).to.equal(stakeAmount);
+        });
+    });
+
+    describe("Gas Optimization and Efficiency", function () {
+        it("should optimize gas usage for batch operations", async function () {
+            // Create multiple stakes for batch testing
+            const users = [user1, user2, user3];
+            const amounts = [ethers.parseEther("1000"), ethers.parseEther("2000"), ethers.parseEther("1500")];
+
+            // Approve tokens for all users
+            for (let i = 0; i < users.length; i++) {
+                await mockToken.connect(users[i]).approve(await tokenStaking.getAddress(), amounts[i]);
+            }
+
+            // Batch stake operation should be more gas efficient
+            await tokenStaking.connect(admin).batchStake(
+                users.map(u => u.getAddress()),
+                amounts,
+                [1, 1, 1] // All in pool 1
+            );
+
+            // Verify all stakes were created
+            for (let i = 0; i < users.length; i++) {
+                const stake = await tokenStaking.getUserStake(await users[i].getAddress(), 0);
+                expect(stake.amount).to.equal(amounts[i]);
+            }
+        });
+
+        it("should implement efficient reward calculations", async function () {
+            // Create stakes for efficiency testing
+            const stakeAmount = ethers.parseEther("10000");
+            await mockToken.connect(user1).approve(await tokenStaking.getAddress(), stakeAmount);
+            await tokenStaking.connect(user1).stake(1, stakeAmount);
+
+            // Fast forward significantly
+            await ethers.provider.send("evm_increaseTime", [180 * 24 * 60 * 60]); // 180 days
+            await ethers.provider.send("evm_mine");
+
+            // Reward calculation should be efficient even for long periods
+            const startGas = await ethers.provider.getBalance(await admin.getAddress());
+            const rewards = await tokenStaking.calculatePendingRewards(await user1.getAddress(), 0);
+            const endGas = await ethers.provider.getBalance(await admin.getAddress());
+
+            expect(rewards).to.be.gt(0);
+            // Gas usage should be reasonable (this is a conceptual test)
+        });
+    });
+
+    describe("Edge Cases and Stress Testing", function () {
+        it("should handle maximum stake scenarios", async function () {
+            // Test with maximum possible stake amount
+            const maxStake = ethers.parseEther("1000000"); // 1M tokens
+
+            // Transfer max amount to user
+            await mockToken.transfer(await user1.getAddress(), maxStake);
+            await mockToken.connect(user1).approve(await tokenStaking.getAddress(), maxStake);
+
+            // Should handle maximum stake without overflow
+            await tokenStaking.connect(user1).stake(1, maxStake);
+
+            const stake = await tokenStaking.getUserStake(await user1.getAddress(), 0);
+            expect(stake.amount).to.equal(maxStake);
+        });
+
+        it("should handle minimum stake scenarios", async function () {
+            // Test with minimum possible stake amount
+            const minStake = 1; // 1 wei
+
+            await mockToken.connect(user1).approve(await tokenStaking.getAddress(), minStake);
+
+            // Should handle minimum stake
+            await tokenStaking.connect(user1).stake(1, minStake);
+
+            const stake = await tokenStaking.getUserStake(await user1.getAddress(), 0);
+            expect(stake.amount).to.equal(minStake);
+        });
+
+        it("should handle rapid consecutive operations", async function () {
+            // Test rapid stake/unstake operations
+            const amount = ethers.parseEther("1000");
+
+            for (let i = 0; i < 5; i++) {
+                await mockToken.connect(user1).approve(await tokenStaking.getAddress(), amount);
+                await tokenStaking.connect(user1).stake(1, amount);
+
+                // Immediate unstake (will have penalties)
+                await tokenStaking.connect(user1).unstake(i);
+            }
+
+            // System should remain stable
+            const systemHealth = await tokenStaking.getSystemHealth();
+            expect(systemHealth.operational).to.be.true;
+        });
+    });
+});

@@ -26,10 +26,10 @@ describe("TokenCrowdSale - Purchase Functionality", function () {
     token = await MockERC20.deploy("TeacherSupport Token", "TEACH", ethers.parseUnits("5000000000", 18));
     await token.waitForDeployment();
 
-    stablecoin = await MockERC20.deploy("USD Stablecoin", "USDC", ethers.parseUnits("10000000", 6));
+    stablecoin = await MockERC20.deploy("USD Stablecoin", "USDC", ethers.parseUnits("10000000", 18));
     await stablecoin.waitForDeployment();
 
-    altcoin = await MockERC20.deploy("Alt Stablecoin", "USDT", ethers.parseUnits("10000000", 6));
+    altcoin = await MockERC20.deploy("Alt Stablecoin", "USDT", ethers.parseUnits("10000000", 18));
     await altcoin.waitForDeployment();
 
     // Deploy mock registry
@@ -85,9 +85,9 @@ describe("TokenCrowdSale - Purchase Functionality", function () {
     await token.transfer(await mockTokenVesting.getAddress(), ethers.parseUnits("1000000000", 18));
 
     // Transfer stablecoin to users for purchases - using 6 decimals for USD amounts
-    await stablecoin.transfer(await user1.getAddress(), ethers.parseUnits("100000", 6));
-    await stablecoin.transfer(await user2.getAddress(), ethers.parseUnits("100000", 6));
-    await altcoin.transfer(await user1.getAddress(), ethers.parseUnits("100000", 6));
+    await stablecoin.transfer(await user1.getAddress(), ethers.parseUnits("100000", 18));
+    await stablecoin.transfer(await user2.getAddress(), ethers.parseUnits("100000", 18));
+    await altcoin.transfer(await user1.getAddress(), ethers.parseUnits("100000", 18));
   });
 
   describe("Standard Purchase with Stablecoin", function () {
@@ -95,7 +95,7 @@ describe("TokenCrowdSale - Purchase Functionality", function () {
       const usdAmount = ethers.parseUnits("1000", 6); // $1,000 with 6 decimals
 
       // Approve stablecoin first
-      await stablecoin.connect(user1).approve(await crowdSale.getAddress(), ethers.parseUnits("10000", 6));
+      await stablecoin.connect(user1).approve(await crowdSale.getAddress(), ethers.parseUnits("10000", 18));
 
       // Make purchase
       await crowdSale.connect(user1).purchase(tierId, usdAmount);
@@ -127,10 +127,10 @@ describe("TokenCrowdSale - Purchase Functionality", function () {
 
     it("should enforce purchase limits", async function () {
       // Set small max purchase for testing
-      await crowdSale.setMaxTokensPerAddress(ethers.parseUnits("30000", 6)); // 30,000 tokens
+      await crowdSale.setMaxTokensPerAddress(ethers.parseUnits("30000", 18)); // 30,000 tokens
 
       // Approve stablecoin
-      await stablecoin.connect(user1).approve(await crowdSale.getAddress(), ethers.parseUnits("10000", 6));
+      await stablecoin.connect(user1).approve(await crowdSale.getAddress(), ethers.parseUnits("10000", 18));
 
       // Try to purchase too many tokens ($1,200 at $0.04 = 30,000 tokens, with bonus = 36,000 tokens)
       // This exceeds our 30,000 token limit
@@ -146,7 +146,7 @@ describe("TokenCrowdSale - Purchase Functionality", function () {
       const usdAmount = ethers.parseUnits("50", 6); // $50, below minimum
 
       // Approve stablecoin
-      await stablecoin.connect(user1).approve(await crowdSale.getAddress(), ethers.parseUnits("100", 6));
+      await stablecoin.connect(user1).approve(await crowdSale.getAddress(), ethers.parseUnits("100", 18));
 
       await expect(
           crowdSale.connect(user1).purchase(tierId, usdAmount)
@@ -158,7 +158,7 @@ describe("TokenCrowdSale - Purchase Functionality", function () {
       const usdAmount = ethers.parseUnits("55000", 6); // $55,000, above maximum
 
       // Approve stablecoin
-      await stablecoin.connect(user1).approve(await crowdSale.getAddress(), ethers.parseUnits("100000", 6));
+      await stablecoin.connect(user1).approve(await crowdSale.getAddress(), ethers.parseUnits("100000", 18));
 
       await expect(
           crowdSale.connect(user1).purchase(tierId, usdAmount)
@@ -204,14 +204,14 @@ describe("TokenCrowdSale - Purchase Functionality", function () {
     it("should reject purchases with unsupported tokens", async function () {
       // Deploy a random token that's not supported
       const MockERC20 = await ethers.getContractFactory("MockERC20");
-      const unsupportedToken = await MockERC20.deploy("Unsupported", "UNS", ethers.parseUnits("10000", 6));
+      const unsupportedToken = await MockERC20.deploy("Unsupported", "UNS", ethers.parseUnits("10000", 18));
       await unsupportedToken.waitForDeployment();
 
       // Transfer to user
-      await unsupportedToken.transfer(await user1.getAddress(), ethers.parseUnits("1000", 6));
+      await unsupportedToken.transfer(await user1.getAddress(), ethers.parseUnits("1000", 18));
 
       // Approve
-      await unsupportedToken.connect(user1).approve(await crowdSale.getAddress(), ethers.parseUnits("1000", 6));
+      await unsupportedToken.connect(user1).approve(await crowdSale.getAddress(), ethers.parseUnits("1000", 18));
 
       // Attempt purchase
       await expect(
@@ -249,7 +249,7 @@ describe("TokenCrowdSale - Purchase Functionality", function () {
       await crowdSale.setPurchaseRateLimits(600, ethers.parseUnits("50000", 6)); // 10 minutes, $50,000
 
       // Approve stablecoin
-      await stablecoin.connect(user1).approve(await crowdSale.getAddress(), ethers.parseUnits("2000", 6));
+      await stablecoin.connect(user1).approve(await crowdSale.getAddress(), ethers.parseUnits("2000", 18));
 
       // Make first purchase
       await crowdSale.connect(user1).purchase(tierId, ethers.parseUnits("1000", 6));
@@ -272,7 +272,7 @@ describe("TokenCrowdSale - Purchase Functionality", function () {
       await crowdSale.setPurchaseRateLimits(3600, ethers.parseUnits("500", 6)); // 1 hour, $500 max
 
       // Approve stablecoin
-      await stablecoin.connect(user1).approve(await crowdSale.getAddress(), ethers.parseUnits("1000", 6));
+      await stablecoin.connect(user1).approve(await crowdSale.getAddress(), ethers.parseUnits("1000", 18));
 
       // Try to purchase above max amount
       await expect(
@@ -285,8 +285,8 @@ describe("TokenCrowdSale - Purchase Functionality", function () {
       await crowdSale.setPurchaseRateLimits(600, ethers.parseUnits("50000", 6)); // 10 minutes, $50,000
 
       // Approve stablecoin for both users
-      await stablecoin.connect(user1).approve(await crowdSale.getAddress(), ethers.parseUnits("1000", 6));
-      await stablecoin.connect(user2).approve(await crowdSale.getAddress(), ethers.parseUnits("1000", 6));
+      await stablecoin.connect(user1).approve(await crowdSale.getAddress(), ethers.parseUnits("1000", 18));
+      await stablecoin.connect(user2).approve(await crowdSale.getAddress(), ethers.parseUnits("1000", 18));
 
       // Both users should be able to purchase at the same time
       await crowdSale.connect(user1).purchase(tierId, ethers.parseUnits("1000", 6));
@@ -394,7 +394,7 @@ describe("TokenCrowdSale - Purchase Functionality", function () {
 
     it("should not create multiple vesting schedules for same user", async function () {
       const usdAmount = ethers.parseUnits("500", 6);
-      await stablecoin.connect(user1).approve(await crowdSale.getAddress(), ethers.parseUnits("1000", 6));
+      await stablecoin.connect(user1).approve(await crowdSale.getAddress(), ethers.parseUnits("1000", 18));
 
       // Make first purchase
       await crowdSale.connect(user1).purchase(tierId, usdAmount);
@@ -463,7 +463,7 @@ describe("TokenCrowdSale - Purchase Functionality", function () {
   describe("Insufficient Balance/Allowance", function () {
     it("should revert when user has insufficient token balance", async function () {
       // Transfer away user's tokens
-      await stablecoin.connect(user1).transfer(await user2.getAddress(), ethers.parseUnits("100000", 6));
+      await stablecoin.connect(user1).transfer(await user2.getAddress(), ethers.parseUnits("100000", 18));
 
       const usdAmount = ethers.parseUnits("1000", 6);
 

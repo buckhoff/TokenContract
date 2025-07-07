@@ -129,8 +129,8 @@ contract MockPriceFeed {
         uint256 baseRate = tokenRates[_token];
         uint256 adjustedRate = _applyVolatility(_token, baseRate);
 
-        // Convert based on rate (amount * rate / 1e18 for 18-decimal tokens)
-        return (_amount * adjustedRate) / 1e18;
+        // Convert based on rate (amount * rate / 1e6 for 6-decimal tokens)
+        return (_amount * adjustedRate) / 1e6;
     }
 
     /**
@@ -148,7 +148,7 @@ contract MockPriceFeed {
         uint256 adjustedUsdAmount = _usdAmount + slippageAmount;
 
         // Convert based on rate
-        return (adjustedUsdAmount * 1e18) / adjustedRate;
+        return (adjustedUsdAmount * 1e6) / adjustedRate;
     }
 
     /**

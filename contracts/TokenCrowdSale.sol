@@ -237,7 +237,7 @@ UUPSUpgradeable
         tgeCompleted = false;
         minTimeBetweenPurchases = 1 hours;
         maxPurchaseAmount = 50_000 * PRICE_DECIMALS; // $50,000 default max
-        maxTokensPerAddress = 1_500_000 * 10**6; // 1.5M tokens by default
+        maxTokensPerAddress = 1_500_000 * 10**18; // 1.5M tokens by default
 
         // Initialize cache
         _cachedAddresses = CachedAddresses({
@@ -327,7 +327,7 @@ UUPSUpgradeable
         uint8 _tierId,
         address _paymentToken,
         uint256 _paymentAmount
-    ) public nonReentrant whenNotPaused  purchaseRateLimit(_paymentAmount){
+    ) public nonReentrant whenNotPaused purchaseRateLimit(_paymentAmount){
         // Validate payment token
         if (!priceFeed.isTokenSupported(_paymentToken)) revert UnsupportedPaymentToken(_paymentToken);
 
@@ -352,7 +352,7 @@ UUPSUpgradeable
         if (userTierTotal > tier.maxPurchase) revert ExceedsMaxTierPurchase(userTierTotal, tier.maxPurchase);
 
         // Calculate token amount based on USD value
-        uint256 tokenAmount = (usdAmount * 10**6) / tier.price;
+        uint256 tokenAmount = (usdAmount * 10**18) / tier.price;
 
         // Check total address limit
         if (addressTokensPurchased[msg.sender] + tokenAmount > maxTokensPerAddress)
