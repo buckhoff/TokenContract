@@ -140,6 +140,7 @@ UUPSUpgradeable
     event AddressRemovedFromCooldown(address indexed cooldownAddress);
     event FunctionCallFailed(bytes4 indexed selector);
     event EtherReceived(address indexed sender, uint256 amount);
+    event ExternalCallFailed(string method, address target);
     
     // Error declarations for PlatformStabilityFund
     error ZeroTokenAddress();
@@ -1064,7 +1065,7 @@ UUPSUpgradeable
                 );
                 // Log but don't revert if call fails
                 if (!success) {
-                    emit EmergencyNotificationFailed(Constants.MARKETPLACE_NAME);
+                    emit ExternalCallFailed("pauseMarketplace", marketplace);
                 }
             }
         } catch {
@@ -1079,7 +1080,7 @@ UUPSUpgradeable
                     abi.encodeWithSignature("pausePresale()")
                 );
                 if (!success) {
-                    emit EmergencyNotificationFailed(Constants.CROWDSALE_NAME);
+                    emit ExternalCallFailed("pausePresale", crowdsale);
                 }
             }
         } catch {
@@ -1094,7 +1095,7 @@ UUPSUpgradeable
                     abi.encodeWithSignature("pauseStaking()")
                 );
                 if (!success) {
-                    emit EmergencyNotificationFailed(Constants.STAKING_NAME);
+                    emit ExternalCallFailed("pauseStaking", staking);
                 }
             }
         } catch {
@@ -1109,7 +1110,7 @@ UUPSUpgradeable
                     abi.encodeWithSignature("pauseRewards()")
                 );
                 if (!success) {
-                    emit EmergencyNotificationFailed(Constants.PLATFORM_REWARD_NAME);
+                    emit ExternalCallFailed("pauseRewards", rewards);
                 }
             }
         } catch {

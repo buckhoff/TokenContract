@@ -141,6 +141,7 @@ contract PlatformGovernance is
     event VotingPowerUpdated(address indexed voter, uint256 newVotingPower);
     event SystemEmergencyTriggered(address indexed triggeredBy, string reason);
     event EmergencySystemFailed(string reason);
+    event TransactionExecutionFailed(uint256 indexed proposalId, address target, bytes data);
     
     error InsufficientProposalThreshold(uint256 balance, uint256 required);
     error EmptyTargets();
@@ -406,7 +407,10 @@ contract PlatformGovernance is
             }
 
             (bool success, ) = proposal.targets[i].call(callData);
-            if(!success) revert TransactionExecutionFailed(_proposalId);
+            if (!success) {
+                emit TransactionExecutionFailed(_proposalId, proposal.targets[i], callData);
+                revert TransactionExecutionFailed(_proposalId);
+            }
         }
         
         emit ProposalExecuted(_proposalId);

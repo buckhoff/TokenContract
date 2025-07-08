@@ -105,7 +105,8 @@ contract TokenStaking is
     event AddressPlacedInCooldown(address indexed suspiciousAddress, uint256 endTime);
     event AddressRemovedFromCooldown(address indexed cooldownaddress);
     event FlashLoanProtectionConfigured(uint256 maxDailyUserVolume, uint256 maxSingleConversionAmount, uint256 minTimeBetweenActions, bool enabled);
-
+    event ExternalCallFailed(string method, address target);
+    
     //constructor(){
     //    _disableInitializers();
     //}
@@ -973,8 +974,9 @@ contract TokenStaking is
                     _user
                 )
             );
-            if (!success){
-                emit PlatformGovernanceUpdateFailed(_user,"TokenStaking: could not update voting power");
+
+            if (!success) {
+                emit ExternalCallFailed("updateVotingPower", governance);
             }
 
             // We don't revert on failure since this is a non-critical operation

@@ -156,7 +156,8 @@ UUPSUpgradeable
         uint256 tokenAmount,
         uint256 usdEquivalent
     );
-
+    event ExternalCallFailed(string method, address target);
+    
     // Errors
     error ZeroTokenAddress();
     error ZeroPaymentTokenAddress();
@@ -492,6 +493,10 @@ UUPSUpgradeable
             )
         );
 
+        if (!success) {
+            emit ExternalCallFailed("recordTokenPurchase", stabilityFund);
+        }
+        
         return success;
     }
 

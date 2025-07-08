@@ -74,6 +74,8 @@ ILiquidityProvisioner
     ERC20Upgradeable public token;
     ERC20Upgradeable public stablecoin;
 
+    address private _owner;
+    
     // Interface to DEX registry
     IDexRegistry public dexRegistry;
 
@@ -522,5 +524,9 @@ ILiquidityProvisioner
 
     function getTargetPrice() external override view returns (uint96 _targetPrice){
         _targetPrice=targetPrice;
+    }
+
+    function owner() public view returns (address) {
+        return _owner;
     }
 }

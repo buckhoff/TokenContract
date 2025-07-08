@@ -48,6 +48,7 @@ contract ContractRegistry is
     
     event SystemHasBeenPaused(bytes32 indexed contractName);
     event SystemEmergencyTriggered(address indexed triggeredBy, string reason);
+    event ExternalCallFailed(string method, address target);
     
     /**
      * @dev Constructor 
