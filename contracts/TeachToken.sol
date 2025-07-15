@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20BurnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/extensions/AccessControlEnumerableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "./Registry/RegistryAwareUpgradeable.sol";
 import {Constants} from "./Libraries/Constants.sol";
@@ -33,6 +34,7 @@ contract TeachToken is
     ERC20BurnableUpgradeable,
     ReentrancyGuardUpgradeable,
     UUPSUpgradeable,
+    AccessControlEnumerableUpgradeable,
     RegistryAwareUpgradeable
 {
     IImmutableTokenContract public immutableContract;
@@ -90,7 +92,7 @@ contract TeachToken is
             immutableContract.TOKEN_SYMBOL()
         );
         __ERC20Burnable_init();
-        __AccessControl_init();
+        __AccessControlEnumerable_init();
         __ReentrancyGuard_init();
         __UUPSUpgradeable_init();
         
@@ -461,7 +463,7 @@ contract TeachToken is
      */
     function getStabilityAddressWithFallback() internal returns (address) {
         // First attempt: Try registry lookup
-        if (address(registry) != address(0) && !registryOfflineMode) {
+        if (address(registry) != address(0)) {
             try registry.getContractAddress(Constants.STABILITY_FUND_NAME) returns (address stabilityFundAddress) {
                 if (stabilityFundAddress != address(0)) {
                     // Update cache with successful lookup
@@ -478,13 +480,7 @@ contract TeachToken is
         if (_cachedStabilityFundAddress != address(0) && block.timestamp - _lastCacheUpdate < 1 days) {
             return _cachedStabilityFundAddress;
         }
-
-        // Third attempt: Use explicitly set fallback address
-        address fallbackAddress = _fallbackAddresses[Constants.STABILITY_FUND_NAME];
-        if (fallbackAddress != address(0)) {
-            return fallbackAddress;
-        }
-
+        
         // Final fallback: Use hardcoded address (if appropriate) or revert
         revert("Stability Fund address unavailable through all fallback mechanisms");
     }
@@ -495,7 +491,7 @@ contract TeachToken is
      */
     function getTokenAddressWithFallback() internal returns (address) {
         // First attempt: Try registry lookup
-        if (address(registry) != address(0) && !registryOfflineMode) {
+        if (address(registry) != address(0)) {
             try registry.getContractAddress(Constants.TOKEN_NAME) returns (address tokenAddress) {
                 if (tokenAddress != address(0)) {
                     // Update cache with successful lookup
@@ -513,14 +509,6 @@ contract TeachToken is
             return _cachedTokenAddress;
         }
 
-        // Third attempt: Use explicitly set fallback address
-        address fallbackAddress = _fallbackAddresses[Constants.TOKEN_NAME];
-        if (fallbackAddress != address(0)) {
-            return fallbackAddress;
-        }
-
-        // Final fallback: Use this contract's address as last resort
-        // This is safer than reverting when used in critical paths
         return address(this);
     }
 
@@ -535,17 +523,35 @@ contract TeachToken is
         bytes32 _contractNameBytes32,
         bytes memory _callData
     ) internal returns (bool success, bytes memory returnData) {
-        require(address(registry) != address(0), "TeachToken: registry not set");
+        if (address(registry) == address(0)) {
+            emit ContractCallFailed(_contractNameBytes32, bytes4(_callData), "Registry not set");
+            return (false, bytes(""));
+        }
+        if (registryOfflineMode) {
+            // In offline mode, try to use fallback address
+            address fallbackAddress = _fallbackAddresses[_contractNameBytes32];
+            if (fallbackAddress != address(0)) {
+                (success, returnData) = fallbackAddress.call(_callData);
+                if (!success) {
+                    emit ContractCallFailed(_contractNameBytes32, bytes4(_callData), "Fallback call failed");
+                }
+                return (success, returnData);
+            } else {
+                emit ContractCallFailed(_contractNameBytes32, bytes4(_callData), "No fallback address");
+                return (false, bytes(""));
+            }
+        }
 
+        // Standard registry flow
         try registry.isContractActive(_contractNameBytes32) returns (bool isActive) {
             if (!isActive) {
-                emit BurnNotificationFailed(0, "Contract not active");
+                emit ContractCallFailed(_contractNameBytes32, bytes4(_callData), "Contract not active");
                 return (false, bytes(""));
             }
 
             try registry.getContractAddress(_contractNameBytes32) returns (address contractAddress) {
                 if (contractAddress == address(0)) {
-                    emit BurnNotificationFailed(0, "Zero contract address");
+                    emit ContractCallFailed(_contractNameBytes32, bytes4(_callData), "Zero contract address");
                     return (false, bytes(""));
                 }
 
@@ -553,18 +559,22 @@ contract TeachToken is
                 (success, returnData) = contractAddress.call(_callData);
 
                 if (!success) {
-                    emit BurnNotificationFailed(0, "Call reverted");
+                    emit ContractCallFailed(
+                        _contractNameBytes32,
+                        bytes4(_callData),
+                        "Call reverted"
+                    );
                 }
 
                 return (success, returnData);
             } catch {
-                emit BurnNotificationFailed(0, "Failed to get contract address");
+                emit ContractCallFailed(_contractNameBytes32, bytes4(_callData), "Failed to get contract address");
                 return (false, bytes(""));
             }
         } catch {
-            emit BurnNotificationFailed(0, "Failed to check contract active status");
+            emit ContractCallFailed(_contractNameBytes32, bytes4(_callData), "Failed to check contract active status");
             return (false, bytes(""));
         }
-    }*/
-    
+    }
+    */
 }

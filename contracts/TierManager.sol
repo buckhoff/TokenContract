@@ -57,6 +57,9 @@ UUPSUpgradeable
     // Timestamps for tier deadlines
     mapping(uint8 => uint64) public tierDeadlines;
 
+    mapping(uint8 => uint64) public tierStartTimes;
+    mapping(uint8 => uint64) public tierEndTimes;
+    
     // Events
     event TierConfigured(uint256 tierId, uint256 price, uint256 allocation);
     event BonusConfigured(uint256 tierId, uint256 bracketId, uint256 fillPercentage, uint8 bonusPercentage);
@@ -410,22 +413,31 @@ UUPSUpgradeable
      */
     function getCurrentTier() public view returns (uint8) {
         // First check if any tier deadlines have passed
-        for (uint8 i = currentTier; i < tierCount - 1; i++) {
-            if (tierDeadlines[i] > 0 && block.timestamp >= tierDeadlines[i]) {
-                return i + 1; // Move to next tier if deadline passed
-            }
-        }
-
-        // Then check token sales
-        uint256 tokensSold = totalTokensSold();
-        for (uint8 i = uint8(tierCount - 1); i > 0; i--) {
-            if (tokensSold >= maxTokensForTier[i-1]) {
+        for (uint8 i = 0; i < tierCount; i++) {
+            if (
+                block.timestamp >= tierStartTimes[i] &&
+                block.timestamp <= tierEndTimes[i]
+            ) {
+                if (tiers[i].sold >= tiers[i].allocation) {
+                    // Sold out, skip to next
+                    continue;
+                }
                 return i;
             }
         }
-        return currentTier; // Default to current tier
+
+        // fallback: last tier if no time match
+        return currentTier;
     }
 
+    function checkAndAdvanceTier() external {
+        uint8 newTier = getCurrentTier();
+        if (newTier != currentTier) {
+            currentTier = newTier;
+            emit TierAdvanced(newTier);
+        }
+    }
+    
     /**
      * @dev Set tier deadline
      * @param _tier Tier ID
@@ -434,8 +446,10 @@ UUPSUpgradeable
     function setTierDeadline(uint8 _tier, uint64 _deadline) external onlyRole(Constants.ADMIN_ROLE) {
         if (_tier >= tiers.length) revert InvalidTierId(_tier);
         if (_deadline <= block.timestamp) revert DeadlineInPast(_deadline);
-        tierDeadlines[_tier] = _deadline;
-        emit TierDeadlineUpdated(_tier, _deadline);
+        if (tierDeadlines[_tier] != _deadline) {
+            tierDeadlines[_tier] = _deadline;
+            emit TierDeadlineUpdated(_tier, _deadline);
+        }
     }
 
     /**
@@ -476,6 +490,12 @@ UUPSUpgradeable
     function getTierPrice(uint8 _tierId) external view returns (uint96 price) {
         if (_tierId >= tiers.length) revert InvalidTierId(_tierId);
         return tiers[_tierId].price;
+    }
+
+    function setTierTimes(uint8 _tierId, uint64 _start, uint64 _end) external onlyRole(Constants.ADMIN_ROLE) {
+        require(_start < _end, "Invalid time range");
+        tierStartTimes[_tierId] = _start;
+        tierEndTimes[_tierId] = _end;
     }
 
     /**

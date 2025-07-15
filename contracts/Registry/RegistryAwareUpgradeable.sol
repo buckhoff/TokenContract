@@ -19,18 +19,21 @@ abstract contract RegistryAwareUpgradeable is Initializable, AccessControlEnumer
     // Contract name in the registry
     bytes32 public contractName;
 
-    bool public registryOfflineMode;
-    
-    //fallback address on failures
-    mapping(bytes32 => address) internal _fallbackAddresses;
+    struct FailedCall {
+        address caller;
+        bytes32 contractName;
+        bytes callData;
+        uint256 timestamp;
+        bool resolved;
+    }
+    mapping(uint256 => FailedCall) public failedCalls;
+    uint256 public failedCallCounter;
     
     // Events
     event RegistryUpdated(address indexed oldRegistry, address indexed newRegistry);
     event ContractCallFailed(bytes32 indexed contractName, bytes4 indexed methodId, string reason);
-    event FallbackAddressSet(bytes32 indexed contractName,address indexed fallbackaddress);
-    event RegistryOfflineModeEnabled();
-    event RegistryOfflineModeDisabled();
     event EmergencyNotificationFailed(bytes32 indexed contractName);
+    event TokenContractUnknown(bytes32 indexed contractName);
     
     error SystemPaused();
     error RegistryNotSet();
@@ -53,7 +56,6 @@ abstract contract RegistryAwareUpgradeable is Initializable, AccessControlEnumer
             } catch {
                 if(_isContractPaused()) revert ContractPaused();
             }
-            if(registryOfflineMode) revert RegistryOffline();
             if(_isContractPaused()) revert ContractPaused();
         } else {
             if(_isContractPaused()) revert ContractPaused();
@@ -111,19 +113,8 @@ abstract contract RegistryAwareUpgradeable is Initializable, AccessControlEnumer
      * @return Contract address
      */
     function getContractAddress(bytes32 _contractNameBytes32) internal view returns (address) {
-        if (address(registry) == address(0) || registryOfflineMode) {
-            return _fallbackAddresses[_contractNameBytes32];
-        }
-
-        try registry.getContractAddress(_contractNameBytes32) returns (address contractAddress) {
-            if (contractAddress != address(0)) {
-                return contractAddress;
-            }
-        } catch {
-            // Registry call failed, use fallback
-        }
-
-        return _fallbackAddresses[_contractNameBytes32];
+        if (address(registry) == address(0)) revert RegistryNotSet();
+        return registry.getContractAddress(_contractNameBytes32);
     }
 
     /**
@@ -149,23 +140,8 @@ abstract contract RegistryAwareUpgradeable is Initializable, AccessControlEnumer
     ) internal returns (bool success, bytes memory returnData) {
         // Check if registry is set and not in offline mode
         if (address(registry) == address(0)) {
-            emit ContractCallFailed(_contractNameBytes32, bytes4(_callData), "Registry not set");
+            emit ContractCallFailed(_contractNameBytes32, bytes4(_callData), "Fallback call failed after registry offline mode");
             return (false, bytes(""));
-        }
-
-        if (registryOfflineMode) {
-            // In offline mode, try to use fallback address
-            address fallbackAddress = _fallbackAddresses[_contractNameBytes32];
-            if (fallbackAddress != address(0)) {
-                (success, returnData) = fallbackAddress.call(_callData);
-                if (!success) {
-                    emit ContractCallFailed(_contractNameBytes32, bytes4(_callData), "Fallback call failed");
-                }
-                return (success, returnData);
-            } else {
-                emit ContractCallFailed(_contractNameBytes32, bytes4(_callData), "No fallback address");
-                return (false, bytes(""));
-            }
         }
 
         // Standard registry flow
@@ -190,6 +166,16 @@ abstract contract RegistryAwareUpgradeable is Initializable, AccessControlEnumer
                         bytes4(_callData),
                         "Call reverted"
                     );
+                    
+                    failedCalls[failedCallCounter++] = FailedCall({
+                        caller: msg.sender,
+                        contractName: _contractNameBytes32,
+                        callData: _callData,
+                        timestamp: block.timestamp,
+                        resolved: false
+                    });
+                    
+                    return (false, returnData);
                 }
 
                 return (success, returnData);
@@ -203,36 +189,19 @@ abstract contract RegistryAwareUpgradeable is Initializable, AccessControlEnumer
         }
     }
 
-    function setFallbackAddress(bytes32 _contractName, address _fallbackAddress) external onlyRole(Constants.ADMIN_ROLE) {
-        _fallbackAddresses[_contractName] = _fallbackAddress;
-        emit FallbackAddressSet(_contractName, _fallbackAddress);
-    }
+    function retryFailedCall(uint256 callId) external onlyRole(Constants.ADMIN_ROLE) {
+        FailedCall storage fc = failedCalls[callId];
+        require(!fc.resolved, "Already resolved");
 
-    function enableRegistryOfflineMode() external onlyRole(Constants.ADMIN_ROLE) {
-        registryOfflineMode = true;
-        emit RegistryOfflineModeEnabled();
-    }
+        address target = getContractAddress(fc.contractName);
+        require(target != address(0), "Target address not found");
 
-    function isRegistryOffline() public onlyRole(Constants.ADMIN_ROLE) view returns (bool _isOffline)  {
-        _isOffline = registryOfflineMode;
-        return _isOffline;
-    }
+        (bool success, ) = target.call(fc.callData);
+        require(success, "Retry call failed");
 
-    function disableRegistryOfflineMode() external onlyRole(Constants.ADMIN_ROLE) {
-        // Verify registry is accessible before disabling offline mode
-        require(address(registry) != address(0), "RegistryAware: registry not set");
-        
-        // Test registry connection
-        try registry.isSystemPaused() returns (bool) {
-            // Registry is accessible, can disable offline mode
-            registryOfflineMode = false;
-            emit RegistryOfflineModeDisabled();
-        } catch {
-            // Registry still not accessible
-            revert("RegistryAware: registry not accessible");
-        }
+        fc.resolved = true;
     }
-
+    
     /**
      * @dev Internal function that child contracts override to provide their pause state
      * @return Whether the contract is paused

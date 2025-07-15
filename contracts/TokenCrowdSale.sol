@@ -31,6 +31,9 @@ interface ITierManager {
     }
 
     function getCurrentBonus(uint8 tierId) external view returns (uint8);
+    function getCurrentTier() external view returns (uint8);
+    function checkAndAdvanceTier() external;
+    function tierCount() external view returns (uint8);
     function recordPurchase(uint8 tierId, uint256 tokenAmount) external;
     function tokensRemainingInTier(uint8 tierId) external view returns (uint96);
     function totalTokensSold() external view returns (uint256);
@@ -124,6 +127,8 @@ UUPSUpgradeable
     // USD price scaling factor (6 decimal places)
     uint256 public constant PRICE_DECIMALS = 1e6;
 
+    bool public tgeAborted;
+    
     // Purchase limits
     uint96 public maxTokensPerAddress;
     mapping(address => uint256) public addressTokensPurchased;
@@ -136,6 +141,8 @@ UUPSUpgradeable
     mapping(address => ClaimEvent[]) public claimHistory;
     mapping(address => bool) public autoCompoundEnabled;
 
+    mapping(address => uint256[]) public userVestingSchedules;
+    
     // Cache management
     CachedAddresses private _cachedAddresses;
 
@@ -157,7 +164,11 @@ UUPSUpgradeable
         uint256 usdEquivalent
     );
     event ExternalCallFailed(string method, address target);
-    
+    event TokenSwept(uint256 amount);
+    event TGECompleted(uint256 timestamp);
+    event TokensRecovered(address indexed token, uint256 amount);
+    event RefundIssued(address indexed user, uint256 usdAmount, address token, uint256 tokenAmount);
+
     // Errors
     error ZeroTokenAddress();
     error ZeroPaymentTokenAddress();
@@ -181,6 +192,11 @@ UUPSUpgradeable
     error ZeroComponentAddress();
     error InvalidPresaleTimes(uint64 start, uint64 end);
 
+    modifier onlySelf() {
+        require(msg.sender == address(this), "Only callable by this contract");
+        _;
+    }
+    
     modifier whenNotPaused() {
         if (address(registry) != address(0)) {
             try registry.isSystemPaused() returns (bool systemPaused) {
@@ -190,28 +206,10 @@ UUPSUpgradeable
                 IEmergencyManager.EmergencyState state = emergencyManager.getEmergencyState();
                 require(state == IEmergencyManager.EmergencyState.NORMAL, "TokenCrowdSale: contract is paused");
             }
-            require(!registryOfflineMode, "TokenCrowdSale: registry Offline");
         } else {
             IEmergencyManager.EmergencyState state = emergencyManager.getEmergencyState();
             require(state == IEmergencyManager.EmergencyState.NORMAL, "TokenCrowdSale: contract is paused");
         }
-        _;
-    }
-
-    modifier purchaseRateLimit(uint256 _usdAmount) {
-        address msgr = msg.sender;
-        uint256 userLastPurchase = lastPurchaseTime[msgr];
-
-        if (userLastPurchase != 0) {
-            if (block.timestamp < userLastPurchase + minTimeBetweenPurchases) {
-                revert PurchaseTooSoon(userLastPurchase + minTimeBetweenPurchases, block.timestamp);
-            }
-        }
-
-        if (_usdAmount > maxPurchaseAmount)
-            revert AboveMaxPurchase(_usdAmount, maxPurchaseAmount);
-
-        lastPurchaseTime[msg.sender] = block.timestamp;
         _;
     }
 
@@ -320,35 +318,37 @@ UUPSUpgradeable
 
     /**
      * @dev Purchase tokens with any supported payment token
-     * @param _tierId Tier to purchase from
      * @param _paymentToken Payment token address
      * @param _paymentAmount Amount of payment tokens
      */
     function purchaseWithToken(
-        uint8 _tierId,
         address _paymentToken,
         uint256 _paymentAmount
-    ) public nonReentrant whenNotPaused purchaseRateLimit(_paymentAmount){
+    ) public nonReentrant whenNotPaused {
         // Validate payment token
         if (!priceFeed.isTokenSupported(_paymentToken)) revert UnsupportedPaymentToken(_paymentToken);
 
         // Convert payment to USD
         uint256 usdAmount = priceFeed.convertTokenToUsd(_paymentToken, _paymentAmount);
 
+        _enforcePurchaseRateLimit(msg.sender, usdAmount);
+        
         // Validate presale status and tier
         if (block.timestamp < presaleStart || block.timestamp > presaleEnd) revert PresaleNotActive();
 
+        tierManager.checkAndAdvanceTier();
+        uint8 tierId = tierManager.getCurrentTier();
         // Fetch tier details
-        ITierManager.PresaleTier memory tier = tierManager.getTierDetails(_tierId);
-        if (!tier.isActive) revert TierNotActive(_tierId);
+        ITierManager.PresaleTier memory tier = tierManager.getTierDetails(tierId);
+        if (!tier.isActive) revert TierNotActive(tierId);
 
         // Validate purchase amount in USD
         if (usdAmount < tier.minPurchase) revert BelowMinPurchase(usdAmount, tier.minPurchase);
         if (usdAmount > tier.maxPurchase) revert AboveMaxPurchase(usdAmount, tier.maxPurchase);
 
         // Check user tier limits
-        uint256 userTierTotal = purchases[msg.sender].tierAmounts.length > _tierId
-            ? purchases[msg.sender].tierAmounts[_tierId] + usdAmount
+        uint256 userTierTotal = purchases[msg.sender].tierAmounts.length > tierId
+            ? purchases[msg.sender].tierAmounts[tierId] + usdAmount
             : usdAmount;
         if (userTierTotal > tier.maxPurchase) revert ExceedsMaxTierPurchase(userTierTotal, tier.maxPurchase);
 
@@ -364,7 +364,7 @@ UUPSUpgradeable
             revert InsufficientTierAllocation(tokenAmount, tier.allocation - tier.sold);
 
         // Calculate bonus
-        uint8 bonusPercentage = tierManager.getCurrentBonus(_tierId);
+        uint8 bonusPercentage = tierManager.getCurrentBonus(tierId);
         uint256 bonusTokenAmount = 0;
 
         if (bonusPercentage > 0) {
@@ -375,7 +375,7 @@ UUPSUpgradeable
         uint256 totalTokenAmount = tokenAmount + bonusTokenAmount;
 
         // Update tier data
-        tierManager.recordPurchase(_tierId, tokenAmount);
+        tierManager.recordPurchase(tierId, tokenAmount);
 
         // Update user purchase data
         Purchase storage userPurchase = purchases[msg.sender];
@@ -385,10 +385,10 @@ UUPSUpgradeable
         userPurchase.paymentsByToken[_paymentToken] += _paymentAmount;
 
         // Ensure tierAmounts array is long enough
-        while (userPurchase.tierAmounts.length <= _tierId) {
+        while (userPurchase.tierAmounts.length <= tierId) {
             userPurchase.tierAmounts.push(0);
         }
-        userPurchase.tierAmounts[_tierId] += usdAmount;
+        userPurchase.tierAmounts[tierId] += usdAmount;
 
         // Record payment collection
         priceFeed.recordPaymentCollection(_paymentToken, _paymentAmount);
@@ -402,22 +402,22 @@ UUPSUpgradeable
         addressTokensPurchased[msg.sender] += totalTokenAmount;
 
         // Create vesting schedule if needed
-        if (!userPurchase.vestingCreated) {
-            (uint8 tgePercentage, uint16 vestingMonths) = tierManager.getTierVestingParams(_tierId);
+      
+        (uint8 tgePercentage, uint16 vestingMonths) = tierManager.getTierVestingParams(tierId);
 
-            uint256 scheduleId = vestingContract.createLinearVestingSchedule(
-                msg.sender,
-                totalTokenAmount,
-                0, // No cliff
-                vestingMonths * 30 days,
-                tgePercentage,
-                ITokenVesting.BeneficiaryGroup.PUBLIC_SALE,
-                false // Not revocable
-            );
-            userPurchase.vestingScheduleId = scheduleId;
-            userPurchase.vestingCreated = true;
-        }
-
+        uint256 scheduleId = vestingContract.createLinearVestingSchedule(
+            msg.sender,
+            totalTokenAmount,
+            0, // No cliff
+            vestingMonths * 30 days,
+            tgePercentage,
+            ITokenVesting.BeneficiaryGroup.PUBLIC_SALE,
+            false // Not revocable
+        );
+        userPurchase.vestingScheduleId = scheduleId;
+        userVestingSchedules[msg.sender].push(scheduleId);
+        userPurchase.vestingCreated = true;
+        
         // Update rate limit tracking
         lastPurchaseTime[msg.sender] = block.timestamp;
 
@@ -433,32 +433,12 @@ UUPSUpgradeable
         // Emit event
         emit PurchaseWithToken(
             msg.sender,
-            _tierId,
+            tierId,
             _paymentToken,
             _paymentAmount,
             tokenAmount,
             usdAmount
         );
-    }
-
-    /**
-     * @dev Purchase tokens in a specific tier with the default stablecoin
-     * @param _tierId Tier to purchase from
-     * @param _usdAmount USD amount to spend (scaled by 1e6)
-     */
-    function purchase(uint8 _tierId, uint256 _usdAmount) external whenNotPaused {
-        // Get supported payment tokens
-        address[] memory supportedTokens = priceFeed.getSupportedPaymentTokens();
-
-        // Default to first token (usually stablecoin)
-        address defaultToken = supportedTokens.length > 0 ? supportedTokens[0] : address(0);
-        require(defaultToken != address(0), "No payment tokens configured");
-
-        // Convert USD to default token amount
-        uint256 paymentAmount = priceFeed.convertUsdToToken(defaultToken, _usdAmount);
-
-        // Call multi-token purchase function
-        purchaseWithToken(_tierId, defaultToken, paymentAmount);
     }
 
     /**
@@ -472,7 +452,7 @@ UUPSUpgradeable
         address _user,
         uint256 _tokenAmount,
         uint256 _usdAmount
-    ) external returns (bool success) {
+    ) external onlySelf returns (bool success) {
         if (msg.sender != address(this)) revert UnauthorizedCaller();
 
         // Verify registry and stability fund are properly set
@@ -507,6 +487,7 @@ UUPSUpgradeable
         require(!tgeCompleted, "TGE already completed");
         require(block.timestamp > presaleEnd, "Presale still active");
         tgeCompleted = true;
+        emit TGECompleted(block.timestamp);
     }
 
     /**
@@ -531,7 +512,8 @@ UUPSUpgradeable
      */
     function withdrawTokens() external nonReentrant whenNotPaused {
         if (!tgeCompleted) revert TGENotCompleted();
-
+        require(!tgeAborted, "TGE was aborted");
+        
         Purchase storage userPurchase = purchases[msg.sender];
         uint256 scheduleId = userPurchase.vestingScheduleId;
         if (scheduleId == 0) revert NoTokensToWithdraw();
@@ -620,6 +602,7 @@ UUPSUpgradeable
         uint256 balance = ERC20Upgradeable(_token).balanceOf(address(this));
         require(balance > 0, "No tokens to recover");
         require(ERC20Upgradeable(_token).transfer(owner(), balance), "Token recovery failed");
+        emit TokensRecovered(_token, balance);
     }
 
     /**
@@ -736,5 +719,67 @@ UUPSUpgradeable
         else{
             revert("PF Contract inactive");
         }
+    }
+
+    function _enforcePurchaseRateLimit(address user, uint256 usdAmount) internal {
+        uint256 userLast = lastPurchaseTime[user];
+
+        if (userLast != 0 && block.timestamp < userLast + minTimeBetweenPurchases) {
+            revert PurchaseTooSoon(userLast + minTimeBetweenPurchases, block.timestamp);
+        }
+
+        if (usdAmount > maxPurchaseAmount)
+            revert AboveMaxPurchase(usdAmount, maxPurchaseAmount);
+
+        lastPurchaseTime[user] = block.timestamp;
+    }
+
+    function sweepUnallocatedTokens() external onlyRole(Constants.ADMIN_ROLE) {
+        require(tgeCompleted, "Cannot sweep before TGE");
+        require(address(token) != address(0), "Token not set");
+
+        uint256 totalUnsold = 0;
+        uint8 tierCount = tierManager.tierCount();
+
+        for (uint8 i = 0; i < tierCount; i++) {
+            uint256 remaining = tierManager.tokensRemainingInTier(i);
+            totalUnsold += remaining;
+        }
+
+        require(totalUnsold > 0, "Nothing to sweep");
+
+        // Mint or transfer remaining tokens to treasury
+        require(token.transfer(treasury, totalUnsold), "Transfer failed");
+
+        emit TokenSwept(totalUnsold);
+    }
+
+    function abortTGE() external onlyRole(Constants.ADMIN_ROLE) {
+        require(!tgeCompleted, "TGE already completed");
+        tgeAborted = true;
+    }
+
+    function claimRefund() external nonReentrant {
+        require(tgeAborted, "Refunds not allowed");
+
+        Purchase storage p = purchases[msg.sender];
+        require(p.usdAmount > 0, "No purchase found");
+
+        address[] memory supportedTokens = priceFeed.getSupportedPaymentTokens();
+        address refundToken = supportedTokens.length > 0 ? supportedTokens[0] : address(0);
+        require(refundToken != address(0), "No refund token configured");
+
+        uint256 refundAmount = priceFeed.convertUsdToToken(refundToken, p.usdAmount);
+
+        // Clear the user's purchase before transfer to prevent reentrancy issues
+        delete purchases[msg.sender];
+        addressTokensPurchased[msg.sender] = 0;
+
+        require(
+            ERC20Upgradeable(refundToken).transferFrom(treasury, msg.sender, refundAmount),
+            "Refund transfer failed"
+        );
+        
+        emit RefundIssued(msg.sender,p.usdAmount,refundToken,refundAmount);
     }
 }

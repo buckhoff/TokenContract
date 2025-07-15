@@ -92,28 +92,7 @@ contract ContractRegistry is
         require(_address.code.length > 0, "ContractRegistry: not a contract");
 
         if (_interfaceId != bytes4(0)) {
-            // Create a minimal ERC165 check
-            bytes4 ERC165_ID = 0x01ffc9a7; // ERC165 interface ID
-
-            // Check if contract supports ERC165 first
-            (bool success, bytes memory result) = _address.staticcall(
-                abi.encodeWithSelector(ERC165_ID, ERC165_ID)
-            );
-
-            bool supportsERC165 = success && result.length >= 32 &&
-                                abi.decode(result, (bool));
-
-            // If contract supports ERC165, check for the specific interface
-            if (supportsERC165) {
-                (success, result) = _address.staticcall(
-                    abi.encodeWithSelector(ERC165_ID, _interfaceId)
-                );
-
-                require(
-                    success && result.length >= 32 && abi.decode(result, (bool)),
-                    "ContractRegistry: interface not supported"
-                );
-            }
+            require(_supportsInterface(_address, _interfaceId), "Interface not supported");
         }
         
         contracts[_name] = _address;
@@ -153,28 +132,7 @@ contract ContractRegistry is
         bytes4 newInterfaceId = (_interfaceId != bytes4(0)) ? _interfaceId : oldInterfaceId;
 
         if (newInterfaceId != bytes4(0)) {
-            // Create a minimal ERC165 check
-            bytes4 ERC165_ID = 0x01ffc9a7; // ERC165 interface ID
-
-            // Check if contract supports ERC165 first
-            (bool success, bytes memory result) = _newAddress.staticcall(
-                abi.encodeWithSelector(ERC165_ID, ERC165_ID)
-            );
-
-            bool supportsERC165 = success && result.length >= 32 &&
-                                abi.decode(result, (bool));
-
-            // If contract supports ERC165, check for the specific interface
-            if (supportsERC165) {
-                (success, result) = _newAddress.staticcall(
-                    abi.encodeWithSelector(ERC165_ID, newInterfaceId)
-                );
-
-                require(
-                    success && result.length >= 32 && abi.decode(result, (bool)),
-                    "ContractRegistry: interface not supported"
-                );
-            }
+            require(_supportsInterface(_newAddress, newInterfaceId), "Interface not supported");
         }
         
         contracts[_name] = _newAddress;
@@ -440,5 +398,21 @@ contract ContractRegistry is
      */
     function isSystemPaused() external view returns (bool) {
         return systemPaused;
+    }
+
+    function _supportsInterface(address contractAddr, bytes4 interfaceId) internal view returns (bool) {
+        (bool success, bytes memory result) = contractAddr.staticcall(
+            abi.encodeWithSelector(0x01ffc9a7, 0x01ffc9a7) // ERC165 ID check
+        );
+
+        bool supportsERC165 = success && result.length >= 32 && abi.decode(result, (bool));
+
+        if (!supportsERC165) return false;
+
+        (success, result) = contractAddr.staticcall(
+            abi.encodeWithSelector(0x01ffc9a7, interfaceId)
+        );
+
+        return (success && result.length >= 32 && abi.decode(result, (bool)));
     }
 }

@@ -748,7 +748,7 @@ contract PlatformMarketplace is
      */
     function getTokenAddressWithFallback() internal returns (address) {
         // First attempt: Try registry lookup
-        if (address(registry) != address(0) && !registryOfflineMode) {
+        if (address(registry) != address(0)) {
             try registry.getContractAddress(Constants.TOKEN_NAME) returns (address tokenAddress) {
                 if (tokenAddress != address(0)) {
                     // Update cache with successful lookup
@@ -766,13 +766,7 @@ contract PlatformMarketplace is
             return _cachedTokenAddress;
         }
 
-        // Third attempt: Use explicitly set fallback address
-        address fallbackAddress = _fallbackAddresses[Constants.TOKEN_NAME];
-        if (fallbackAddress != address(0)) {
-            return fallbackAddress;
-        }
-
-        // Final fallback: Use hardcoded address (if appropriate) or revert
-        revert("Token address unavailable through all fallback mechanisms");
+        
+        revert ("Token Contract Unknown");
     }
 }

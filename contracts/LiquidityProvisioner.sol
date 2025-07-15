@@ -525,8 +525,5 @@ ILiquidityProvisioner
     function getTargetPrice() external override view returns (uint96 _targetPrice){
         _targetPrice=targetPrice;
     }
-
-    function owner() public view returns (address) {
-        return _owner;
-    }
+    
 }
