@@ -1053,7 +1053,7 @@ UUPSUpgradeable
      * @dev Emergency notification to all connected contracts
      * Called when critical stability issues are detected
      */
-    function notifyEmergencyToConnectedContracts() external onlyRole(Constants.EMERGENCY_ROLE) {
+    function notifyEmergencyToConnectedContracts() external nonReentrant onlyRole(Constants.EMERGENCY_ROLE) {
         if (address(registry) == address(0)) revert RegistryNotSet();
         
         // Try to notify the marketplace to pause

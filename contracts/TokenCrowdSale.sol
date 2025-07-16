@@ -116,7 +116,8 @@ UUPSUpgradeable
     // Token and treasury
     ERC20Upgradeable public token;
     address public treasury;
-
+    bool internal paused;
+    
     // Presale timing
     uint64 public presaleStart;
     uint64 public presaleEnd;
@@ -452,7 +453,7 @@ UUPSUpgradeable
         address _user,
         uint256 _tokenAmount,
         uint256 _usdAmount
-    ) external onlySelf returns (bool success) {
+    ) external onlySelf nonReentrant returns (bool success) {
         if (msg.sender != address(this)) revert UnauthorizedCaller();
 
         // Verify registry and stability fund are properly set
@@ -781,5 +782,34 @@ UUPSUpgradeable
         );
         
         emit RefundIssued(msg.sender,p.usdAmount,refundToken,refundAmount);
+    }
+
+    /**
+    * @dev Pauses all token transfers
+     * Requirements: Caller must have the ADMIN_ROLE
+     */
+    function pause() public onlyRole(Constants.ADMIN_ROLE){
+        paused=true;
+    }
+
+    /**
+     * @dev Unpauses all token transfers
+     * Requirements: Caller must have the ADMIN_ROLE
+     */
+    function unpause() public onlyRole(Constants.ADMIN_ROLE) {
+        // Check if system is still paused before unpausing locally
+        if (address(registry) != address(0)) {
+            try registry.isSystemPaused() returns (bool systemPaused) {
+                require(!systemPaused, "TokenStaking: system still paused");
+            } catch {
+                // If registry call fails, proceed with unpause
+            }
+        }
+
+        paused = false;
+    }
+
+    function _isContractPaused() internal override view returns (bool) {
+        return paused;
     }
 }

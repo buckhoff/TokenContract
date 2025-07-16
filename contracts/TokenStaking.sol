@@ -961,7 +961,7 @@ contract TokenStaking is
      * This ensures voting power is up to date
      * @param _user User whose stake changed
      */
-    function notifyGovernanceOfStakeChange(address _user) external {
+    function notifyGovernanceOfStakeChange(address _user) external nonReentrant {
         require(msg.sender == address(this), "TokenStaking: unauthorized");
 
         if (address(registry) != address(0) && registry.isContractActive(Constants.GOVERNANCE_NAME)) {
@@ -1016,7 +1016,7 @@ contract TokenStaking is
      * This function updates the user's voting power in the governance contract
      * @param _user User whose voting power should be updated
      */
-    function updateVotingPower(address _user) external override {
+    function updateVotingPower(address _user) external nonReentrant override {
         // Only the contract itself can call this function
         require(msg.sender == address(this), "TokenStaking: only self");
 

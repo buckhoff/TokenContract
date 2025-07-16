@@ -69,6 +69,7 @@ contract ContractRegistry is
         _grantRole(Constants.ADMIN_ROLE, msg.sender);
         _grantRole(Constants.UPGRADER_ROLE, msg.sender);
         _grantRole(Constants.EMERGENCY_ROLE, msg.sender);
+        _grantRole(Constants.MANAGER_ROLE, msg.sender);
         systemPaused = false;
         recoveryTimeout = 24 hours;
     }

@@ -38,6 +38,8 @@ UUPSUpgradeable
     // USD price scaling factor (6 decimal places)
     uint256 public constant PRICE_DECIMALS = 1e6;
 
+    bool internal paused;
+    
     // Crowdsale reference
     address public crowdsaleContract;
 
@@ -507,4 +509,34 @@ UUPSUpgradeable
         if (_tierId >= tiers.length) revert InvalidTierId(_tierId);
         return tiers[_tierId].isActive;
     }
+
+    /**
+* @dev Pauses all token transfers
+     * Requirements: Caller must have the ADMIN_ROLE
+     */
+    function pause() public onlyRole(Constants.ADMIN_ROLE){
+        paused=true;
+    }
+
+    /**
+     * @dev Unpauses all token transfers
+     * Requirements: Caller must have the ADMIN_ROLE
+     */
+    function unpause() public onlyRole(Constants.ADMIN_ROLE) {
+        // Check if system is still paused before unpausing locally
+        if (address(registry) != address(0)) {
+            try registry.isSystemPaused() returns (bool systemPaused) {
+                require(!systemPaused, "TokenStaking: system still paused");
+            } catch {
+                // If registry call fails, proceed with unpause
+            }
+        }
+
+        paused = false;
+    }
+
+    function _isContractPaused() internal override view returns (bool) {
+        return paused;
+    }
+
 }
