@@ -48,7 +48,8 @@ UUPSUpgradeable
     event EmergencyWithdrawalProcessed(address indexed user, uint256 amount);
     event CrowdsaleSet(address indexed crowdsale);
     event RecoveryRequirementsUpdated(uint8 requiredApprovals);
-
+    event EmergencyOverrideActivated(bytes32 contractId, address overrideAddress, string reason);
+    
     // Errors
     error UnauthorizedCaller();
     error AlreadyInEmergencyMode();

@@ -106,6 +106,8 @@ contract TokenStaking is
     event AddressRemovedFromCooldown(address indexed cooldownaddress);
     event FlashLoanProtectionConfigured(uint256 maxDailyUserVolume, uint256 maxSingleConversionAmount, uint256 minTimeBetweenActions, bool enabled);
     event ExternalCallFailed(string method, address target);
+
+    error InvalidContract();
     
     //constructor(){
     //    _disableInitializers();
@@ -170,6 +172,8 @@ contract TokenStaking is
         // Update Token reference
         if (registry.isContractActive(Constants.TOKEN_NAME)) {
             address newToken = registry.getContractAddress(Constants.TOKEN_NAME);
+            if (newToken== address(0)) revert InvalidContract();
+            
             address oldToken = address(token);
 
             if (newToken != oldToken) {
@@ -188,8 +192,11 @@ contract TokenStaking is
             if (registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
                 address stabilityFund = registry.getContractAddress(Constants.STABILITY_FUND_NAME);
 
+                if (stabilityFund== address(0)) revert InvalidContract();
+                
                 if (registry.isContractActive(Constants.GOVERNANCE_NAME)) {
                     address governance = registry.getContractAddress(Constants.GOVERNANCE_NAME);
+                    if (governance == address(0)) revert InvalidContract();
 
                     require(
                         msg.sender == stabilityFund ||
@@ -358,6 +365,8 @@ contract TokenStaking is
         if (address(registry) != address(0) && registry.isContractActive(Constants.TOKEN_NAME)) {
             token = ERC20Upgradeable(registry.getContractAddress(Constants.TOKEN_NAME));
         }
+
+        if (token == address(0)) revert InvalidContract();
         
         require(_amount <= token.balanceOf(msg.sender), "TokenStaking: insufficient balance");
         require(_amount <= token.allowance(msg.sender, address(this)), "TokenStaking: insufficient allowance");

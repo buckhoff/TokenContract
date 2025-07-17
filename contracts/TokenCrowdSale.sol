@@ -192,7 +192,8 @@ UUPSUpgradeable
     error UnsupportedPaymentToken(address token);
     error ZeroComponentAddress();
     error InvalidPresaleTimes(uint64 start, uint64 end);
-
+    error InvalidContract();
+    
     modifier onlySelf() {
         require(msg.sender == address(this), "Only callable by this contract");
         _;
@@ -463,6 +464,8 @@ UUPSUpgradeable
         }
 
         address stabilityFund = registry.getContractAddress(Constants.STABILITY_FUND_NAME);
+
+        if (stabilityFund== address(0)) revert InvalidContract();
 
         // Call the recordTokenPurchase function in StabilityFund
         (success,) = stabilityFund.call(
