@@ -193,7 +193,6 @@ UUPSUpgradeable
     error ZeroComponentAddress();
     error InvalidPresaleTimes(uint64 start, uint64 end);
     error InvalidContract();
-    error SystemPaused();
     error TGEAlreadyCompleted();
     error PresaleStillActive();
     error TGEAborted();

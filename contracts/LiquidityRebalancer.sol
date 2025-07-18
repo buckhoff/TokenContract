@@ -546,7 +546,7 @@ ILiquidityRebalancer
         (address tokenAddress, address stablecoinAddress) = liquidityProvisioner.getTokenAndStablecoin();
 
         // Allow recovery of any token except platform token and stablecoin
-        if (_token == tokenAddress || _token == stablecoinAddress) revert NotAuthorized();
+        if (_token == tokenAddress || _token == stablecoinAddress) revert ZeroAddress();
 
         ERC20Upgradeable recoveryToken = ERC20Upgradeable(_token);
         uint256 balance = recoveryToken.balanceOf(address(this));

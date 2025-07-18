@@ -121,7 +121,6 @@ contract PlatformMarketplace is
     error ZeroTokenAddress();
     error FeeTooHigh();
     error ZeroFeeRecipient();
-    error RegistryNotSet();
     error ResourceDoesNotExist();
     error NotResourceCreator();
     error EmptyMetadataURI();
@@ -134,13 +133,11 @@ contract PlatformMarketplace is
     error NotPurchased();
     error InvalidRating();
     error DiscountTooHigh();
-    error NotAuthorized();
     error SystemStillPaused();
     error ZeroAddress();
     error Unauthorized();
     error DisputeAlreadyExistsOrResolved();
     error DisputeDoesNotExist();
-    error AlreadyResolved();
     error ResolutionPeriodEnded();
     error PlatformFeeRefundFailed();
     error CreatorRefundFailed();

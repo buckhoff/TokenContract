@@ -112,7 +112,6 @@ contract TeacherReward is
     error NotRegistered();
     error NotVerifier();
     error ZeroTokenAddress();
-    error RegistryNotSet();
     error AlreadyRegistered();
     error AlreadyVerified();
     error InvalidReputationRange();
@@ -121,7 +120,6 @@ contract TeacherReward is
     error ZeroAmount();
     error AlreadyVerifier();
     error NotVerifierAddress();
-    error NotAuthorized();
     error SystemStillPaused();
     error EmptyName();
     error EmptyDescription();

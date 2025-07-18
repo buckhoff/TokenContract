@@ -41,12 +41,15 @@ contract TeachToken is
     
     bool internal paused;
     bool public inEmergencyRecovery;
+    bool internal initialDistributionDone;
     mapping(address => bool) public emergencyRecoveryApprovals;
     uint256 public requiredRecoveryApprovals;
 
     address private _cachedTokenAddress;
     address private _cachedStabilityFundAddress;
     uint256 private _lastCacheUpdate;
+
+    mapping(address => bool) public recoveryAllowedTokens;
 
     // Events
     event RegistrySet(address indexed registry);
@@ -63,6 +66,9 @@ contract TeachToken is
     event EmergencyRecoveryInitiated(address indexed recoveryAdmin, uint256 timestamp);
     event EmergencyRecoveryCompleted(address indexed recoveryAdmin);
     event immutableContractSet(address indexed immutableContract);
+    
+    error ZeroTokenAddress();
+    error ZeroAmount();
     error TokenNotActiveOrRegistered();
     error InitialDistributionAlreadyCompleted();
     error TotalAllocationMustEqualMaxSupply();
@@ -73,6 +79,7 @@ contract TeachToken is
     error InsufficientBalance();
     error TransferFailed();
     error NotPaused();
+    error NotInRecoveryMode();
     error AlreadyApproved();
     
     /**

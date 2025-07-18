@@ -110,8 +110,6 @@ contract TokenStaking is
     error NotPlatformManager();
     error ZeroTokenAddress();
     error ZeroPlatformManagerAddress();
-    error RegistryNotSet();
-    error NotAuthorized();
     error SystemStillPaused();
     error EmptyPoolName();
     error FeeTooHigh();
@@ -393,7 +391,7 @@ contract TokenStaking is
             token = ERC20Upgradeable(registry.getContractAddress(Constants.TOKEN_NAME));
         }
 
-        if (token == address(0)) revert ZeroTokenAddress();
+        if (address(token) == address(0)) revert ZeroTokenAddress();
         
         if (_amount > token.balanceOf(msg.sender)) revert InsufficientBalance();
         if (_amount > token.allowance(msg.sender, address(this))) revert InsufficientAllowance();

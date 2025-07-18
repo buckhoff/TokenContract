@@ -60,7 +60,8 @@ UUPSUpgradeable
     error RecoveryNotActive();
     error InvalidRequiredApprovalsValue();
     error InsufficientRecoveryApprovals();
-
+    error ZeroAddress();
+    
     modifier onlyCrowdsale() {
         if (msg.sender != crowdsaleContract) revert UnauthorizedCaller();
         _;
