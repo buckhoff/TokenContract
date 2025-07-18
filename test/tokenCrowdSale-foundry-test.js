@@ -1,1 +1,0 @@
-<full code from earlier, restored manually>
