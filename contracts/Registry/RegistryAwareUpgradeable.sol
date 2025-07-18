@@ -45,6 +45,9 @@ abstract contract RegistryAwareUpgradeable is Initializable, AccessControlEnumer
     error FailedToRetrieveContractStatus();
     error ContractPaused();
     error RegistryOffline();
+    error AlreadyResolved();
+    error TargetAddressNotFound();
+    error RetryCallFailed();
     
    /**
      * @dev Modifier to check if the system is not paused
@@ -191,13 +194,13 @@ abstract contract RegistryAwareUpgradeable is Initializable, AccessControlEnumer
 
     function retryFailedCall(uint256 callId) external onlyRole(Constants.ADMIN_ROLE) {
         FailedCall storage fc = failedCalls[callId];
-        require(!fc.resolved, "Already resolved");
+        if (fc.resolved) revert AlreadyResolved();
 
         address target = getContractAddress(fc.contractName);
-        require(target != address(0), "Target address not found");
+        if (target == address(0)) revert TargetAddressNotFound();
 
         (bool success, ) = target.call(fc.callData);
-        require(success, "Retry call failed");
+        if (!success) revert RetryCallFailed();
 
         fc.resolved = true;
     }

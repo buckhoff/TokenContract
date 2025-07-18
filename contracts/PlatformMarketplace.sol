@@ -117,6 +117,43 @@ contract PlatformMarketplace is
     event BulkPurchaseDiscountApplied(address indexed buyer, uint256 resourceCount, uint256 discountPercent);
     event ResourceResellableStatusChanged(uint256 indexed resourceId, bool isResellable);
     
+    // Add custom errors at the top:
+    error ZeroTokenAddress();
+    error FeeTooHigh();
+    error ZeroFeeRecipient();
+    error RegistryNotSet();
+    error ResourceDoesNotExist();
+    error NotResourceCreator();
+    error EmptyMetadataURI();
+    error ZeroPrice();
+    error ResourceNotActive();
+    error AlreadyPurchased();
+    error CannotPurchaseOwnResource();
+    error FeeTransferFailed();
+    error CreatorTransferFailed();
+    error NotPurchased();
+    error InvalidRating();
+    error DiscountTooHigh();
+    error NotAuthorized();
+    error SystemStillPaused();
+    error ZeroAddress();
+    error Unauthorized();
+    error DisputeAlreadyExistsOrResolved();
+    error DisputeDoesNotExist();
+    error AlreadyResolved();
+    error ResolutionPeriodEnded();
+    error PlatformFeeRefundFailed();
+    error CreatorRefundFailed();
+    error ZeroPeriod();
+    error ArraysLengthMismatch();
+    error EmptyTiers();
+    error ZeroMinAmount();
+    error YearlyDiscountTooHigh();
+    error EmptyPurchase();
+    error NotPaused();
+    error NotInRecoveryMode();
+    error AlreadyApproved();
+
     /**
      * @dev Constructor
      */
@@ -139,9 +176,9 @@ contract PlatformMarketplace is
         __ReentrancyGuard_init();
         __Ownable_init(msg.sender); 
         
-        require(_token != address(0), "PlatformMarketplace: zero token address");
-        require(_feePercent <= 3000, "PlatformMarketplace: fee too high");
-        require(_feeRecipient != address(0), "PlatformMarketplace: zero fee recipient");
+        if (_token == address(0)) revert ZeroTokenAddress();
+        if (_feePercent > 3000) revert FeeTooHigh();
+        if (_feeRecipient == address(0)) revert ZeroFeeRecipient();
         
         token = ERC20Upgradeable(_token);
         platformFeePercent = _feePercent;
@@ -185,7 +222,7 @@ contract PlatformMarketplace is
      * This ensures contracts always have the latest addresses
      */
     function updateContractReferences() external onlyRole(Constants.ADMIN_ROLE) {
-        require(address(registry) != address(0), "PlatformMarketplace: registry not set");
+        if (address(registry) == address(0)) revert RegistryNotSet();
 
         // Update Token reference
         if (registry.isContractActive(Constants.TOKEN_NAME)) {
@@ -216,10 +253,10 @@ contract PlatformMarketplace is
     function updateResource(uint256 _resourceId, string memory _metadataURI, uint256 _price, bool _isActive) external whenContractNotPaused nonReentrant {
         Resource storage resource = resources[_resourceId];
         
-        require(resource.creator != address(0), "PlatformMarketplace: resource does not exist");
-        require(resource.creator == msg.sender, "PlatformMarketplace: not resource creator");
-        require(bytes(_metadataURI).length > 0, "PlatformMarketplace: empty metadata URI");
-        require(_price > 0, "PlatformMarketplace: zero price");
+        if (resource.creator == address(0)) revert ResourceDoesNotExist();
+        if (resource.creator != msg.sender) revert NotResourceCreator();
+        if (bytes(_metadataURI).length == 0) revert EmptyMetadataURI();
+        if (_price == 0) revert ZeroPrice();
         
         resource.metadataURI = _metadataURI;
         resource.price = _price;
@@ -235,10 +272,10 @@ contract PlatformMarketplace is
     function purchaseResource(uint256 _resourceId) external whenContractNotPaused nonReentrant {
         Resource storage resource = resources[_resourceId];
         
-        require(resource.creator != address(0), "PlatformMarketplace: resource does not exist");
-        require(resource.isActive, "PlatformMarketplace: resource not active");
-        require(!userPurchases[msg.sender][_resourceId], "PlatformMarketplace: already purchased");
-        require(resource.creator != msg.sender, "PlatformMarketplace: cannot purchase own resource");
+        if (resource.creator == address(0)) revert ResourceDoesNotExist();
+        if (!resource.isActive) revert ResourceNotActive();
+        if (userPurchases[msg.sender][_resourceId]) revert AlreadyPurchased();
+        if (resource.creator == msg.sender) revert CannotPurchaseOwnResource();
 
         // Check if user has an active subscription
         if (subscriptionEndTime[msg.sender] >= block.timestamp) {
@@ -255,8 +292,8 @@ contract PlatformMarketplace is
         uint256 creatorAmount = price - platformFee;
         
         // Transfer tokens
-        require(token.transferFrom(msg.sender, feeRecipient, platformFee), "PlatformMarketplace: fee transfer failed");
-        require(token.transferFrom(msg.sender, resource.creator, creatorAmount), "PlatformMarketplace: creator transfer failed");
+        if (!token.transferFrom(msg.sender, feeRecipient, platformFee)) revert FeeTransferFailed();
+        if (!token.transferFrom(msg.sender, resource.creator, creatorAmount)) revert CreatorTransferFailed();
         
         // Mark as purchased and update sales
         userPurchases[msg.sender][_resourceId] = true;
@@ -276,8 +313,8 @@ contract PlatformMarketplace is
      * @param _rating Rating value (1-5)
      */
     function rateResource(uint256 _resourceId, uint256 _rating) external nonReentrant {
-        require(userPurchases[msg.sender][_resourceId], "PlatformMarketplace: not purchased");
-        require(_rating >= 1 && _rating <= 5, "PlatformMarketplace: invalid rating");
+        if (!userPurchases[msg.sender][_resourceId]) revert NotPurchased();
+        if (_rating < 1 || _rating > 5) revert InvalidRating();
         
         Resource storage resource = resources[_resourceId];
         
@@ -294,7 +331,7 @@ contract PlatformMarketplace is
      * @param _newFeePercent New fee percentage (e.g., 5% = 500)
      */
     function updatePlatformFee(uint256 _newFeePercent) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_newFeePercent <= 3000, "PlatformMarketplace: fee too high");
+        if (_newFeePercent > 3000) revert FeeTooHigh();
         platformFeePercent = _newFeePercent;
         emit PlatformFeeUpdated(_newFeePercent);
     }
@@ -304,7 +341,7 @@ contract PlatformMarketplace is
      * @param _newFeeRecipient New fee recipient address
      */
     function updateFeeRecipient(address _newFeeRecipient) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_newFeeRecipient != address(0), "PlatformMarketplace: zero fee recipient");
+        if (_newFeeRecipient == address(0)) revert ZeroFeeRecipient();
         feeRecipient = _newFeeRecipient;
         emit FeeRecipientUpdated(_newFeeRecipient);
     }
@@ -355,22 +392,21 @@ contract PlatformMarketplace is
     function pauseMarketplace() external {
         if (address(registry) != address(0) && registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
             address stabilityFundAddress = registry.getContractAddress(Constants.STABILITY_FUND_NAME);
-            require(
-                msg.sender == stabilityFundAddress || hasRole(Constants.EMERGENCY_ROLE, msg.sender),
-                "PlatformMarketplace: not authorized"
-            );
+            if (
+                msg.sender != stabilityFundAddress && !hasRole(Constants.EMERGENCY_ROLE, msg.sender)
+            ) revert Unauthorized();
             paused =true;
         } else {
-            require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "PlatformMarketplace: not authorized");
+            if (!hasRole(Constants.EMERGENCY_ROLE, msg.sender)) revert Unauthorized();
         }
     }
 
     function unpauseMarketplace() external {
         if (address(registry) != address(0) && registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
             address stabilityFundAddress = registry.getContractAddress(Constants.STABILITY_FUND_NAME);
-            require(msg.sender == stabilityFundAddress || hasRole(Constants.EMERGENCY_ROLE, msg.sender), "PlatformMarketplace: not authorized");
+            if (msg.sender != stabilityFundAddress && !hasRole(Constants.EMERGENCY_ROLE, msg.sender)) revert Unauthorized();
             try registry.isSystemPaused() returns (bool systemPaused) {
-                require(!systemPaused, "TokenStaking: system still paused");
+                if (systemPaused) revert SystemStillPaused();
             } catch {
                 // If registry call fails, proceed with unpause
             }
@@ -383,7 +419,7 @@ contract PlatformMarketplace is
     }
     
     function setStabilityFund(address _stabilityFund) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_stabilityFund != address(0), "PlatformMarketplace: zero address");
+        if (_stabilityFund == address(0)) revert ZeroAddress();
         stabilityFund = IPlatformStabilityFund(_stabilityFund);
     }
 
@@ -393,7 +429,7 @@ contract PlatformMarketplace is
      * @param _fee Total platform fee collected
      */
     function shareFeeWithStabilityFund(uint256 _fee) external {
-        require(msg.sender == address(this), "PlatformMarketplace: unauthorized");
+        if (msg.sender != address(this)) revert Unauthorized();
 
         address stabilityFundAddress = registry.getContractAddress(Constants.STABILITY_FUND_NAME);
         
@@ -419,11 +455,11 @@ contract PlatformMarketplace is
      * @param _reason Reason for the dispute
      */
     function createDispute(uint256 _resourceId, string memory _reason) external nonReentrant {
-        require(userPurchases[msg.sender][_resourceId], "PlatformMarketplace: not purchased");
-        require(!resourceDisputes[_resourceId].resolved, "PlatformMarketplace: dispute already exists or resolved");
+        if (!userPurchases[msg.sender][_resourceId]) revert NotPurchased();
+        if (resourceDisputes[_resourceId].resolved) revert DisputeAlreadyExistsOrResolved();
 
         Resource storage resource = resources[_resourceId];
-        require(resource.creator != address(0), "PlatformMarketplace: resource does not exist");
+        if (resource.creator == address(0)) revert ResourceDoesNotExist();
 
         resourceDisputes[_resourceId] = DisputeInfo({
             buyer: msg.sender,
@@ -445,9 +481,9 @@ contract PlatformMarketplace is
      */
     function resolveDispute(uint256 _resourceId, bool _refund) external onlyRole(Constants.ADMIN_ROLE) nonReentrant {
         DisputeInfo storage dispute = resourceDisputes[_resourceId];
-        require(!dispute.resolved, "PlatformMarketplace: already resolved");
-        require(dispute.buyer != address(0), "PlatformMarketplace: dispute does not exist");
-        require(block.timestamp <= dispute.createdAt + disputeResolutionPeriod, "PlatformMarketplace: resolution period ended");
+        if (dispute.resolved) revert AlreadyResolved();
+        if (dispute.buyer == address(0)) revert DisputeDoesNotExist();
+        if (block.timestamp > dispute.createdAt + disputeResolutionPeriod) revert ResolutionPeriodEnded();
 
         dispute.resolved = true;
 
@@ -459,11 +495,11 @@ contract PlatformMarketplace is
             uint256 platformFee = (dispute.amount * platformFeePercent) / 10000;
 
             // Transfer the refund to the buyer from the fee recipient
-            require(token.transferFrom(feeRecipient, dispute.buyer, platformFee), "PlatformMarketplace: platform fee refund failed");
+            if (!token.transferFrom(feeRecipient, dispute.buyer, platformFee)) revert PlatformFeeRefundFailed();
 
             // Transfer the creator's portion from the creator back to the buyer
             uint256 creatorAmount = dispute.amount - platformFee;
-            require(token.transferFrom(dispute.seller, dispute.buyer, creatorAmount), "PlatformMarketplace: creator refund failed");
+            if (!token.transferFrom(dispute.seller, dispute.buyer, creatorAmount)) revert CreatorRefundFailed();
         }
 
         emit DisputeResolved(_resourceId, _refund);
@@ -474,7 +510,7 @@ contract PlatformMarketplace is
      * @param _newPeriod New period in seconds
      */
     function setDisputeResolutionPeriod(uint256 _newPeriod) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_newPeriod > 0, "PlatformMarketplace: zero period");
+        if (_newPeriod == 0) revert ZeroPeriod();
         disputeResolutionPeriod = _newPeriod;
     }
 
@@ -503,7 +539,7 @@ contract PlatformMarketplace is
         }
 
         // Transfer tokens
-        require(token.transferFrom(msg.sender, feeRecipient, fee), "PlatformMarketplace: payment failed");
+        if (!token.transferFrom(msg.sender, feeRecipient, fee)) revert FeeTransferFailed();
 
         // Share with stability fund
         if (address(registry) != address(0) && registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
@@ -519,7 +555,7 @@ contract PlatformMarketplace is
      * @param _yearlyDiscount Yearly subscription discount percentage
      */
     function setSubscriptionFees(uint256 _monthlyFee, uint256 _yearlyDiscount) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_yearlyDiscount <= 5000, "PlatformMarketplace: discount too high");
+        if (_yearlyDiscount > 5000) revert YearlyDiscountTooHigh();
         monthlySubscriptionFee = _monthlyFee;
         yearlySubscriptionDiscount = _yearlyDiscount;
     }
@@ -529,7 +565,7 @@ contract PlatformMarketplace is
      * @param _resourceIds Array of resource IDs to purchase
      */
     function bulkPurchaseResources(uint256[] memory _resourceIds) external nonReentrant whenContractNotPaused {
-        require(_resourceIds.length > 0, "PlatformMarketplace: empty purchase");
+        if (_resourceIds.length == 0) revert EmptyPurchase();
 
         // Calculate total cost and validate resources
         uint256 totalCost = 0;
@@ -538,10 +574,10 @@ contract PlatformMarketplace is
             uint256 resourceId = _resourceIds[i];
             Resource storage resource = resources[resourceId];
 
-            require(resource.creator != address(0), "PlatformMarketplace: resource does not exist");
-            require(resource.isActive, "PlatformMarketplace: resource not active");
-            require(!userPurchases[msg.sender][resourceId], "PlatformMarketplace: already purchased");
-            require(resource.creator != msg.sender, "PlatformMarketplace: cannot purchase own resource");
+            if (resource.creator == address(0)) revert ResourceDoesNotExist();
+            if (!resource.isActive) revert ResourceNotActive();
+            if (userPurchases[msg.sender][resourceId]) revert AlreadyPurchased();
+            if (resource.creator == msg.sender) revert CannotPurchaseOwnResource();
 
             totalCost += resource.price;
         }
@@ -576,7 +612,7 @@ contract PlatformMarketplace is
         uint256 platformFee = (totalCost * platformFeePercent) / 10000;
 
         // Transfer platform fee
-        require(token.transferFrom(msg.sender, feeRecipient, platformFee), "PlatformMarketplace: fee transfer failed");
+        if (!token.transferFrom(msg.sender, feeRecipient, platformFee)) revert FeeTransferFailed();
 
         // Process each resource
         for (uint256 i = 0; i < _resourceIds.length; i++) {
@@ -588,7 +624,7 @@ contract PlatformMarketplace is
             uint256 creatorFee = discountedPrice - ((discountedPrice * platformFeePercent) / 10000);
 
             // Transfer to creator
-            require(token.transferFrom(msg.sender, resource.creator, creatorFee), "PlatformMarketplace: creator transfer failed");
+            if (!token.transferFrom(msg.sender, resource.creator, creatorFee)) revert CreatorTransferFailed();
 
             // Mark as purchased
             userPurchases[msg.sender][resourceId] = true;
@@ -612,16 +648,16 @@ contract PlatformMarketplace is
         uint256[] memory _minAmounts,
         uint256[] memory _discountPercents
     ) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_minAmounts.length == _discountPercents.length, "PlatformMarketplace: arrays length mismatch");
-        require(_minAmounts.length > 0, "PlatformMarketplace: empty tiers");
+        if (_minAmounts.length != _discountPercents.length) revert ArraysLengthMismatch();
+        if (_minAmounts.length == 0) revert EmptyTiers();
 
         // Clear existing tiers
         delete discountTiers;
 
         // Add new tiers
         for (uint256 i = 0; i < _minAmounts.length; i++) {
-            require(_minAmounts[i] > 0, "PlatformMarketplace: zero min amount");
-            require(_discountPercents[i] <= 5000, "PlatformMarketplace: discount too high");
+            if (_minAmounts[i] == 0) revert ZeroMinAmount();
+            if (_discountPercents[i] > 5000) revert DiscountTooHigh();
 
             discountTiers.push(DiscountTier({
                 minAmount: _minAmounts[i],
@@ -657,8 +693,8 @@ contract PlatformMarketplace is
      */
     function setResourceResellable(uint256 _resourceId, bool _isResellable) external  {
         Resource storage resource = resources[_resourceId];
-        require(resource.creator == msg.sender || hasRole(Constants.ADMIN_ROLE, msg.sender), "PlatformMarketplace: not authorized");
-        require(resource.creator != address(0), "PlatformMarketplace: resource does not exist");
+        if (resource.creator != msg.sender && !hasRole(Constants.ADMIN_ROLE, msg.sender)) revert NotAuthorized();
+        if (resource.creator == address(0)) revert ResourceDoesNotExist();
 
         // Update resellable status
         isResourceResellable[_resourceId] = _isResellable;
@@ -675,8 +711,8 @@ contract PlatformMarketplace is
      */
     function createResource(string memory _metadataURI, uint256 _price) external nonReentrant whenContractNotPaused returns (uint256)
     {
-        require(bytes(_metadataURI).length > 0, "PlatformMarketplace: empty metadata URI");
-        require(_price > 0, "PlatformMarketplace: zero price");
+        if (bytes(_metadataURI).length == 0) revert EmptyMetadataURI();
+        if (_price == 0) revert ZeroPrice();
 
         uint256 resourceId = _resourceIdCounter;
         _resourceIdCounter++;
@@ -698,14 +734,14 @@ contract PlatformMarketplace is
     
     // Add emergency recovery functions
     function initiateEmergencyRecovery() external onlyRole(Constants.EMERGENCY_ROLE) {
-        require(paused, "Marketplace: not paused");
+        if (paused) revert NotPaused();
         inEmergencyRecovery = true;
         emit EmergencyRecoveryInitiated(msg.sender, block.timestamp);
     }
 
     function approveRecovery() external onlyRole(Constants.ADMIN_ROLE) {
-        require(inEmergencyRecovery, "Marketplace: not in recovery mode");
-        require(!emergencyRecoveryApprovals[msg.sender], "Marketplace: already approved");
+        if (!inEmergencyRecovery) revert NotInRecoveryMode();
+        if (emergencyRecoveryApprovals[msg.sender]) revert AlreadyApproved();
 
         emergencyRecoveryApprovals[msg.sender] = true;
 

@@ -84,6 +84,10 @@ UUPSUpgradeable
     error DeadlineInPast(uint64 deadline);
     error InvalidBracketID();
     error InvalidFillPercentage();
+    error ZeroAddress();
+    error InvalidBracketOrder();
+    error InvalidTimeRange();
+    error SystemStillPaused();
 
     modifier onlyCrowdsale() {
         if (msg.sender != crowdsaleContract) revert UnauthorizedCaller();
@@ -125,7 +129,7 @@ UUPSUpgradeable
      * @param _crowdsale Address of the crowdsale contract
      */
     function setCrowdsale(address _crowdsale) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_crowdsale != address(0), "Zero address");
+        if (_crowdsale == address(0)) revert ZeroAddress();
         crowdsaleContract = _crowdsale;
         emit CrowdsaleSet(_crowdsale);
     }
@@ -297,8 +301,7 @@ UUPSUpgradeable
 
         // Ensure each bracket has a higher fill percentage than the previous
         if (_bracketId > 0) {
-            require(_fillPercentage > tierBonuses[_tierId][_bracketId - 1].fillPercentage,
-                "Fill percentage must be higher than previous bracket");
+            if (_fillPercentage <= tierBonuses[_tierId][_bracketId - 1].fillPercentage) revert InvalidBracketOrder();
         }
 
         tierBonuses[_tierId][_bracketId] = BonusBracket({
@@ -495,7 +498,7 @@ UUPSUpgradeable
     }
 
     function setTierTimes(uint8 _tierId, uint64 _start, uint64 _end) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_start < _end, "Invalid time range");
+        if (_start >= _end) revert InvalidTimeRange();
         tierStartTimes[_tierId] = _start;
         tierEndTimes[_tierId] = _end;
     }
@@ -526,7 +529,7 @@ UUPSUpgradeable
         // Check if system is still paused before unpausing locally
         if (address(registry) != address(0)) {
             try registry.isSystemPaused() returns (bool systemPaused) {
-                require(!systemPaused, "TokenStaking: system still paused");
+                if (systemPaused) revert SystemStillPaused();
             } catch {
                 // If registry call fails, proceed with unpause
             }

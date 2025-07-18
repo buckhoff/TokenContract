@@ -108,6 +108,30 @@ contract TeacherReward is
     event AchievementAwarded(address indexed teacher, uint256 indexed achievementId, uint256 count);
     event PeerReviewSubmitted(address indexed teacher, address indexed reviewer, uint256 score);
     
+    // Add custom errors at the top:
+    error NotRegistered();
+    error NotVerifier();
+    error ZeroTokenAddress();
+    error RegistryNotSet();
+    error AlreadyRegistered();
+    error AlreadyVerified();
+    error InvalidReputationRange();
+    error NoRewardsToClaim();
+    error TransferFailed();
+    error ZeroAmount();
+    error AlreadyVerifier();
+    error NotVerifierAddress();
+    error NotAuthorized();
+    error SystemStillPaused();
+    error EmptyName();
+    error EmptyDescription();
+    error InvalidAchievementId();
+    error AlreadyEarned();
+    error CannotReviewSelf();
+    error InvalidScoreRange();
+    error AlreadyReviewedRecently();
+    error NotMarketplace();
+    
     /**
      * @dev Constructor
      */
@@ -119,7 +143,7 @@ contract TeacherReward is
      * @dev Modifier to check if caller is a teacher
      */
     modifier onlyTeacher() {
-        require(teachers[msg.sender].isRegistered, "TeacherReward: not registered");
+        if (!teachers[msg.sender].isRegistered) revert NotRegistered();
         _;
     }
 
@@ -127,7 +151,7 @@ contract TeacherReward is
      * @dev Modifier to check if caller is a verifier
      */
     modifier onlyVerifier() {
-        require(verifiers[msg.sender], "TeacherReward: not a verifier");
+        if (!verifiers[msg.sender]) revert NotVerifier();
         _;
     }
 
@@ -146,7 +170,7 @@ contract TeacherReward is
         uint256 _maxDailyReward,
         uint256 _minimumClaimPeriod
     ) initializer public {
-        require(_token != address(0), "TeacherReward: zero token address");
+        if (_token == address(0)) revert ZeroTokenAddress();
 
         __Ownable_init(msg.sender);
         __ReentrancyGuard_init();
@@ -195,7 +219,7 @@ contract TeacherReward is
      * This ensures contracts always have the latest addresses
      */
     function updateContractReferences() external onlyRole(Constants.ADMIN_ROLE) {
-        require(address(registry) != address(0), "TeacherReward: registry not set");
+        if (address(registry) == address(0)) revert RegistryNotSet();
 
         // Update TeachToken reference
         if (registry.isContractActive(Constants.TOKEN_NAME)) {
@@ -213,7 +237,7 @@ contract TeacherReward is
      * @dev Allows teachers to register in the reward system
      */
     function registerAsTeacher() external whenContractNotPaused {
-        require(!teachers[msg.sender].isRegistered, "TeacherReward: already registered");
+        if (teachers[msg.sender].isRegistered) revert AlreadyRegistered();
         
         teachers[msg.sender] = Teacher({
             isRegistered: true,
@@ -233,8 +257,8 @@ contract TeacherReward is
      * @param _teacher Address of the teacher to verify
      */
     function verifyTeacher(address _teacher) external onlyVerifier {
-        require(teachers[_teacher].isRegistered, "TeacherReward: teacher not registered");
-        require(!teachers[_teacher].isVerified, "TeacherReward: already verified");
+        if (!teachers[_teacher].isRegistered) revert NotRegistered();
+        if (teachers[_teacher].isVerified) revert AlreadyVerified();
         
         teachers[_teacher].isVerified = true;
         
@@ -247,8 +271,8 @@ contract TeacherReward is
      * @param _newReputation New reputation score (1-200)
      */
     function updateReputation(address _teacher, uint256 _newReputation) external whenContractNotPaused onlyVerifier {
-        require(teachers[_teacher].isRegistered, "TeacherReward: teacher not registered");
-        require(_newReputation >= 1 && _newReputation <= 200, "TeacherReward: invalid reputation range");
+        if (!teachers[_teacher].isRegistered) revert NotRegistered();
+        if (_newReputation < 1 || _newReputation > 200) revert InvalidReputationRange();
         
         teachers[_teacher].reputation = _newReputation;
         
@@ -306,7 +330,7 @@ contract TeacherReward is
      */
     function claimReward() external onlyTeacher nonReentrant whenContractNotPaused{
         uint256 pendingReward = calculatePendingReward(msg.sender);
-        require(pendingReward > 0, "TeacherReward: no rewards to claim");
+        if (pendingReward == 0) revert NoRewardsToClaim();
         
         // Update teacher's reward data
         teachers[msg.sender].lastClaimTime = block.timestamp;
@@ -316,7 +340,7 @@ contract TeacherReward is
         rewardPool -= pendingReward;
         
         // Transfer tokens
-        require(token.transfer(msg.sender, pendingReward), "TeacherReward: transfer failed");
+        if (!token.transfer(msg.sender, pendingReward)) revert TransferFailed();
         
         emit RewardClaimed(msg.sender, pendingReward);
     }
@@ -326,10 +350,10 @@ contract TeacherReward is
      * @param _amount Amount of tokens to add to the reward pool
      */
     function increaseRewardPool(uint256 _amount) external whenContractNotPaused {
-        require(_amount > 0, "TeacherReward: zero amount");
+        if (_amount == 0) revert ZeroAmount();
         
         // Transfer tokens from caller to contract
-        require(token.transferFrom(msg.sender, address(this), _amount), "TeacherReward: transfer failed");
+        if (!token.transferFrom(msg.sender, address(this), _amount)) revert TransferFailed();
         
         // Increase reward pool
         rewardPool += _amount;
@@ -363,8 +387,8 @@ contract TeacherReward is
      * @param _verifier Address of the new verifier
      */
     function addVerifier(address _verifier) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(_verifier != address(0), "TeacherReward: zero address");
-        require(!verifiers[_verifier], "TeacherReward: already a verifier");
+        if (_verifier == address(0)) revert NotVerifierAddress();
+        if (verifiers[_verifier]) revert AlreadyVerifier();
         
         verifiers[_verifier] = true;
         _grantRole(Constants.VERIFIER_ROLE, _verifier);
@@ -377,7 +401,7 @@ contract TeacherReward is
      * @param _verifier Address of the verifier to remove
      */
     function removeVerifier(address _verifier) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(verifiers[_verifier], "TeacherReward: not a verifier");
+        if (!verifiers[_verifier]) revert NotVerifier();
         
         verifiers[_verifier] = false;
         revokeRole(Constants.VERIFIER_ROLE, _verifier);
@@ -431,33 +455,31 @@ contract TeacherReward is
                 if (registry.isContractActive(Constants.GOVERNANCE_NAME)) {
                     address governance = registry.getContractAddress(Constants.GOVERNANCE_NAME);
 
-                    require(
-                        msg.sender == stabilityFund ||
-                        msg.sender == governance ||
-                        hasRole(Constants.EMERGENCY_ROLE, msg.sender),
-                        "TeacherReward: not authorized"
-                    );
+                    if (
+                        msg.sender != stabilityFund &&
+                        msg.sender != governance &&
+                        !hasRole(Constants.EMERGENCY_ROLE, msg.sender)
+                    ) revert NotAuthorized();
                     paused = true;
                 } else {
-                    require(
-                        msg.sender == stabilityFund ||
-                        hasRole(Constants.EMERGENCY_ROLE, msg.sender),
-                        "TeacherReward: not authorized"
-                    );
+                    if (
+                        msg.sender != stabilityFund &&
+                        !hasRole(Constants.EMERGENCY_ROLE, msg.sender)
+                    ) revert NotAuthorized();
                     paused = true;
                 }
             } else {
-                require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "TeacherReward: not authorized");
+                if (!hasRole(Constants.EMERGENCY_ROLE, msg.sender)) revert NotAuthorized();
             }
         } else {
-            require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "TeacherReward: not authorized");
+            if (!hasRole(Constants.EMERGENCY_ROLE, msg.sender)) revert NotAuthorized();
         }
     }
 
     function unpauseRewards() external onlyRole(Constants.EMERGENCY_ROLE) {
         if (address(registry) != address(0)) {
             try registry.isSystemPaused() returns (bool systemPaused) {
-                require(!systemPaused, "TokenStaking: system still paused");
+                if (systemPaused) revert SystemStillPaused();
             } catch {
                 // If registry call fails, proceed with unpause
             }
@@ -468,26 +490,24 @@ contract TeacherReward is
             if (registry.isContractActive(Constants.GOVERNANCE_NAME)) {
                 address governance = registry.getContractAddress(Constants.GOVERNANCE_NAME);
 
-                require(
-                    msg.sender == stabilityFund ||
-                    msg.sender == governance ||
-                    hasRole(Constants.EMERGENCY_ROLE, msg.sender),
-                    "TeacherReward: not authorized"
-                );
+                if (
+                    msg.sender != stabilityFund &&
+                    msg.sender != governance &&
+                    !hasRole(Constants.EMERGENCY_ROLE, msg.sender)
+                ) revert NotAuthorized();
                 paused = false;
             } else {
-                require(
-                    msg.sender == stabilityFund ||
-                    hasRole(Constants.EMERGENCY_ROLE, msg.sender),
-                    "TeacherReward: not authorized"
-                );
+                if (
+                    msg.sender != stabilityFund &&
+                    !hasRole(Constants.EMERGENCY_ROLE, msg.sender)
+                ) revert NotAuthorized();
                 paused = false;
             }
             } else {
-                require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "TeacherReward: not authorized");
+                if (!hasRole(Constants.EMERGENCY_ROLE, msg.sender)) revert NotAuthorized();
             }
         } else {
-            require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "TeacherReward: not authorized");
+            if (!hasRole(Constants.EMERGENCY_ROLE, msg.sender)) revert NotAuthorized();
         }
     }
 
@@ -509,8 +529,8 @@ contract TeacherReward is
         uint256 _rewardAmount,
         bool _repeatable
     ) external onlyRole(Constants.ADMIN_ROLE) returns (uint256) {
-        require(bytes(_name).length > 0, "TeacherReward: empty name");
-        require(bytes(_description).length > 0, "TeacherReward: empty description");
+        if (bytes(_name).length == 0) revert EmptyName();
+        if (bytes(_description).length == 0) revert EmptyDescription();
 
         uint256 achievementId = achievements.length;
 
@@ -530,15 +550,15 @@ contract TeacherReward is
      * @param _achievementId ID of the achievement
      */
     function awardAchievement(address _teacher, uint256 _achievementId) external onlyVerifier {
-        require(_teacher != address(0), "TeacherReward: zero address");
-        require(_achievementId < achievements.length, "TeacherReward: invalid achievement ID");
-        require(teachers[_teacher].isRegistered, "TeacherReward: teacher not registered");
+        if (_teacher == address(0)) revert NotRegistered();
+        if (_achievementId >= achievements.length) revert InvalidAchievementId();
+        if (!teachers[_teacher].isRegistered) revert NotRegistered();
 
         Achievement storage achievement = achievements[_achievementId];
 
         // Check if repeatable or not yet earned
-        if (!achievement.repeatable) {
-            require(achievementsEarned[_teacher][_achievementId] == 0, "TeacherReward: already earned");
+        if (achievement.repeatable) {
+            if (achievementsEarned[_teacher][_achievementId] > 0) revert AlreadyEarned();
         }
 
         // Increment earned count
@@ -555,7 +575,7 @@ contract TeacherReward is
             }
 
             // Transfer tokens
-            require(token.transfer(_teacher, achievement.rewardAmount), "TeacherReward: transfer failed");
+            if (!token.transfer(_teacher, achievement.rewardAmount)) revert TransferFailed();
 
             // Update teacher's total rewards
             teachers[_teacher].totalRewards += achievement.rewardAmount;
@@ -571,11 +591,11 @@ contract TeacherReward is
      * @param _comment Review comment
      */
     function submitPeerReview(address _teacher, uint256 _score, string memory _comment) external whenContractNotPaused{
-        require(_teacher != address(0), "TeacherReward: zero address");
-        require(_teacher != msg.sender, "TeacherReward: cannot review self");
-        require(teachers[_teacher].isRegistered, "TeacherReward: teacher not registered");
-        require(teachers[msg.sender].isRegistered, "TeacherReward: reviewer not registered");
-        require(_score >= 1 && _score <= 5, "TeacherReward: invalid score range");
+        if (_teacher == address(0)) revert NotRegistered();
+        if (_teacher == msg.sender) revert CannotReviewSelf();
+        if (!teachers[_teacher].isRegistered) revert NotRegistered();
+        if (!teachers[msg.sender].isRegistered) revert NotRegistered();
+        if (_score < 1 || _score > 5) revert InvalidScoreRange();
 
         // Check if the reviewer has already reviewed this teacher recently
         bool hasRecentReview = false;
@@ -587,7 +607,7 @@ contract TeacherReward is
             }
         }
 
-        require(!hasRecentReview, "TeacherReward: already reviewed recently");
+        if (hasRecentReview) revert AlreadyReviewedRecently();
 
         // Add the review
         teacherReviews[_teacher].push(Review({
@@ -685,12 +705,12 @@ contract TeacherReward is
         // Check if caller is the marketplace contract
         if (address(registry) != address(0) && registry.isContractActive(Constants.MARKETPLACE_NAME)) {
             address marketplace = registry.getContractAddress(Constants.MARKETPLACE_NAME);
-            require(msg.sender == marketplace, "TeacherReward: not marketplace");
+            if (msg.sender != marketplace) revert NotMarketplace();
         } else {
-            require(hasRole(Constants.ADMIN_ROLE, msg.sender), "TeacherReward: not authorized");
+            if (!hasRole(Constants.ADMIN_ROLE, msg.sender)) revert NotAuthorized();
         }
 
-        require(teachers[_teacher].isRegistered, "TeacherReward: teacher not registered");
+        if (!teachers[_teacher].isRegistered) revert NotRegistered();
 
         // Update metrics
         if (_resourceCreated) {

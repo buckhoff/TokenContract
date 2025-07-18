@@ -59,6 +59,7 @@ UUPSUpgradeable
     error AlreadyProcessed();
     error RecoveryNotActive();
     error InvalidRequiredApprovalsValue();
+    error InsufficientRecoveryApprovals();
 
     modifier onlyCrowdsale() {
         if (msg.sender != crowdsaleContract) revert UnauthorizedCaller();
@@ -95,7 +96,7 @@ UUPSUpgradeable
      * @param _crowdsale Address of the crowdsale contract
      */
     function setCrowdsale(address _crowdsale) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_crowdsale != address(0), "Zero address");
+        if (_crowdsale == address(0)) revert ZeroAddress();
         crowdsaleContract = _crowdsale;
         emit CrowdsaleSet(_crowdsale);
     }
@@ -181,7 +182,7 @@ UUPSUpgradeable
         if (emergencyState == EmergencyState.NORMAL) revert NotInEmergencyMode();
         // Only allow resuming from MINOR_EMERGENCY directly
         if (emergencyState == EmergencyState.CRITICAL_EMERGENCY) {
-            require(recoveryApprovalsCount >= requiredRecoveryApprovals, "Insufficient recovery approvals");
+            if (recoveryApprovalsCount < requiredRecoveryApprovals) revert InsufficientRecoveryApprovals();
         }
         _setEmergencyState(0); // Set to NORMAL
     }

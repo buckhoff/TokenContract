@@ -50,6 +50,22 @@ contract ContractRegistry is
     event SystemEmergencyTriggered(address indexed triggeredBy, string reason);
     event ExternalCallFailed(string method, address target);
     
+    // Add custom errors at the top:
+    error AlreadyRegistered();
+    error NotAContract();
+    error InterfaceNotSupported();
+    error ZeroAddress();
+    error NotRegistered();
+    error SameAddress();
+    error StringTooLong();
+    error SystemNotPaused();
+    error NotInRecoveryMode();
+    error AlreadyApproved();
+    error InvalidApprovalCount();
+    error TimeoutTooShort();
+    error TimeoutTooLong();
+    error AlreadyPaused();
+    
     /**
      * @dev Constructor 
      */
@@ -87,13 +103,13 @@ contract ContractRegistry is
      * @param _address Address of the contract
      */
     function registerContract(bytes32 _name, address _address, bytes4 _interfaceId) external onlyRole(Constants.ADMIN_ROLE) nonReentrant {
-        if(_address == address(0)) revert("ContractRegistry: zero address");
-        require(contracts[_name] == address(0), "ContractRegistry: already registered");
+        if(_address == address(0)) revert ZeroAddress();
+        if(contracts[_name] != address(0)) revert AlreadyRegistered();
 
-        require(_address.code.length > 0, "ContractRegistry: not a contract");
+        if (_address.code.length == 0) revert NotAContract();
 
         if (_interfaceId != bytes4(0)) {
-            require(_supportsInterface(_address, _interfaceId), "Interface not supported");
+            if (!_supportsInterface(_address, _interfaceId)) revert InterfaceNotSupported();
         }
         
         contracts[_name] = _address;
@@ -121,11 +137,11 @@ contract ContractRegistry is
      * @param _interfaceId set the new interface ID
      */
     function updateContract(bytes32 _name, address _newAddress, bytes4 _interfaceId) external onlyRole(Constants.UPGRADER_ROLE) nonReentrant {
-        require(_newAddress != address(0), "ContractRegistry: zero address");
-        require(contracts[_name] != address(0), "ContractRegistry: not registered");
-        require(contracts[_name] != _newAddress, "ContractRegistry: same address");
+        if(_newAddress == address(0)) revert ZeroAddress();
+        if(contracts[_name] == address(0)) revert NotRegistered();
+        if(contracts[_name] == _newAddress) revert SameAddress();
 
-        require(_newAddress.code.length > 0, "ContractRegistry: not a contract");
+        if (_newAddress.code.length == 0) revert NotAContract();
         
         address oldAddress = contracts[_name];
         bytes4 oldInterfaceId = contractInterfaces[_name];
@@ -133,7 +149,7 @@ contract ContractRegistry is
         bytes4 newInterfaceId = (_interfaceId != bytes4(0)) ? _interfaceId : oldInterfaceId;
 
         if (newInterfaceId != bytes4(0)) {
-            require(_supportsInterface(_newAddress, newInterfaceId), "Interface not supported");
+            if (!_supportsInterface(_newAddress, newInterfaceId)) revert InterfaceNotSupported();
         }
         
         contracts[_name] = _newAddress;
@@ -157,7 +173,7 @@ contract ContractRegistry is
      * @param _isActive Whether the contract is active
      */
     function setContractStatus(bytes32 _name, bool _isActive) external onlyRole(Constants.ADMIN_ROLE) {
-        require(contracts[_name] != address(0), "ContractRegistry: not registered");
+        if(contracts[_name] == address(0)) revert NotRegistered();
 
         contractActive[_name] = _isActive;
 
@@ -170,7 +186,7 @@ contract ContractRegistry is
      * @return address of the contract
      */
     function getContractAddress(bytes32 _name) external view returns (address) {
-        require(contracts[_name] != address(0), "ContractRegistry: not registered");
+        if(contracts[_name] == address(0)) revert NotRegistered();
         return contracts[_name];
     }
 
@@ -180,7 +196,7 @@ contract ContractRegistry is
      * @return Current version number
      */
     function getContractVersion(bytes32 _name) external view returns (uint256) {
-        require(contracts[_name] != address(0), "ContractRegistry: not registered");
+        if(contracts[_name] == address(0)) revert NotRegistered();
         return contractVersions[_name];
     }
 
@@ -202,7 +218,7 @@ contract ContractRegistry is
      * @return Interface ID of the contract
      */
     function getContractInterface(bytes32 _name) external view returns (bytes4) {
-        require(contracts[_name] != address(0), "ContractRegistry: not registered");
+        if(contracts[_name] == address(0)) revert NotRegistered();
         return contractInterfaces[_name];
     }
     
@@ -212,7 +228,7 @@ contract ContractRegistry is
      * @return Array of historical addresses
      */
     function getImplementationHistory(bytes32 _name) external view returns (address[] memory) {
-        require(contracts[_name] != address(0), "ContractRegistry: not registered");
+        if(contracts[_name] == address(0)) revert NotRegistered();
         return implementationHistory[_name];
     }
 
@@ -230,7 +246,7 @@ contract ContractRegistry is
      * @return result bytes32
      */
     function stringToBytes32(string memory _str) external pure returns (bytes32 result) {
-        require(bytes(_str).length <= 32, "ContractRegistry: string too long");
+        if (bytes(_str).length > 32) revert StringTooLong();
         result = keccak256(abi.encodePacked(_str));
 
     }
@@ -309,7 +325,7 @@ contract ContractRegistry is
 
     // Add emergency recovery functions
     function initiateEmergencyRecovery() external onlyRole(Constants.EMERGENCY_ROLE) {
-        require(systemPaused, "ContractRegistry: system not paused");
+        if (systemPaused) revert SystemNotPaused();
         inEmergencyRecovery = true;
         recoveryInitiatedTimestamp = block.timestamp;
 
@@ -322,8 +338,8 @@ contract ContractRegistry is
     }
 
     function approveRecovery() external onlyRole(Constants.ADMIN_ROLE) {
-        require(inEmergencyRecovery, "ContractRegistry: not in recovery mode");
-        require(!emergencyRecoveryApprovals[msg.sender], "ContractRegistry: already approved");
+        if (!inEmergencyRecovery) revert NotInRecoveryMode();
+        if (emergencyRecoveryApprovals[msg.sender]) revert AlreadyApproved();
 
         emergencyRecoveryApprovals[msg.sender] = true;
 
@@ -355,7 +371,7 @@ contract ContractRegistry is
      * @param _required approvals needed
      */
     function setRequiredRecoveryApprovals(uint256 _required) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_required > 0, "ContractRegistry: invalid approval count");
+        if (_required == 0) revert InvalidApprovalCount();
         requiredRecoveryApprovals = _required;
         emit RecoveryApprovalsUpdated(_required);
     }
@@ -365,8 +381,8 @@ contract ContractRegistry is
      * @param _timeout new timeout to set
      */
     function setRecoveryTimeout(uint256 _timeout) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_timeout >= 1 hours, "ContractRegistry: timeout too short");
-        require(_timeout <= 7 days, "ContractRegistry: timeout too long");
+        if (_timeout < 1 hours) revert TimeoutTooShort();
+        if (_timeout > 7 days) revert TimeoutTooLong();
         recoveryTimeout = _timeout;
     }
 
@@ -375,7 +391,7 @@ contract ContractRegistry is
      */
     function pauseSystem() external {
         if (hasRole(Constants.ADMIN_ROLE, msg.sender) || hasRole(Constants.EMERGENCY_ROLE, msg.sender)) {
-            require(!systemPaused, "ContractRegistry: already paused");
+            if (systemPaused) revert AlreadyPaused();
             systemPaused = true;
             emit SystemPaused(msg.sender);
         }
@@ -388,7 +404,7 @@ contract ContractRegistry is
      * @dev Resume the system after emergency
      */
     function resumeSystem() external onlyRole(Constants.ADMIN_ROLE) {
-        require(systemPaused, "ContractRegistry: not paused");
+        if (!systemPaused) revert SystemNotPaused();
         systemPaused = false;
         emit SystemResumed(msg.sender);
     }

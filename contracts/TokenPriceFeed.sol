@@ -103,6 +103,7 @@ UUPSUpgradeable
     error InvalidPrice();
     error InvalidDex(uint16 dexId);
     error InvalidParameters();
+    error SystemStillPaused();
 
 /**
  * @dev Initializer replaces constructor
@@ -661,7 +662,7 @@ UUPSUpgradeable
         // Check if system is still paused before unpausing locally
         if (address(registry) != address(0)) {
             try registry.isSystemPaused() returns (bool systemPaused) {
-                require(!systemPaused, "TokenStaking: system still paused");
+                if (systemPaused) revert SystemStillPaused();
             } catch {
                 // If registry call fails, proceed with unpause
             }

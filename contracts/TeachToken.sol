@@ -39,14 +39,6 @@ contract TeachToken is
 {
     IImmutableTokenContract public immutableContract;
     
-    ERC20Upgradeable internal token;
-
-    // Track if initial distribution has been performed
-    bool private initialDistributionDone;
-
-    // Recovery mechanism for accidentally sent tokens
-    mapping(address => bool) public recoveryAllowedTokens;
-    
     bool internal paused;
     bool public inEmergencyRecovery;
     mapping(address => bool) public emergencyRecoveryApprovals;
@@ -72,6 +64,16 @@ contract TeachToken is
     event EmergencyRecoveryCompleted(address indexed recoveryAdmin);
     event immutableContractSet(address indexed immutableContract);
     error TokenNotActiveOrRegistered();
+    error InitialDistributionAlreadyCompleted();
+    error TotalAllocationMustEqualMaxSupply();
+    error SystemStillPaused();
+    error CannotAllowTeachToken();
+    error CannotRecoverTeachTokens();
+    error TokenRecoveryNotAllowed();
+    error InsufficientBalance();
+    error TransferFailed();
+    error NotPaused();
+    error AlreadyApproved();
     
     /**
      * @dev Constructor that initializes the token with name, symbol, and roles
@@ -96,6 +98,8 @@ contract TeachToken is
         __ReentrancyGuard_init();
         __UUPSUpgradeable_init();
         
+        // Limit the number of admin role holders to 10 for DoS safety
+        require(getRoleMemberCount(Constants.ADMIN_ROLE) < 10, "Too many admin role holders");
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(Constants.ADMIN_ROLE, msg.sender);
         _grantRole(Constants.MINTER_ROLE, msg.sender);
@@ -118,6 +122,7 @@ contract TeachToken is
      * @param _registry Address of the registry contract
      */
     function setRegistry(address _registry) external onlyRole(Constants.ADMIN_ROLE) {
+        if (_registry == address(0)) revert ZeroContractAddress();
         _setRegistry(_registry, Constants.TOKEN_NAME);
         emit RegistrySet(_registry);
     }
@@ -143,7 +148,7 @@ contract TeachToken is
         address educationalPartnersAddress,
         address reserveAddress
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(!initialDistributionDone, "Initial distribution already completed");
+        if (initialDistributionDone) revert InitialDistributionAlreadyCompleted();
         address[7] memory addresses = [
                     platformEcosystemAddress,
                     communityIncentivesAddress,
@@ -198,7 +203,7 @@ contract TeachToken is
                     teamAndDevAmount + educationalPartnersAmount +
                     reserveAmount;
 
-        require(totalAllocation == immutableContract.MAX_SUPPLY(), "Total allocation must equal MAX_SUPPLY");
+        if (totalAllocation != immutableContract.MAX_SUPPLY()) revert TotalAllocationMustEqualMaxSupply();
         
         // Public Presale (25%)
         _mint(publicPresaleAddress, publicPresaleAmount);
@@ -360,7 +365,7 @@ contract TeachToken is
         // Check if system is still paused before unpausing locally
         if (address(registry) != address(0)) {
             try registry.isSystemPaused() returns (bool systemPaused) {
-                require(!systemPaused, "TokenStaking: system still paused");
+                if (systemPaused) revert SystemStillPaused();
             } catch {
                 // If registry call fails, proceed with unpause
             }
@@ -379,8 +384,8 @@ contract TeachToken is
      * @param _allowed Whether recovery is allowed
      */
     function setRecoveryAllowedToken(address _token, bool _allowed) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(_token != address(0), "TeachToken: zero token address");
-        require(_token != address(this), "TeachToken: cannot allow TEACH token");
+        if (_token == address(0)) revert ZeroTokenAddress();
+        if (_token == address(this)) revert CannotAllowTeachToken();
 
         recoveryAllowedTokens[_token] = _allowed;
 
@@ -393,29 +398,29 @@ contract TeachToken is
     * @param amount The amount of tokens to recover
     */
     function recoverERC20(address tokenAddress, uint256 amount) external onlyRole(DEFAULT_ADMIN_ROLE) nonReentrant {
-        require(tokenAddress != address(this), "TeachToken: Cannot recover TEACH tokens");
-        require(amount > 0, "TeachToken: Zero amount");
-        require(recoveryAllowedTokens[tokenAddress], "TeachToken: Token recovery not allowed");
+        if (tokenAddress == address(this)) revert CannotRecoverTeachTokens();
+        if (amount == 0) revert ZeroAmount();
+        if (!recoveryAllowedTokens[tokenAddress]) revert TokenRecoveryNotAllowed();
 
-        token = ERC20Upgradeable(tokenAddress);
-        require(token.balanceOf(address(this)) >= amount, "TeachToken: Insufficient balance");
+        ERC20Upgradeable token = ERC20Upgradeable(tokenAddress);
+        if (token.balanceOf(address(this)) < amount) revert InsufficientBalance();
 
         bool success = token.transfer(msg.sender, amount);
-        require(success, "TeachToken: Transfer failed");
+        if (!success) revert TransferFailed();
 
         emit ERC20TokensRecovered(tokenAddress, msg.sender, amount);
     }
 
     // Add emergency recovery functions
     function initiateEmergencyRecovery() external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(paused, "Token: not paused");
+        if (!paused) revert NotPaused();
         inEmergencyRecovery = true;
         emit EmergencyRecoveryInitiated(msg.sender, block.timestamp);
     }
 
     function approveRecovery() external onlyRole(Constants.ADMIN_ROLE) {
-        require(inEmergencyRecovery, "Token: not in recovery mode");
-        require(!emergencyRecoveryApprovals[msg.sender], "Token: already approved");
+        if (!inEmergencyRecovery) revert NotInRecoveryMode();
+        if (emergencyRecoveryApprovals[msg.sender]) revert AlreadyApproved();
 
         emergencyRecoveryApprovals[msg.sender] = true;
 
@@ -427,6 +432,7 @@ contract TeachToken is
     }
 
     function _countRecoveryApprovals() internal view returns (uint256) {
+        // WARNING: This function loops through all ADMIN_ROLE holders. For DoS safety, never have more than 10 admins.
         uint256 count = 0;
         uint256 memberCount = getRoleMemberCount(Constants.ADMIN_ROLE);
         for (uint i = 0; i < memberCount; i++) {
@@ -511,70 +517,4 @@ contract TeachToken is
 
         return address(this);
     }
-
-  /*  *//**
- * @dev Makes a safe call to another contract through the registry
- * @param _contractNameBytes32 Name of the contract to call
- * @param _callData The calldata to send
- * @return success Whether the call succeeded
- * @return returnData The data returned by the call
- *//*
-    function _safeContractCall(
-        bytes32 _contractNameBytes32,
-        bytes memory _callData
-    ) internal returns (bool success, bytes memory returnData) {
-        if (address(registry) == address(0)) {
-            emit ContractCallFailed(_contractNameBytes32, bytes4(_callData), "Registry not set");
-            return (false, bytes(""));
-        }
-        if (registryOfflineMode) {
-            // In offline mode, try to use fallback address
-            address fallbackAddress = _fallbackAddresses[_contractNameBytes32];
-            if (fallbackAddress != address(0)) {
-                (success, returnData) = fallbackAddress.call(_callData);
-                if (!success) {
-                    emit ContractCallFailed(_contractNameBytes32, bytes4(_callData), "Fallback call failed");
-                }
-                return (success, returnData);
-            } else {
-                emit ContractCallFailed(_contractNameBytes32, bytes4(_callData), "No fallback address");
-                return (false, bytes(""));
-            }
-        }
-
-        // Standard registry flow
-        try registry.isContractActive(_contractNameBytes32) returns (bool isActive) {
-            if (!isActive) {
-                emit ContractCallFailed(_contractNameBytes32, bytes4(_callData), "Contract not active");
-                return (false, bytes(""));
-            }
-
-            try registry.getContractAddress(_contractNameBytes32) returns (address contractAddress) {
-                if (contractAddress == address(0)) {
-                    emit ContractCallFailed(_contractNameBytes32, bytes4(_callData), "Zero contract address");
-                    return (false, bytes(""));
-                }
-
-                // Make the actual call
-                (success, returnData) = contractAddress.call(_callData);
-
-                if (!success) {
-                    emit ContractCallFailed(
-                        _contractNameBytes32,
-                        bytes4(_callData),
-                        "Call reverted"
-                    );
-                }
-
-                return (success, returnData);
-            } catch {
-                emit ContractCallFailed(_contractNameBytes32, bytes4(_callData), "Failed to get contract address");
-                return (false, bytes(""));
-            }
-        } catch {
-            emit ContractCallFailed(_contractNameBytes32, bytes4(_callData), "Failed to check contract active status");
-            return (false, bytes(""));
-        }
-    }
-    */
 }

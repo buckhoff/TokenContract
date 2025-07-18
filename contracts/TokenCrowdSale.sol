@@ -193,16 +193,34 @@ UUPSUpgradeable
     error ZeroComponentAddress();
     error InvalidPresaleTimes(uint64 start, uint64 end);
     error InvalidContract();
+    error SystemPaused();
+    error TGEAlreadyCompleted();
+    error PresaleStillActive();
+    error TGEAborted();
+    error MaxTokensMustBePositive();
+    error NotInCriticalEmergency();
+    error AlreadyProcessed();
+    error NoRefundTokenAvailable();
+    error CannotRecoverSaleToken();
+    error NoTokensToRecover();
+    error TokenRecoveryFailed();
+    error CannotSweepBeforeTGE();
+    error TokenNotSet();
+    error NothingToSweep();
+    error TransferFailed();
+    error RefundsNotAllowed();
+    error NoPurchaseFound();
+    error NoRefundTokenConfigured();
     
     modifier onlySelf() {
-        require(msg.sender == address(this), "Only callable by this contract");
+        if (msg.sender != address(this)) revert UnauthorizedCaller();
         _;
     }
     
     modifier whenNotPaused() {
         if (address(registry) != address(0)) {
             try registry.isSystemPaused() returns (bool systemPaused) {
-                require(!systemPaused, "TokenCrowdSale: system is paused");
+                if (systemPaused) revert SystemPaused();
             } catch {
                 // If registry call fails, fall back to local pause state
                 IEmergencyManager.EmergencyState state = emergencyManager.getEmergencyState();
@@ -488,8 +506,8 @@ UUPSUpgradeable
      * @dev Complete Token Generation Event, allowing initial token claims
      */
     function completeTGE() external onlyRole(Constants.ADMIN_ROLE) whenNotPaused {
-        require(!tgeCompleted, "TGE already completed");
-        require(block.timestamp > presaleEnd, "Presale still active");
+        if (tgeCompleted) revert TGEAlreadyCompleted();
+        if (block.timestamp <= presaleEnd) revert PresaleStillActive();
         tgeCompleted = true;
         emit TGECompleted(block.timestamp);
     }
@@ -516,7 +534,7 @@ UUPSUpgradeable
      */
     function withdrawTokens() external nonReentrant whenNotPaused {
         if (!tgeCompleted) revert TGENotCompleted();
-        require(!tgeAborted, "TGE was aborted");
+        if (tgeAborted) revert TGEAborted();
         
         Purchase storage userPurchase = purchases[msg.sender];
         uint256 scheduleId = userPurchase.vestingScheduleId;
@@ -540,7 +558,7 @@ UUPSUpgradeable
      * @param _maxTokens The maximum number of tokens
      */
     function setMaxTokensPerAddress(uint96 _maxTokens) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_maxTokens > 0, "Max tokens must be positive");
+        if (_maxTokens == 0) revert MaxTokensMustBePositive();
         maxTokensPerAddress = _maxTokens;
     }
 
@@ -570,9 +588,8 @@ UUPSUpgradeable
      * @dev In case of critical emergency, allows users to withdraw their USDC
      */
     function emergencyWithdraw() external nonReentrant {
-        require(emergencyManager.getEmergencyState() == IEmergencyManager.EmergencyState.CRITICAL_EMERGENCY,
-            "Not in critical emergency");
-        require(!emergencyManager.isEmergencyWithdrawalProcessed(msg.sender), "Already processed");
+        if (emergencyManager.getEmergencyState() != IEmergencyManager.EmergencyState.CRITICAL_EMERGENCY) revert NotInCriticalEmergency();
+        if (emergencyManager.isEmergencyWithdrawalProcessed(msg.sender)) revert AlreadyProcessed();
 
         // Calculate refundable amount
         Purchase storage userPurchase = purchases[msg.sender];
@@ -587,7 +604,7 @@ UUPSUpgradeable
 
             // Find a supported token to refund with
             address refundToken = supportedTokens.length > 0 ? supportedTokens[0] : address(0);
-            require(refundToken != address(0), "No refund token available");
+            if (refundToken == address(0)) revert NoRefundTokenAvailable();
 
             // Calculate token amount to refund
             uint256 tokenRefundAmount = priceFeed.convertUsdToToken(refundToken, refundAmount);
@@ -602,10 +619,10 @@ UUPSUpgradeable
      * @param _token Token address to recover
      */
     function recoverTokens(address _token) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_token != address(token), "Cannot recover tokens");
+        if (_token == address(token)) revert CannotRecoverSaleToken();
         uint256 balance = ERC20Upgradeable(_token).balanceOf(address(this));
-        require(balance > 0, "No tokens to recover");
-        require(ERC20Upgradeable(_token).transfer(owner(), balance), "Token recovery failed");
+        if (balance == 0) revert NoTokensToRecover();
+        if (!ERC20Upgradeable(_token).transfer(owner(), balance)) revert TokenRecoveryFailed();
         emit TokensRecovered(_token, balance);
     }
 
@@ -739,8 +756,8 @@ UUPSUpgradeable
     }
 
     function sweepUnallocatedTokens() external onlyRole(Constants.ADMIN_ROLE) {
-        require(tgeCompleted, "Cannot sweep before TGE");
-        require(address(token) != address(0), "Token not set");
+        if (!tgeCompleted) revert CannotSweepBeforeTGE();
+        if (address(token) == address(0)) revert TokenNotSet();
 
         uint256 totalUnsold = 0;
         uint8 tierCount = tierManager.tierCount();
@@ -750,28 +767,28 @@ UUPSUpgradeable
             totalUnsold += remaining;
         }
 
-        require(totalUnsold > 0, "Nothing to sweep");
+        if (totalUnsold == 0) revert NothingToSweep();
 
         // Mint or transfer remaining tokens to treasury
-        require(token.transfer(treasury, totalUnsold), "Transfer failed");
+        if (!token.transfer(treasury, totalUnsold)) revert TransferFailed();
 
         emit TokenSwept(totalUnsold);
     }
 
     function abortTGE() external onlyRole(Constants.ADMIN_ROLE) {
-        require(!tgeCompleted, "TGE already completed");
+        if (tgeCompleted) revert TGEAlreadyCompleted();
         tgeAborted = true;
     }
 
     function claimRefund() external nonReentrant {
-        require(tgeAborted, "Refunds not allowed");
+        if (!tgeAborted) revert RefundsNotAllowed();
 
         Purchase storage p = purchases[msg.sender];
-        require(p.usdAmount > 0, "No purchase found");
+        if (p.usdAmount == 0) revert NoPurchaseFound();
 
         address[] memory supportedTokens = priceFeed.getSupportedPaymentTokens();
         address refundToken = supportedTokens.length > 0 ? supportedTokens[0] : address(0);
-        require(refundToken != address(0), "No refund token configured");
+        if (refundToken == address(0)) revert NoRefundTokenConfigured();
 
         uint256 refundAmount = priceFeed.convertUsdToToken(refundToken, p.usdAmount);
 
@@ -779,10 +796,7 @@ UUPSUpgradeable
         delete purchases[msg.sender];
         addressTokensPurchased[msg.sender] = 0;
 
-        require(
-            ERC20Upgradeable(refundToken).transferFrom(treasury, msg.sender, refundAmount),
-            "Refund transfer failed"
-        );
+        if (!ERC20Upgradeable(refundToken).transferFrom(treasury, msg.sender, refundAmount)) revert TransferFailed();
         
         emit RefundIssued(msg.sender,p.usdAmount,refundToken,refundAmount);
     }
@@ -803,7 +817,7 @@ UUPSUpgradeable
         // Check if system is still paused before unpausing locally
         if (address(registry) != address(0)) {
             try registry.isSystemPaused() returns (bool systemPaused) {
-                require(!systemPaused, "TokenStaking: system still paused");
+                if (systemPaused) revert SystemPaused();
             } catch {
                 // If registry call fails, proceed with unpause
             }

@@ -87,6 +87,8 @@ ILiquidityManager
     error PriceFloorBreached(uint96 currentPrice, uint96 floor);
     error TransferFailed();
     error SwapFailed();
+    error CannotRecoverCoreTokens();
+    error NoTokensToRecover();
 
     /**
      * @dev Initializer
@@ -568,11 +570,11 @@ ILiquidityManager
      * @param _token Token address to recover
      */
     function recoverTokens(address _token) external onlyRole(Constants.ADMIN_ROLE) nonReentrant {
-        require(_token != address(token) && _token != address(stablecoin), "Cannot recover core tokens");
+        if (_token == address(token) || _token == address(stablecoin)) revert CannotRecoverCoreTokens();
 
         ERC20Upgradeable recoveryToken = ERC20Upgradeable(_token);
         uint256 balance = recoveryToken.balanceOf(address(this));
-        require(balance > 0, "No tokens to recover");
+        if (balance == 0) revert NoTokensToRecover();
 
         recoveryToken.transfer(msg.sender, balance);
     }

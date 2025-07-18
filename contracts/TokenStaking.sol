@@ -107,16 +107,43 @@ contract TokenStaking is
     event FlashLoanProtectionConfigured(uint256 maxDailyUserVolume, uint256 maxSingleConversionAmount, uint256 minTimeBetweenActions, bool enabled);
     event ExternalCallFailed(string method, address target);
 
-    error InvalidContract();
-    
-    //constructor(){
-    //    _disableInitializers();
-    //}
+    error NotPlatformManager();
+    error ZeroTokenAddress();
+    error ZeroPlatformManagerAddress();
+    error RegistryNotSet();
+    error NotAuthorized();
+    error SystemStillPaused();
+    error EmptyPoolName();
+    error FeeTooHigh();
+    error ZeroSchoolAddress();
+    error EmptySchoolName();
+    error SchoolAlreadyRegistered();
+    error SchoolNotRegistered();
+    error ZeroManagerAddress();
+    error InvalidPoolId();
+    error ZeroAmount();
+    error InsufficientBalance();
+    error InsufficientAllowance();
+    error SchoolNotActive();
+    error PoolNotActive();
+    error TransferFailed();
+    error InsufficientStake();
+    error NoRewards();
+    error InsufficientRewards();
+    error UserTransferFailed();
+    error InsufficientSchoolRewards();
+    error AlreadyClaimed();
+    error CooldownNotOver();
+    error CannotRecoverStakingToken();
+    error InvalidRequestIndex();
+    error FeeTooHighEmergency();
+    error OnlySelf();
+
     /**
      * @dev Modifier to restrict school reward withdrawals to platform manager
      */
     modifier onlyPlatformManager() {
-        require(msg.sender == platformRewardsManager, "TokenStaking: not platform manager");
+        if (msg.sender != platformRewardsManager) revert NotPlatformManager();
         _;
     }
 
@@ -127,8 +154,8 @@ contract TokenStaking is
      */
     function initialize(
     address _token, address _platformRewardsManager) initializer public {
-        require(_token != address(0), "TokenStaking: zero token address");
-        require(_platformRewardsManager != address(0), "TokenStaking: zero platform manager address");
+        if (_token == address(0)) revert ZeroTokenAddress();
+        if (_platformRewardsManager == address(0)) revert ZeroPlatformManagerAddress();
 
         __Ownable_init(msg.sender);
         __ReentrancyGuard_init();
@@ -167,12 +194,12 @@ contract TokenStaking is
      * This ensures contracts always have the latest addresses
      */
     function updateContractReferences() external onlyRole(Constants.ADMIN_ROLE) {
-        require(address(registry) != address(0), "TokenStaking: registry not set");
+        if (address(registry) == address(0)) revert RegistryNotSet();
 
         // Update Token reference
         if (registry.isContractActive(Constants.TOKEN_NAME)) {
             address newToken = registry.getContractAddress(Constants.TOKEN_NAME);
-            if (newToken== address(0)) revert InvalidContract();
+            if (newToken== address(0)) revert ZeroTokenAddress();
             
             address oldToken = address(token);
 
@@ -192,30 +219,30 @@ contract TokenStaking is
             if (registry.isContractActive(Constants.STABILITY_FUND_NAME)) {
                 address stabilityFund = registry.getContractAddress(Constants.STABILITY_FUND_NAME);
 
-                if (stabilityFund== address(0)) revert InvalidContract();
+                if (stabilityFund== address(0)) revert ZeroTokenAddress();
                 
                 if (registry.isContractActive(Constants.GOVERNANCE_NAME)) {
                     address governance = registry.getContractAddress(Constants.GOVERNANCE_NAME);
-                    if (governance == address(0)) revert InvalidContract();
+                    if (governance == address(0)) revert ZeroTokenAddress();
 
-                    require(
-                        msg.sender == stabilityFund ||
-                        msg.sender == governance ||
-                        hasRole(Constants.EMERGENCY_ROLE, msg.sender),
-                        "TokenStaking: not authorized"
-                    );
+                    if (
+                        msg.sender != stabilityFund &&
+                        msg.sender != governance &&
+                        !hasRole(Constants.EMERGENCY_ROLE, msg.sender)) {
+                        revert NotAuthorized();
+                    }
                 } else {
-                    require(
-                        msg.sender == stabilityFund ||
-                        hasRole(Constants.EMERGENCY_ROLE, msg.sender),
-                        "TokenStaking: not authorized"
-                    );
+                    if (
+                        msg.sender != stabilityFund &&
+                        !hasRole(Constants.EMERGENCY_ROLE, msg.sender)) {
+                        revert NotAuthorized();
+                    }
                 }
             } else {
-                require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "TokenStaking: not authorized");
+                if (!hasRole(Constants.EMERGENCY_ROLE, msg.sender)) revert NotAuthorized();
             }
         } else {
-            require(hasRole(Constants.EMERGENCY_ROLE, msg.sender), "TokenStaking: not authorized");
+            if (!hasRole(Constants.EMERGENCY_ROLE, msg.sender)) revert NotAuthorized();
         }
 
         paused = true;
@@ -227,7 +254,7 @@ contract TokenStaking is
     function unpauseStaking() external onlyRole(Constants.EMERGENCY_ROLE) {
         if (address(registry) != address(0)) {
             try registry.isSystemPaused() returns (bool systemPaused) {
-                require(!systemPaused, "TokenStaking: system still paused");
+                if (systemPaused) revert SystemStillPaused();
             } catch {
                 // If registry call fails, proceed with unpause
             }
@@ -254,8 +281,8 @@ contract TokenStaking is
         uint256 _lockDuration,
         uint256 _earlyWithdrawalFee
     ) external onlyRole(Constants.ADMIN_ROLE) returns (uint256) {
-        require(bytes(_name).length > 0, "TokenStaking: empty pool name");
-        require(_earlyWithdrawalFee <= 3000, "TokenStaking: fee too high");
+        if (bytes(_name).length == 0) revert EmptyPoolName();
+        if (_earlyWithdrawalFee > 3000) revert FeeTooHigh();
         
         uint256 poolId = stakingPools.length;
         
@@ -279,9 +306,9 @@ contract TokenStaking is
      * @param _name Name of the school
      */
     function registerSchool(address _schoolAddress, string memory _name) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_schoolAddress != address(0), "TokenStaking: zero school address");
-        require(bytes(_name).length > 0, "TokenStaking: empty school name");
-        require(!schools[_schoolAddress].isRegistered, "TokenStaking: already registered");
+        if (_schoolAddress == address(0)) revert ZeroSchoolAddress();
+        if (bytes(_name).length == 0) revert EmptySchoolName();
+        if (schools[_schoolAddress].isRegistered) revert SchoolAlreadyRegistered();
         
         schools[_schoolAddress] = School({
             name: _name,
@@ -302,7 +329,7 @@ contract TokenStaking is
      * @param _isActive Whether the school is active
      */
     function updateSchool(address _schoolAddress, string memory _name, bool _isActive) external onlyRole(Constants.ADMIN_ROLE) {
-        require(schools[_schoolAddress].isRegistered, "TokenStaking: school not registered");
+        if (!schools[_schoolAddress].isRegistered) revert SchoolNotRegistered();
         
         schools[_schoolAddress].name = _name;
         schools[_schoolAddress].isActive = _isActive;
@@ -315,7 +342,7 @@ contract TokenStaking is
      * @param _newManager New platform rewards manager address
      */
     function updatePlatformRewardsManager(address _newManager) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_newManager != address(0), "TokenStaking: zero manager address");
+        if (_newManager == address(0)) revert ZeroManagerAddress();
         
         emit PlatformRewardsManagerUpdated(platformRewardsManager, _newManager);
         
@@ -338,8 +365,8 @@ contract TokenStaking is
         uint256 _earlyWithdrawalFee,
         bool _isActive
     ) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_poolId < stakingPools.length, "TokenStaking: invalid pool ID");
-        require(_earlyWithdrawalFee <= 3000, "TokenStaking: fee too high");
+        if (_poolId >= stakingPools.length) revert InvalidPoolId();
+        if (_earlyWithdrawalFee > 3000) revert FeeTooHigh();
         
         StakingPool storage pool = stakingPools[_poolId];
         
@@ -358,23 +385,23 @@ contract TokenStaking is
      * @param _schoolBeneficiary Address of the school to receive 50% of rewards
      */
     function stake(uint256 _poolId, uint256 _amount, address _schoolBeneficiary) external nonReentrant whenContractNotPaused {
-        require(_poolId < stakingPools.length, "TokenStaking: invalid pool ID");
-        require(_amount > 0, "TokenStaking: zero amount");
+        if (_poolId >= stakingPools.length) revert InvalidPoolId();
+        if (_amount == 0) revert ZeroAmount();
 
         // Get token from registry if available
         if (address(registry) != address(0) && registry.isContractActive(Constants.TOKEN_NAME)) {
             token = ERC20Upgradeable(registry.getContractAddress(Constants.TOKEN_NAME));
         }
 
-        if (token == address(0)) revert InvalidContract();
+        if (token == address(0)) revert ZeroTokenAddress();
         
-        require(_amount <= token.balanceOf(msg.sender), "TokenStaking: insufficient balance");
-        require(_amount <= token.allowance(msg.sender, address(this)), "TokenStaking: insufficient allowance");
-        require(schools[_schoolBeneficiary].isRegistered, "TokenStaking: school not registered");
-        require(schools[_schoolBeneficiary].isActive, "TokenStaking: school not active");
+        if (_amount > token.balanceOf(msg.sender)) revert InsufficientBalance();
+        if (_amount > token.allowance(msg.sender, address(this))) revert InsufficientAllowance();
+        if (!schools[_schoolBeneficiary].isRegistered) revert SchoolNotRegistered();
+        if (!schools[_schoolBeneficiary].isActive) revert SchoolNotActive();
         
         StakingPool storage pool = stakingPools[_poolId];
-        require(pool.isActive, "TokenStaking: pool not active");
+        if (!pool.isActive) revert PoolNotActive();
         
         UserStake storage userStake = userStakes[_poolId][msg.sender];
         
@@ -397,7 +424,7 @@ contract TokenStaking is
         pool.totalStaked += _amount;
         
         // Transfer tokens from user to contract
-        require(token.transferFrom(msg.sender, address(this), _amount), "TokenStaking: transfer failed");
+        if (!token.transferFrom(msg.sender, address(this), _amount)) revert TransferFailed();
         
         // Notify governance about stake update if it's registered
         if (address(registry) != address(0) && registry.isContractActive(Constants.GOVERNANCE_NAME)) {
@@ -415,13 +442,13 @@ contract TokenStaking is
      * @param _amount Amount of tokens to unstake
      */
     function unstake(uint256 _poolId, uint256 _amount) external nonReentrant whenContractNotPaused {
-        require(_poolId < stakingPools.length, "TokenStaking: invalid pool ID");
-        require(_amount > 0, "TokenStaking: zero amount");
+        if (_poolId >= stakingPools.length) revert InvalidPoolId();
+        if (_amount == 0) revert ZeroAmount();
         
         StakingPool storage pool = stakingPools[_poolId];
         UserStake storage userStake = userStakes[_poolId][msg.sender];
         
-        require(userStake.amount >= _amount, "TokenStaking: insufficient stake");
+        if (userStake.amount < _amount) revert InsufficientStake();
         
         // Claim pending rewards first
         _claimReward(_poolId, msg.sender);
@@ -451,7 +478,7 @@ contract TokenStaking is
         }
         
         // Transfer tokens back to user
-        require(token.transfer(msg.sender, amountToReturn), "TokenStaking: transfer failed");
+        if (!token.transfer(msg.sender, amountToReturn)) revert TransferFailed();
         
         emit Unstaked(msg.sender, _poolId, _amount, fee);
     }
@@ -461,10 +488,10 @@ contract TokenStaking is
      * @param _poolId ID of the pool to claim from
      */
     function claimReward(uint256 _poolId) external nonReentrant {
-        require(_poolId < stakingPools.length, "TokenStaking: invalid pool ID");
+        if (_poolId >= stakingPools.length) revert InvalidPoolId();
         
         uint256 reward = _claimReward(_poolId, msg.sender);
-        require(reward > 0, "TokenStaking: no rewards");
+        if (reward == 0) revert NoRewards();
     }
     
     /**
@@ -489,7 +516,7 @@ contract TokenStaking is
         
         // Get school beneficiary
         address schoolBeneficiary = userStake.schoolBeneficiary;
-        require(schools[schoolBeneficiary].isRegistered, "TokenStaking: school not registered");
+        if (!schools[schoolBeneficiary].isRegistered) revert SchoolNotRegistered();
         
         // Split rewards 50/50
         uint256 userReward = totalReward / 2;
@@ -502,7 +529,7 @@ contract TokenStaking is
         totalRewardsPaid += totalReward;
         
         // Ensure we have enough rewards to pay out
-        require(totalReward <= rewardsPool, "TokenStaking: insufficient rewards");
+        if (totalReward > rewardsPool) revert InsufficientRewards();
 
         // Store the old rewards pool for assertion
         uint256 oldRewardsPool = rewardsPool;
@@ -515,7 +542,7 @@ contract TokenStaking is
         schools[schoolBeneficiary].totalRewards += schoolReward;
         
         // Transfer user portion to user
-        require(token.transfer(_user, userReward), "TokenStaking: user transfer failed");
+        if (!token.transfer(_user, userReward)) revert UserTransferFailed();
         
         // School portion remains in contract to be managed by platform
         
@@ -533,15 +560,15 @@ contract TokenStaking is
      * @param _amount Amount to withdraw
      */
     function withdrawSchoolRewards(address _school, uint256 _amount) external onlyRole(Constants.MANAGER_ROLE) nonReentrant {
-        require(schools[_school].isRegistered, "TokenStaking: school not registered");
-        require(_amount > 0, "TokenStaking: zero amount");
-        require(_amount <= schools[_school].totalRewards, "TokenStaking: insufficient school rewards");
+        if (!schools[_school].isRegistered) revert SchoolNotRegistered();
+        if (_amount == 0) revert ZeroAmount();
+        if (_amount > schools[_school].totalRewards) revert InsufficientSchoolRewards();
         
         // Update school's total rewards
         schools[_school].totalRewards -= _amount;
         
         // Transfer tokens to platform manager for conversion
-        require(token.transfer(platformRewardsManager, _amount), "TokenStaking: transfer failed");
+        if (!token.transfer(platformRewardsManager, _amount)) revert TransferFailed();
         
         emit SchoolRewardWithdrawn(_school, _amount);
     }
@@ -574,10 +601,10 @@ contract TokenStaking is
      * @param _amount Amount of tokens to add
      */
     function addRewardsToPool(uint256 _amount) external nonReentrant {
-        require(_amount > 0, "TokenStaking: zero amount");
+        if (_amount == 0) revert ZeroAmount();
         
         // Transfer tokens to the contract
-        require(token.transferFrom(msg.sender, address(this), _amount), "TokenStaking: transfer failed");
+        if (!token.transferFrom(msg.sender, address(this), _amount)) revert TransferFailed();
         
         // Update rewards pool
         rewardsPool += _amount;
@@ -654,7 +681,7 @@ contract TokenStaking is
         uint256 totalStaked,
         bool isActive
     ) {
-        require(_poolId < stakingPools.length, "TokenStaking: invalid pool ID");
+        if (_poolId >= stakingPools.length) revert InvalidPoolId();
         
         StakingPool storage pool = stakingPools[_poolId];
         
@@ -689,7 +716,7 @@ contract TokenStaking is
         uint256 userRewardPortion,
         uint256 schoolRewardPortion
     ) {
-        require(_poolId < stakingPools.length, "TokenStaking: invalid pool ID");
+        if (_poolId >= stakingPools.length) revert InvalidPoolId();
         
         UserStake storage userStake = userStakes[_poolId][_user];
         pendingReward = calculatePendingReward(_poolId, _user);
@@ -720,7 +747,7 @@ contract TokenStaking is
         uint256 amount,
         uint256 startTime
     ) {
-        require(_poolId < stakingPools.length, "TokenStaking: invalid pool ID");
+        if (_poolId >= stakingPools.length) revert InvalidPoolId();
 
         UserStake storage userStake = userStakes[_poolId][_user];
 
@@ -775,7 +802,7 @@ contract TokenStaking is
      * @return uint256 APY percentage (scaled by 100, e.g., 1500 = 15%)
      */
     function getPoolAPY(uint256 _poolId) external view returns (uint256) {
-        require(_poolId < stakingPools.length, "TokenStaking: invalid pool ID");
+        if (_poolId >= stakingPools.length) revert InvalidPoolId();
         
         StakingPool storage pool = stakingPools[_poolId];
         
@@ -792,7 +819,7 @@ contract TokenStaking is
      * @return uint256 Time remaining in seconds (0 if already unlocked)
      */
     function getTimeUntilUnlock(uint256 _poolId, address _user) external view returns (uint256) {
-        require(_poolId < stakingPools.length, "TokenStaking: invalid pool ID");
+        if (_poolId >= stakingPools.length) revert InvalidPoolId();
         
         StakingPool storage pool = stakingPools[_poolId];
         UserStake storage userStake = userStakes[_poolId][_user];
@@ -816,10 +843,10 @@ contract TokenStaking is
      * @param _amount Amount to recover
      */
     function recoverTokens(address _token, uint256 _amount) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(_token != address(token), "TokenStaking: cannot recover staking token");
+        if (_token == address(token)) revert CannotRecoverStakingToken();
 
         token = ERC20Upgradeable(_token);
-        require(token.transfer(owner(), _amount), "TokenStaking: transfer failed");
+        if (!token.transfer(owner(), _amount)) revert TransferFailed();
     }
 
     /**
@@ -836,13 +863,13 @@ contract TokenStaking is
     * @param _amount Amount of tokens to unstake
     */
     function requestUnstake(uint256 _poolId, uint256 _amount) external nonReentrant {
-        require(_poolId < stakingPools.length, "TokenStaking: invalid pool ID");
-        require(_amount > 0, "TokenStaking: zero amount");
+        if (_poolId >= stakingPools.length) revert InvalidPoolId();
+        if (_amount == 0) revert ZeroAmount();
 
         StakingPool storage pool = stakingPools[_poolId];
         UserStake storage userStake = userStakes[_poolId][msg.sender];
 
-        require(userStake.amount >= _amount, "TokenStaking: insufficient stake");
+        if (userStake.amount < _amount) revert InsufficientStake();
 
         // Claim pending rewards first
         _claimReward(_poolId, msg.sender);
@@ -882,14 +909,14 @@ contract TokenStaking is
     * @param _requestIndex Index of the unstaking request
     */
     function claimUnstakedTokens(uint256 _poolId, uint256 _requestIndex) external nonReentrant {
-        require(_poolId < stakingPools.length, "TokenStaking: invalid pool ID");
+        if (_poolId >= stakingPools.length) revert InvalidPoolId();
 
         UnstakingRequest[] storage requests = unstakingRequests[msg.sender][_poolId];
-        require(_requestIndex < requests.length, "TokenStaking: invalid request index");
+        if (_requestIndex >= requests.length) revert InvalidRequestIndex();
 
         UnstakingRequest storage request = requests[_requestIndex];
-        require(!request.claimed, "TokenStaking: already claimed");
-        require(block.timestamp >= request.requestTime + cooldownPeriod, "TokenStaking: cooldown not over");
+        if (request.claimed) revert AlreadyClaimed();
+        if (block.timestamp < request.requestTime + cooldownPeriod) revert CooldownNotOver();
 
         uint96 amountToClaim = request.amount;
 
@@ -897,7 +924,7 @@ contract TokenStaking is
         request.claimed = true;
 
         // Transfer tokens back to user
-        require(token.transfer(msg.sender, amountToClaim), "TokenStaking: transfer failed");
+        if (!token.transfer(msg.sender, amountToClaim)) revert TransferFailed();
 
         emit UnstakedTokensClaimed(msg.sender, _poolId, amountToClaim);
     }
@@ -917,7 +944,7 @@ contract TokenStaking is
     * @param _fee Fee percentage (scaled by 100)
     */
     function setEmergencyUnstakeFee(uint16 _fee) external onlyRole(Constants.ADMIN_ROLE) {
-        require(_fee <= 5000, "TokenStaking: fee too high"); // Max 50%
+        if (_fee > 5000) revert FeeTooHighEmergency(); // Max 50%
         emergencyUnstakeFee = _fee;
     }
 
@@ -927,13 +954,13 @@ contract TokenStaking is
     * @param _amount Amount of tokens to unstake
     */
     function emergencyUnstake(uint256 _poolId, uint256 _amount) external onlyRole(Constants.EMERGENCY_ROLE) nonReentrant {
-        require(_poolId < stakingPools.length, "TokenStaking: invalid pool ID");
-        require(_amount > 0, "TokenStaking: zero amount");
+        if (_poolId >= stakingPools.length) revert InvalidPoolId();
+        if (_amount == 0) revert ZeroAmount();
 
         StakingPool storage pool = stakingPools[_poolId];
         UserStake storage userStake = userStakes[_poolId][msg.sender];
 
-        require(userStake.amount >= _amount, "TokenStaking: insufficient stake");
+        if (userStake.amount < _amount) revert InsufficientStake();
 
         // Claim pending rewards first
         _claimReward(_poolId, msg.sender);
@@ -952,7 +979,7 @@ contract TokenStaking is
         rewardsPool += emergencyFee;
 
         // Transfer tokens immediately to user (no cooldown)
-        require(token.transfer(msg.sender, amountToReturn), "TokenStaking: transfer failed");
+        if (!token.transfer(msg.sender, amountToReturn)) revert TransferFailed();
 
         emit Unstaked(msg.sender, _poolId, _amount, emergencyFee);
     }
@@ -971,7 +998,7 @@ contract TokenStaking is
      * @param _user User whose stake changed
      */
     function notifyGovernanceOfStakeChange(address _user) external nonReentrant {
-        require(msg.sender == address(this), "TokenStaking: unauthorized");
+        if (msg.sender != address(this)) revert OnlySelf();
 
         if (address(registry) != address(0) && registry.isContractActive(Constants.GOVERNANCE_NAME)) {
             address governance = registry.getContractAddress(Constants.GOVERNANCE_NAME);
@@ -1027,7 +1054,7 @@ contract TokenStaking is
      */
     function updateVotingPower(address _user) external nonReentrant override {
         // Only the contract itself can call this function
-        require(msg.sender == address(this), "TokenStaking: only self");
+        if (msg.sender != address(this)) revert OnlySelf();
 
         // Notify governance of stake change if governance is registered
         if (address(registry) != address(0) && registry.isContractActive(Constants.GOVERNANCE_NAME)) {
